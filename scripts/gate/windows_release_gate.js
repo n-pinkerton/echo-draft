@@ -174,11 +174,38 @@ class CdpClient {
   }
 
   async close() {
-    try {
-      this.ws?.close();
-    } catch {
-      // ignore
-    }
+    const ws = this.ws;
+    this.ws = null;
+    if (!ws) return;
+
+    await new Promise((resolve) => {
+      let resolved = false;
+      let timer = null;
+
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+
+      ws.once("close", finish);
+
+      timer = setTimeout(() => {
+        try {
+          ws.terminate();
+        } catch {
+          // ignore
+        }
+        finish();
+      }, 2000);
+
+      try {
+        ws.close();
+      } catch {
+        finish();
+      }
+    });
   }
 }
 
@@ -627,7 +654,7 @@ $bytes = $ms.ToArray()
 $sha = [System.Security.Cryptography.SHA256]::Create()
 $hashBytes = $sha.ComputeHash($bytes)
 $hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
-[pscustomobject]@{ success = $true; hasImage = $true; width = $img.Width; height = $img.Height; hash = $hash } | ConvertTo-Json -Compress
+[pscustomobject]@{ success = $true; hasImage = $true; width = $img.Width; height = $img.Height; len = [Int32]$bytes.Length; hash = $hash } | ConvertTo-Json -Compress
 `.trim();
 
   const result = await psJson(script, [], { sta: true, timeoutMs: 20000 });
@@ -651,7 +678,7 @@ $bytes = $ms.ToArray()
 $sha = [System.Security.Cryptography.SHA256]::Create()
 $hashBytes = $sha.ComputeHash($bytes)
 $hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
-[pscustomobject]@{ success = $true; hasImage = $true; width = $img.Width; height = $img.Height; hash = $hash } | ConvertTo-Json -Compress
+[pscustomobject]@{ success = $true; hasImage = $true; width = $img.Width; height = $img.Height; len = [Int32]$bytes.Length; hash = $hash } | ConvertTo-Json -Compress
 `.trim();
 
   const result = await psJson(script, [], { sta: true, timeoutMs: 20000 });
@@ -703,9 +730,35 @@ async function main() {
     stdio: "inherit",
   });
 
+  let panel = null;
+  let dictation = null;
+
   const cleanup = async () => {
     try {
+      try {
+        if (panel) {
+          await panel.eval(`(async () => { try { await window.electronAPI?.appQuit?.(); } catch {} return true; })()`);
+        } else if (dictation) {
+          await dictation.eval(`(async () => { try { await window.electronAPI?.appQuit?.(); } catch {} return true; })()`);
+        }
+      } catch {
+        // ignore
+      }
+
+      await Promise.allSettled([panel?.close?.(), dictation?.close?.()]);
+      panel = null;
+      dictation = null;
+
       if (!appProc || appProc.exitCode !== null) {
+        return;
+      }
+
+      await Promise.race([
+        new Promise((resolve) => appProc.once("exit", resolve)),
+        sleep(7000),
+      ]);
+
+      if (appProc.exitCode !== null) {
         return;
       }
 
@@ -782,8 +835,8 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     assert(panelTarget?.webSocketDebuggerUrl, "Control panel target not found (panel=true).");
     assert(dictationTarget?.webSocketDebuggerUrl, "Dictation panel target not found.");
 
-    const panel = new CdpClient(panelTarget.webSocketDebuggerUrl);
-    const dictation = new CdpClient(dictationTarget.webSocketDebuggerUrl);
+    panel = new CdpClient(panelTarget.webSocketDebuggerUrl);
+    dictation = new CdpClient(dictationTarget.webSocketDebuggerUrl);
     await panel.connect();
     await dictation.connect();
 
@@ -943,7 +996,18 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     record("Clipboard mode copies to clipboard", clipboardNow.includes(clipText), clipboardNow.slice(0, 80));
 
     // G) Clipboard image preservation (insert success path)
-    const clipImageBefore = await setClipboardTestImage();
+    const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    let clipImageBefore = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      clipImageBefore = await setClipboardTestImage();
+      const ok =
+        Boolean(clipImageBefore?.hasImage) &&
+        Number(clipImageBefore?.len || 0) > 0 &&
+        safeString(clipImageBefore?.hash) &&
+        safeString(clipImageBefore?.hash) !== EMPTY_SHA256;
+      if (ok) break;
+      await sleep(250);
+    }
     const imageHashBefore = clipImageBefore.hash;
 
     await setForegroundWindow(notepad.hwnd);
@@ -962,8 +1026,13 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     const clipImageAfter = await getClipboardImageHash();
     record(
       "Clipboard image preserved after insert",
-      Boolean(clipImageAfter.hasImage) && clipImageAfter.hash === imageHashBefore,
-      `${imageHashBefore} -> ${clipImageAfter.hash || "none"}`
+      Boolean(clipImageAfter.hasImage) &&
+        Number(clipImageAfter.len || 0) > 0 &&
+        clipImageAfter.hash === imageHashBefore,
+      JSON.stringify({
+        before: { len: clipImageBefore?.len, hash: imageHashBefore },
+        after: { len: clipImageAfter?.len, hash: clipImageAfter.hash || null },
+      })
     );
 
     // C/D) History workspace + export
@@ -1074,9 +1143,6 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
       await closeProcess(notepad.pid);
     }
 
-    await panel.close();
-    await dictation.close();
-
     const failed = results.filter((r) => !r.ok);
     if (failed.length > 0) {
       console.error("\n[gate] FAILURES:");
@@ -1090,9 +1156,11 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
   } finally {
     await cleanup();
   }
+
+  process.exit(process.exitCode || 0);
 }
 
 main().catch((error) => {
   console.error(`[gate] ERROR: ${error.message}`);
-  process.exitCode = 1;
+  process.exit(1);
 });

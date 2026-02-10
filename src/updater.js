@@ -1,5 +1,11 @@
 const { autoUpdater } = require("electron-updater");
 
+function isTruthyFlag(value) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
 class UpdateManager {
   constructor() {
     this.mainWindow = null;
@@ -273,6 +279,12 @@ class UpdateManager {
   }
 
   checkForUpdatesOnStartup() {
+    if (
+      isTruthyFlag(process.env.OPENWHISPR_E2E) ||
+      isTruthyFlag(process.env.OPENWHISPR_DISABLE_UPDATES)
+    ) {
+      return;
+    }
     if (process.env.NODE_ENV !== "development") {
       setTimeout(() => {
         console.log("🔄 Checking for updates on startup...");
