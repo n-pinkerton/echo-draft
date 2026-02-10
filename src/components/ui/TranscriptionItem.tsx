@@ -16,11 +16,22 @@ interface TranscriptionItemProps {
 
 const TEXT_PREVIEW_LENGTH = 180;
 
-const formatMs = (value?: unknown) => {
+const formatDuration = (value?: unknown) => {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return null;
   }
-  return `${Math.round(value)}ms`;
+
+  const totalSeconds = Math.max(0, value / 1000);
+  if (totalSeconds < 60) {
+    const secondsLabel =
+      totalSeconds < 10 ? totalSeconds.toFixed(1).replace(/\.0$/, "") : String(Math.round(totalSeconds));
+    return `${secondsLabel}s`;
+  }
+
+  const roundedSeconds = Math.round(totalSeconds);
+  const minutes = Math.floor(roundedSeconds / 60);
+  const seconds = roundedSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
 const getStatusClass = (status: string) => {
@@ -74,27 +85,27 @@ export default function TranscriptionItem({
   const timingRows: Array<{ label: string; value: string | null }> = [
     {
       label: "Record",
-      value: formatMs(timings.recordDurationMs ?? timings.recordMs),
+      value: formatDuration(timings.recordDurationMs ?? timings.recordMs),
     },
     {
       label: "Transcribe",
-      value: formatMs(timings.transcriptionProcessingDurationMs ?? timings.transcribeDurationMs),
+      value: formatDuration(timings.transcriptionProcessingDurationMs ?? timings.transcribeDurationMs),
     },
     {
       label: "Cleanup",
-      value: formatMs(timings.reasoningProcessingDurationMs ?? timings.cleanupDurationMs),
+      value: formatDuration(timings.reasoningProcessingDurationMs ?? timings.cleanupDurationMs),
     },
     {
       label: "Paste",
-      value: formatMs(timings.pasteDurationMs),
+      value: formatDuration(timings.pasteDurationMs),
     },
     {
       label: "Save",
-      value: formatMs(timings.saveDurationMs),
+      value: formatDuration(timings.saveDurationMs),
     },
     {
       label: "Total",
-      value: formatMs(timings.totalDurationMs),
+      value: formatDuration(timings.totalDurationMs),
     },
   ].filter((entry) => Boolean(entry.value));
 
