@@ -5,6 +5,14 @@ import { getPlatform } from "../utils/platform";
 
 export interface UseHotkeyRegistrationOptions {
   /**
+   * Optional hotkey registration handler.
+   * Defaults to window.electronAPI.updateHotkey.
+   */
+  registerHandler?: (
+    hotkey: string
+  ) => Promise<{ success: boolean; message?: string; suggestions?: string[] }>;
+
+  /**
    * Callback fired when hotkey is successfully registered
    */
   onSuccess?: (hotkey: string) => void;
@@ -29,6 +37,12 @@ export interface UseHotkeyRegistrationOptions {
    */
   showAlert?: (options: { title: string; description: string }) => void;
 }
+
+type HotkeyRegistrationResponse = {
+  success: boolean;
+  message?: string;
+  suggestions?: string[];
+};
 
 export interface UseHotkeyRegistrationResult {
   /**
@@ -69,6 +83,7 @@ export function useHotkeyRegistration(
   options: UseHotkeyRegistrationOptions = {}
 ): UseHotkeyRegistrationResult {
   const { onSuccess, onError, showSuccessToast = true, showErrorToast = true, showAlert } = options;
+  const registerHandler = options.registerHandler;
 
   const [isRegistering, setIsRegistering] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -116,19 +131,22 @@ export function useHotkeyRegistration(
         return false;
       }
 
-      // Check if Electron API is available
-      if (!window.electronAPI?.updateHotkey) {
-        // In non-Electron environment, just succeed silently
-        onSuccess?.(hotkey);
-        return true;
-      }
+      const defaultHandler = async (
+        candidateHotkey: string
+      ): Promise<HotkeyRegistrationResponse> => {
+        if (!window.electronAPI?.updateHotkey) {
+          return { success: true };
+        }
+        return window.electronAPI.updateHotkey(candidateHotkey);
+      };
+      const effectiveHandler = registerHandler || defaultHandler;
 
       try {
         registrationInFlightRef.current = true;
         setIsRegistering(true);
         setLastError(null);
 
-        const result = await window.electronAPI.updateHotkey(hotkey);
+        const result = await effectiveHandler(hotkey);
 
         if (!result?.success) {
           // Use the detailed error message from the manager, which includes suggestions
@@ -177,7 +195,7 @@ export function useHotkeyRegistration(
         registrationInFlightRef.current = false;
       }
     },
-    [onSuccess, onError, showSuccessToast, showErrorToast, showAlert]
+    [onSuccess, onError, registerHandler, showSuccessToast, showErrorToast, showAlert]
   );
 
   return {

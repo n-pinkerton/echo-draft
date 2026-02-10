@@ -1,5 +1,7 @@
-const { app, screen, BrowserWindow, shell, dialog } = require("electron");
+const { app, screen, BrowserWindow, shell, dialog, globalShortcut } = require("electron");
+const crypto = require("crypto");
 const HotkeyManager = require("./hotkeyManager");
+const { isModifierOnlyHotkey, isRightSideModifier } = HotkeyManager;
 const DragManager = require("./dragManager");
 const MenuManager = require("./menuManager");
 const DevServerManager = require("./devServerManager");
@@ -10,6 +12,9 @@ const {
   WINDOW_SIZES,
   WindowPositionUtil,
 } = require("./windowConfig");
+
+const DEFAULT_CLIPBOARD_HOTKEY =
+  process.platform === "darwin" ? "Control+Option+Space" : "Control+Alt";
 
 class WindowManager {
   constructor() {
@@ -24,6 +29,8 @@ class WindowManager {
     this.windowsPushToTalkAvailable = false;
     this.macCompoundPushState = null;
     this._cachedActivationMode = "tap";
+    this.currentClipboardHotkey = DEFAULT_CLIPBOARD_HOTKEY;
+    this.registeredClipboardAccelerator = null;
 
     app.on("before-quit", () => {
       this.isQuitting = true;
@@ -84,6 +91,7 @@ class WindowManager {
     // Now load the window content
     await this.loadMainWindow();
     await this.initializeHotkey();
+    await this.initializeClipboardHotkey();
     this.dragManager.setTargetWindow(this.mainWindow);
     MenuManager.setupMainMenu();
   }
@@ -161,7 +169,33 @@ class WindowManager {
     await this.loadWindowContent(this.mainWindow, false);
   }
 
-  createHotkeyCallback() {
+  createSessionPayload(outputMode = "insert") {
+    return {
+      outputMode,
+      sessionId: crypto.randomUUID(),
+      triggeredAt: Date.now(),
+    };
+  }
+
+  emitDictationEvent(channel, payload) {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      return;
+    }
+    this.mainWindow.webContents.send(channel, payload);
+  }
+
+  sendToggleDictation(payload = this.createSessionPayload("insert")) {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      return;
+    }
+
+    if (!this.mainWindow.isVisible()) {
+      this.mainWindow.show();
+    }
+    this.emitDictationEvent("toggle-dictation", payload);
+  }
+
+  createHotkeyCallback(outputMode = "insert", hotkeyResolver = null) {
     let lastToggleTime = 0;
     const DEBOUNCE_MS = 150;
 
@@ -171,16 +205,19 @@ class WindowManager {
       }
 
       const activationMode = await this.getActivationMode();
-      const currentHotkey = this.hotkeyManager.getCurrentHotkey?.();
+      const resolvedHotkey =
+        typeof hotkeyResolver === "function"
+          ? hotkeyResolver()
+          : this.hotkeyManager.getCurrentHotkey?.();
 
       if (
         process.platform === "darwin" &&
         activationMode === "push" &&
-        currentHotkey &&
-        currentHotkey !== "GLOBE" &&
-        currentHotkey.includes("+")
+        resolvedHotkey &&
+        resolvedHotkey !== "GLOBE" &&
+        resolvedHotkey.includes("+")
       ) {
-        this.startMacCompoundPushToTalk(currentHotkey);
+        this.startMacCompoundPushToTalk(resolvedHotkey, outputMode);
         return;
       }
 
@@ -197,14 +234,11 @@ class WindowManager {
       }
       lastToggleTime = now;
 
-      if (!this.mainWindow.isVisible()) {
-        this.mainWindow.show();
-      }
-      this.mainWindow.webContents.send("toggle-dictation");
+      this.sendToggleDictation(this.createSessionPayload(outputMode));
     };
   }
 
-  startMacCompoundPushToTalk(hotkey) {
+  startMacCompoundPushToTalk(hotkey, outputMode = "insert") {
     if (this.macCompoundPushState?.active) {
       return;
     }
@@ -217,6 +251,7 @@ class WindowManager {
     const MIN_HOLD_DURATION_MS = 150;
     const MAX_PUSH_DURATION_MS = 300000; // 5 minutes max recording
     const downTime = Date.now();
+    const payload = this.createSessionPayload(outputMode);
 
     this.showDictationPanel();
 
@@ -233,6 +268,7 @@ class WindowManager {
       downTime,
       isRecording: false,
       requiredModifiers,
+      payload,
       safetyTimeoutId,
     };
 
@@ -243,7 +279,7 @@ class WindowManager {
 
       if (!this.macCompoundPushState.isRecording) {
         this.macCompoundPushState.isRecording = true;
-        this.sendStartDictation();
+        this.sendStartDictation(this.macCompoundPushState.payload);
       }
     }, MIN_HOLD_DURATION_MS);
   }
@@ -263,10 +299,11 @@ class WindowManager {
     }
 
     const wasRecording = this.macCompoundPushState.isRecording;
+    const payload = this.macCompoundPushState.payload;
     this.macCompoundPushState = null;
 
     if (wasRecording) {
-      this.sendStopDictation();
+      this.sendStopDictation(payload);
     } else {
       this.hideDictationPanel();
     }
@@ -283,10 +320,11 @@ class WindowManager {
     }
 
     const wasRecording = this.macCompoundPushState.isRecording;
+    const payload = this.macCompoundPushState.payload;
     this.macCompoundPushState = null;
 
     if (wasRecording) {
-      this.sendStopDictation();
+      this.sendStopDictation(payload);
     }
     this.hideDictationPanel();
 
@@ -331,7 +369,7 @@ class WindowManager {
     return required;
   }
 
-  sendStartDictation() {
+  sendStartDictation(payload = this.createSessionPayload("insert")) {
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
@@ -339,16 +377,16 @@ class WindowManager {
       if (!this.mainWindow.isVisible()) {
         this.mainWindow.show();
       }
-      this.mainWindow.webContents.send("start-dictation");
+      this.emitDictationEvent("start-dictation", payload);
     }
   }
 
-  sendStopDictation() {
+  sendStopDictation(payload = this.createSessionPayload("insert")) {
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send("stop-dictation");
+      this.emitDictationEvent("stop-dictation", payload);
     }
   }
 
@@ -365,11 +403,168 @@ class WindowManager {
   }
 
   async initializeHotkey() {
-    await this.hotkeyManager.initializeHotkey(this.mainWindow, this.createHotkeyCallback());
+    await this.hotkeyManager.initializeHotkey(
+      this.mainWindow,
+      this.createHotkeyCallback("insert", () => this.hotkeyManager.getCurrentHotkey?.())
+    );
   }
 
   async updateHotkey(hotkey) {
-    return await this.hotkeyManager.updateHotkey(hotkey, this.createHotkeyCallback());
+    if (hotkey === this.currentClipboardHotkey) {
+      return {
+        success: false,
+        message: "Insert and Clipboard hotkeys must be different.",
+      };
+    }
+
+    const result = await this.hotkeyManager.updateHotkey(
+      hotkey,
+      this.createHotkeyCallback("insert", () => this.hotkeyManager.getCurrentHotkey?.())
+    );
+
+    if (result?.success && this.currentClipboardHotkey) {
+      this.registerClipboardHotkeyInternal(this.currentClipboardHotkey);
+    }
+
+    return result;
+  }
+
+  getCurrentClipboardHotkey() {
+    return this.currentClipboardHotkey;
+  }
+
+  shouldUseWindowsNativeListener(hotkey, mode = this.getActivationMode()) {
+    if (process.platform !== "win32") return false;
+    if (!hotkey || hotkey === "GLOBE") return false;
+    if (mode === "push") return true;
+    return isRightSideModifier(hotkey) || isModifierOnlyHotkey(hotkey);
+  }
+
+  canRegisterClipboardWithGlobalShortcut(hotkey) {
+    if (!hotkey || hotkey === "GLOBE") return false;
+    return !this.shouldUseWindowsNativeListener(hotkey);
+  }
+
+  unregisterClipboardHotkey() {
+    if (!this.registeredClipboardAccelerator) {
+      return;
+    }
+    try {
+      globalShortcut.unregister(this.registeredClipboardAccelerator);
+    } catch {
+      // Ignore unregister errors
+    }
+    this.registeredClipboardAccelerator = null;
+  }
+
+  getClipboardHotkeyCallback() {
+    return this.createHotkeyCallback("clipboard", () => this.currentClipboardHotkey);
+  }
+
+  registerClipboardHotkeyInternal(hotkey) {
+    if (!hotkey || !hotkey.trim()) {
+      return { success: false, message: "Please enter a valid clipboard hotkey." };
+    }
+
+    const trimmedHotkey = hotkey.trim();
+    if (trimmedHotkey === this.hotkeyManager.getCurrentHotkey()) {
+      return {
+        success: false,
+        message: "Insert and Clipboard hotkeys must be different.",
+      };
+    }
+
+    this.unregisterClipboardHotkey();
+
+    if (!this.canRegisterClipboardWithGlobalShortcut(trimmedHotkey)) {
+      this.currentClipboardHotkey = trimmedHotkey;
+      return { success: true, hotkey: trimmedHotkey };
+    }
+
+    const accelerator = trimmedHotkey.startsWith("Fn+") ? trimmedHotkey.slice(3) : trimmedHotkey;
+    const callback = this.getClipboardHotkeyCallback();
+    const registered = globalShortcut.register(accelerator, callback);
+    if (!registered) {
+      return {
+        success: false,
+        message: `Could not register "${trimmedHotkey}". It may be in use by another application.`,
+      };
+    }
+
+    this.currentClipboardHotkey = trimmedHotkey;
+    this.registeredClipboardAccelerator = accelerator;
+    return { success: true, hotkey: trimmedHotkey };
+  }
+
+  async persistClipboardHotkey(hotkey) {
+    process.env.DICTATION_KEY_CLIPBOARD = hotkey;
+
+    try {
+      const EnvironmentManager = require("./environment");
+      const envManager = new EnvironmentManager();
+      envManager.saveClipboardDictationKey(hotkey);
+    } catch {
+      // Ignore persistence errors
+    }
+
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      const escapedHotkey = hotkey.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      await this.mainWindow.webContents.executeJavaScript(
+        `localStorage.setItem("dictationKeyClipboard", "${escapedHotkey}"); true;`
+      );
+    }
+  }
+
+  async initializeClipboardHotkey() {
+    const defaultHotkey = DEFAULT_CLIPBOARD_HOTKEY;
+    let savedHotkey = process.env.DICTATION_KEY_CLIPBOARD || "";
+
+    if (!savedHotkey && this.mainWindow && !this.mainWindow.isDestroyed()) {
+      try {
+        savedHotkey = await this.mainWindow.webContents.executeJavaScript(`
+          localStorage.getItem("dictationKeyClipboard") || ""
+        `);
+      } catch {
+        savedHotkey = "";
+      }
+    }
+
+    const desiredHotkey = savedHotkey && savedHotkey.trim() ? savedHotkey.trim() : defaultHotkey;
+    const registrationResult = this.registerClipboardHotkeyInternal(desiredHotkey);
+    if (registrationResult.success) {
+      await this.persistClipboardHotkey(desiredHotkey);
+      return registrationResult;
+    }
+
+    const fallbackHotkeys = [defaultHotkey, "F9", "Alt+F7"];
+    for (const fallback of fallbackHotkeys) {
+      if (!fallback || fallback === desiredHotkey) continue;
+      const fallbackResult = this.registerClipboardHotkeyInternal(fallback);
+      if (fallbackResult.success) {
+        await this.persistClipboardHotkey(fallback);
+        return fallbackResult;
+      }
+    }
+
+    return registrationResult;
+  }
+
+  async updateClipboardHotkey(hotkey) {
+    const previousHotkey = this.currentClipboardHotkey;
+    const result = this.registerClipboardHotkeyInternal(hotkey);
+
+    if (!result.success) {
+      if (previousHotkey) {
+        this.registerClipboardHotkeyInternal(previousHotkey);
+      }
+      return result;
+    }
+
+    await this.persistClipboardHotkey(this.currentClipboardHotkey);
+    return {
+      success: true,
+      message: `Clipboard hotkey updated to: ${this.currentClipboardHotkey}`,
+    };
   }
 
   isUsingGnomeHotkeys() {

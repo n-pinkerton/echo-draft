@@ -436,95 +436,166 @@ class IPCHandlers {
       return await this.windowManager.updateHotkey(hotkey);
     });
 
-    ipcMain.handle("set-hotkey-listening-mode", async (event, enabled, newHotkey = null) => {
-      this.windowManager.setHotkeyListeningMode(enabled);
-      const hotkeyManager = this.windowManager.hotkeyManager;
+    ipcMain.handle("update-clipboard-hotkey", async (event, hotkey) => {
+      return await this.windowManager.updateClipboardHotkey(hotkey);
+    });
 
-      // When exiting capture mode with a new hotkey, use that to avoid reading stale state
-      const effectiveHotkey = !enabled && newHotkey ? newHotkey : hotkeyManager.getCurrentHotkey();
+    ipcMain.handle(
+      "set-hotkey-listening-mode",
+      async (event, enabled, newHotkey = null, target = "insert") => {
+        this.windowManager.setHotkeyListeningMode(enabled);
+        const hotkeyManager = this.windowManager.hotkeyManager;
+        const currentInsertHotkey = hotkeyManager.getCurrentHotkey();
+        const currentClipboardHotkey = this.windowManager.getCurrentClipboardHotkey?.();
 
-      const { isModifierOnlyHotkey, isRightSideModifier } = require("./hotkeyManager");
-      const usesNativeListener = (hotkey) =>
-        !hotkey ||
-        hotkey === "GLOBE" ||
-        isModifierOnlyHotkey(hotkey) ||
-        isRightSideModifier(hotkey);
+        // When exiting capture mode with a new hotkey, use that to avoid reading stale state
+        const effectiveInsertHotkey =
+          !enabled && target === "insert" && newHotkey ? newHotkey : currentInsertHotkey;
+        const effectiveClipboardHotkey =
+          !enabled && target === "clipboard" && newHotkey ? newHotkey : currentClipboardHotkey;
 
-      if (enabled) {
-        // Entering capture mode - unregister globalShortcut so it doesn't consume key events
-        const currentHotkey = hotkeyManager.getCurrentHotkey();
-        if (currentHotkey && !usesNativeListener(currentHotkey)) {
-          debugLogger.log(
-            `[IPC] Unregistering globalShortcut "${currentHotkey}" for hotkey capture mode`
-          );
-          const { globalShortcut } = require("electron");
-          globalShortcut.unregister(currentHotkey);
-        }
+        const { isModifierOnlyHotkey, isRightSideModifier } = require("./hotkeyManager");
+        const usesNativeListener = (hotkey) =>
+          !hotkey ||
+          hotkey === "GLOBE" ||
+          isModifierOnlyHotkey(hotkey) ||
+          isRightSideModifier(hotkey);
 
-        // On Windows, stop the Windows key listener
-        if (process.platform === "win32" && this.windowsKeyManager) {
-          debugLogger.log("[IPC] Stopping Windows key listener for hotkey capture mode");
-          this.windowsKeyManager.stop();
-        }
-
-        // On GNOME Wayland, unregister the keybinding during capture
-        if (hotkeyManager.isUsingGnome() && hotkeyManager.gnomeManager) {
-          debugLogger.log("[IPC] Unregistering GNOME keybinding for hotkey capture mode");
-          await hotkeyManager.gnomeManager.unregisterKeybinding().catch((err) => {
-            debugLogger.warn("[IPC] Failed to unregister GNOME keybinding:", err.message);
-          });
-        }
-      } else {
-        // Exiting capture mode - re-register globalShortcut if not already registered
-        if (effectiveHotkey && !usesNativeListener(effectiveHotkey)) {
-          const { globalShortcut } = require("electron");
-          const accelerator = effectiveHotkey.startsWith("Fn+")
-            ? effectiveHotkey.slice(3)
-            : effectiveHotkey;
-          if (!globalShortcut.isRegistered(accelerator)) {
+        if (enabled) {
+          // Entering capture mode - unregister globalShortcut so it doesn't consume key events
+          if (currentInsertHotkey && !usesNativeListener(currentInsertHotkey)) {
             debugLogger.log(
-              `[IPC] Re-registering globalShortcut "${accelerator}" after capture mode`
+              `[IPC] Unregistering globalShortcut "${currentInsertHotkey}" for hotkey capture mode`
             );
-            const callback = this.windowManager.createHotkeyCallback();
-            const registered = globalShortcut.register(accelerator, callback);
-            if (!registered) {
-              debugLogger.warn(
-                `[IPC] Failed to re-register globalShortcut "${accelerator}" after capture mode`
+            const { globalShortcut } = require("electron");
+            const accel = currentInsertHotkey.startsWith("Fn+")
+              ? currentInsertHotkey.slice(3)
+              : currentInsertHotkey;
+            globalShortcut.unregister(accel);
+          }
+
+          if (currentClipboardHotkey && !usesNativeListener(currentClipboardHotkey)) {
+            debugLogger.log(
+              `[IPC] Unregistering clipboard globalShortcut "${currentClipboardHotkey}" for hotkey capture mode`
+            );
+            const { globalShortcut } = require("electron");
+            const accel = currentClipboardHotkey.startsWith("Fn+")
+              ? currentClipboardHotkey.slice(3)
+              : currentClipboardHotkey;
+            globalShortcut.unregister(accel);
+          }
+
+          // On Windows, stop native listeners during capture.
+          if (process.platform === "win32" && this.windowsKeyManager) {
+            debugLogger.log("[IPC] Stopping Windows key listeners for hotkey capture mode");
+            this.windowsKeyManager.stop();
+          }
+
+          // On GNOME Wayland, unregister the keybinding during capture.
+          if (hotkeyManager.isUsingGnome() && hotkeyManager.gnomeManager) {
+            debugLogger.log("[IPC] Unregistering GNOME keybinding for hotkey capture mode");
+            await hotkeyManager.gnomeManager.unregisterKeybinding().catch((err) => {
+              debugLogger.warn("[IPC] Failed to unregister GNOME keybinding:", err.message);
+            });
+          }
+        } else {
+          // Exiting capture mode - re-register insert hotkey if needed.
+          if (effectiveInsertHotkey && !usesNativeListener(effectiveInsertHotkey)) {
+            const { globalShortcut } = require("electron");
+            const accelerator = effectiveInsertHotkey.startsWith("Fn+")
+              ? effectiveInsertHotkey.slice(3)
+              : effectiveInsertHotkey;
+            if (!globalShortcut.isRegistered(accelerator)) {
+              debugLogger.log(
+                `[IPC] Re-registering globalShortcut "${accelerator}" after capture mode`
               );
+              const callback = this.windowManager.createHotkeyCallback("insert", () =>
+                this.windowManager.hotkeyManager.getCurrentHotkey()
+              );
+              const registered = globalShortcut.register(accelerator, callback);
+              if (!registered) {
+                debugLogger.warn(
+                  `[IPC] Failed to re-register globalShortcut "${accelerator}" after capture mode`
+                );
+              }
+            }
+          }
+
+          // Re-register clipboard hotkey if needed.
+          if (effectiveClipboardHotkey && !usesNativeListener(effectiveClipboardHotkey)) {
+            const { globalShortcut } = require("electron");
+            const accelerator = effectiveClipboardHotkey.startsWith("Fn+")
+              ? effectiveClipboardHotkey.slice(3)
+              : effectiveClipboardHotkey;
+            if (!globalShortcut.isRegistered(accelerator)) {
+              debugLogger.log(
+                `[IPC] Re-registering clipboard globalShortcut "${accelerator}" after capture mode`
+              );
+              const callback = this.windowManager.getClipboardHotkeyCallback();
+              const registered = globalShortcut.register(accelerator, callback);
+              if (!registered) {
+                debugLogger.warn(
+                  `[IPC] Failed to re-register clipboard globalShortcut "${accelerator}" after capture mode`
+                );
+              }
+            }
+          }
+
+          if (process.platform === "win32" && this.windowsKeyManager) {
+            const activationMode = await this.windowManager.getActivationMode();
+            debugLogger.log(
+              `[IPC] Exiting hotkey capture mode, activationMode="${activationMode}", insert="${effectiveInsertHotkey}", clipboard="${effectiveClipboardHotkey}"`
+            );
+
+            this.windowsKeyManager.stop();
+
+            const needsInsertListener =
+              effectiveInsertHotkey &&
+              this.windowManager.shouldUseWindowsNativeListener(
+                effectiveInsertHotkey,
+                activationMode
+              );
+            const needsClipboardListener =
+              effectiveClipboardHotkey &&
+              this.windowManager.shouldUseWindowsNativeListener(
+                effectiveClipboardHotkey,
+                activationMode
+              );
+
+            if (needsInsertListener) {
+              debugLogger.log(
+                `[IPC] Restarting Windows key listener for insert hotkey: ${effectiveInsertHotkey}`
+              );
+              this.windowsKeyManager.start(effectiveInsertHotkey, "insert");
+            }
+            if (
+              needsClipboardListener &&
+              effectiveClipboardHotkey &&
+              effectiveClipboardHotkey !== effectiveInsertHotkey
+            ) {
+              debugLogger.log(
+                `[IPC] Restarting Windows key listener for clipboard hotkey: ${effectiveClipboardHotkey}`
+              );
+              this.windowsKeyManager.start(effectiveClipboardHotkey, "clipboard");
+            }
+          }
+
+          // On GNOME Wayland, re-register the keybinding with the insert hotkey.
+          if (hotkeyManager.isUsingGnome() && hotkeyManager.gnomeManager && effectiveInsertHotkey) {
+            const gnomeHotkey = GnomeShortcutManager.convertToGnomeFormat(effectiveInsertHotkey);
+            debugLogger.log(
+              `[IPC] Re-registering GNOME keybinding "${gnomeHotkey}" after capture mode`
+            );
+            const success = await hotkeyManager.gnomeManager.registerKeybinding(gnomeHotkey);
+            if (success) {
+              hotkeyManager.currentHotkey = effectiveInsertHotkey;
             }
           }
         }
 
-        if (process.platform === "win32" && this.windowsKeyManager) {
-          const activationMode = await this.windowManager.getActivationMode();
-          debugLogger.log(
-            `[IPC] Exiting hotkey capture mode, activationMode="${activationMode}", hotkey="${effectiveHotkey}"`
-          );
-          const needsListener =
-            effectiveHotkey &&
-            effectiveHotkey !== "GLOBE" &&
-            (activationMode === "push" || isModifierOnlyHotkey(effectiveHotkey));
-          if (needsListener) {
-            debugLogger.log(`[IPC] Restarting Windows key listener for hotkey: ${effectiveHotkey}`);
-            this.windowsKeyManager.start(effectiveHotkey);
-          }
-        }
-
-        // On GNOME Wayland, re-register the keybinding with the effective hotkey
-        if (hotkeyManager.isUsingGnome() && hotkeyManager.gnomeManager && effectiveHotkey) {
-          const gnomeHotkey = GnomeShortcutManager.convertToGnomeFormat(effectiveHotkey);
-          debugLogger.log(
-            `[IPC] Re-registering GNOME keybinding "${gnomeHotkey}" after capture mode`
-          );
-          const success = await hotkeyManager.gnomeManager.registerKeybinding(gnomeHotkey);
-          if (success) {
-            hotkeyManager.currentHotkey = effectiveHotkey;
-          }
-        }
+        return { success: true };
       }
-
-      return { success: true };
-    });
+    );
 
     ipcMain.handle("get-hotkey-mode-info", async () => {
       return {
@@ -767,6 +838,14 @@ class IPCHandlers {
 
     ipcMain.handle("save-dictation-key", async (event, key) => {
       return this.environmentManager.saveDictationKey(key);
+    });
+
+    ipcMain.handle("get-dictation-key-clipboard", async () => {
+      return this.environmentManager.getClipboardDictationKey();
+    });
+
+    ipcMain.handle("save-dictation-key-clipboard", async (event, key) => {
+      return this.environmentManager.saveClipboardDictationKey(key);
     });
 
     ipcMain.handle("get-activation-mode", async () => {

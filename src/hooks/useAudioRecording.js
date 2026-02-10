@@ -10,52 +10,84 @@ export const useAudioRecording = (toast, options = {}) => {
   const [transcript, setTranscript] = useState("");
   const [partialTranscript, setPartialTranscript] = useState("");
   const audioManagerRef = useRef(null);
+  const activeSessionRef = useRef(null);
   const { onToggle } = options;
 
-  const performStartRecording = useCallback(async () => {
-    if (!audioManagerRef.current) {
-      return false;
+  const createSessionId = useCallback(() => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
     }
-
-    const currentState = audioManagerRef.current.getState();
-    if (currentState.isRecording || currentState.isProcessing) {
-      return false;
-    }
-
-    const didStart = audioManagerRef.current.shouldUseStreaming()
-      ? await audioManagerRef.current.startStreamingRecording()
-      : await audioManagerRef.current.startRecording();
-
-    if (didStart) {
-      void playStartCue();
-    }
-
-    return didStart;
+    return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }, []);
 
-  const performStopRecording = useCallback(async () => {
-    if (!audioManagerRef.current) {
-      return false;
-    }
+  const normalizeTriggerPayload = useCallback(
+    (payload = {}) => {
+      const outputMode = payload?.outputMode === "clipboard" ? "clipboard" : "insert";
+      const sessionId =
+        typeof payload?.sessionId === "string" && payload.sessionId.trim()
+          ? payload.sessionId
+          : createSessionId();
+      return { outputMode, sessionId };
+    },
+    [createSessionId]
+  );
 
-    const currentState = audioManagerRef.current.getState();
-    if (!currentState.isRecording) {
-      return false;
-    }
+  const performStartRecording = useCallback(
+    async (payload = {}) => {
+      if (!audioManagerRef.current) {
+        return false;
+      }
 
-    if (currentState.isStreaming) {
-      void playStopCue(); // streaming stop finalization is async, play cue immediately on stop action
-      return await audioManagerRef.current.stopStreamingRecording();
-    }
+      const currentState = audioManagerRef.current.getState();
+      if (currentState.isRecording || currentState.isProcessing) {
+        return false;
+      }
 
-    const didStop = audioManagerRef.current.stopRecording();
+      const session = normalizeTriggerPayload(payload);
+      const didStart = audioManagerRef.current.shouldUseStreaming()
+        ? await audioManagerRef.current.startStreamingRecording()
+        : await audioManagerRef.current.startRecording();
 
-    if (didStop) {
-      void playStopCue();
-    }
+      if (didStart) {
+        activeSessionRef.current = session;
+        void playStartCue();
+      }
 
-    return didStop;
-  }, []);
+      return didStart;
+    },
+    [normalizeTriggerPayload]
+  );
+
+  const performStopRecording = useCallback(
+    async (payload = {}) => {
+      if (!audioManagerRef.current) {
+        return false;
+      }
+
+      const currentState = audioManagerRef.current.getState();
+      if (!currentState.isRecording) {
+        return false;
+      }
+
+      if (!activeSessionRef.current) {
+        activeSessionRef.current = normalizeTriggerPayload(payload);
+      }
+
+      if (currentState.isStreaming) {
+        void playStopCue(); // streaming stop finalization is async, play cue immediately on stop action
+        return await audioManagerRef.current.stopStreamingRecording();
+      }
+
+      const didStop = audioManagerRef.current.stopRecording();
+
+      if (didStop) {
+        void playStopCue();
+      }
+
+      return didStop;
+    },
+    [normalizeTriggerPayload]
+  );
 
   useEffect(() => {
     audioManagerRef.current = new AudioManager();
@@ -70,6 +102,7 @@ export const useAudioRecording = (toast, options = {}) => {
         }
       },
       onError: (error) => {
+        activeSessionRef.current = null;
         // Provide specific titles for cloud error codes
         const title =
           error.code === "AUTH_EXPIRED"
@@ -93,24 +126,54 @@ export const useAudioRecording = (toast, options = {}) => {
       onTranscriptionComplete: async (result) => {
         if (result.success) {
           setTranscript(result.text);
+          const session = activeSessionRef.current || normalizeTriggerPayload();
+          activeSessionRef.current = null;
 
-          const isStreaming = result.source?.includes("streaming");
-          const pasteStart = performance.now();
-          await audioManagerRef.current.safePaste(
-            result.text,
-            isStreaming ? { fromStreaming: true } : {}
-          );
-          logger.info(
-            "Paste timing",
-            {
-              pasteMs: Math.round(performance.now() - pasteStart),
+          try {
+            await window.electronAPI?.writeClipboard?.(result.text);
+          } catch (error) {
+            logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
+          }
+
+          let pasteSucceeded = false;
+          if (session.outputMode === "insert") {
+            const isStreaming = result.source?.includes("streaming");
+            const pasteStart = performance.now();
+            pasteSucceeded = await audioManagerRef.current.safePaste(
+              result.text,
+              isStreaming ? { fromStreaming: true } : {}
+            );
+            logger.info(
+              "Paste timing",
+              {
+                pasteMs: Math.round(performance.now() - pasteStart),
+                source: result.source,
+                textLength: result.text.length,
+                outputMode: session.outputMode,
+                pasteSucceeded,
+              },
+              "streaming"
+            );
+          } else {
+            toast({
+              title: "Copied to Clipboard",
+              description: "Dictation finished. Paste where you want the text.",
+              duration: 2500,
+            });
+          }
+
+          audioManagerRef.current.saveTranscription({
+            text: result.text,
+            rawText: result.rawText || result.text,
+            meta: {
+              sessionId: session.sessionId,
+              outputMode: session.outputMode,
+              status: "success",
               source: result.source,
-              textLength: result.text.length,
+              pasteSucceeded,
+              timings: result.timings || {},
             },
-            "streaming"
-          );
-
-          audioManagerRef.current.saveTranscription(result.text);
+          });
 
           if (result.source === "openai" && localStorage.getItem("useLocalWhisper") === "true") {
             toast({
@@ -139,37 +202,37 @@ export const useAudioRecording = (toast, options = {}) => {
 
     audioManagerRef.current.warmupStreamingConnection();
 
-    const handleToggle = async () => {
+    const handleToggle = async (payload = {}) => {
       if (!audioManagerRef.current) return;
       const currentState = audioManagerRef.current.getState();
 
       if (!currentState.isRecording && !currentState.isProcessing) {
-        await performStartRecording();
+        await performStartRecording(payload);
       } else if (currentState.isRecording) {
-        await performStopRecording();
+        await performStopRecording(payload);
       }
     };
 
-    const handleStart = async () => {
-      await performStartRecording();
+    const handleStart = async (payload = {}) => {
+      await performStartRecording(payload);
     };
 
-    const handleStop = async () => {
-      await performStopRecording();
+    const handleStop = async (payload = {}) => {
+      await performStopRecording(payload);
     };
 
-    const disposeToggle = window.electronAPI.onToggleDictation(() => {
-      handleToggle();
+    const disposeToggle = window.electronAPI.onToggleDictation((payload) => {
+      handleToggle(payload);
       onToggle?.();
     });
 
-    const disposeStart = window.electronAPI.onStartDictation?.(() => {
-      handleStart();
+    const disposeStart = window.electronAPI.onStartDictation?.((payload) => {
+      handleStart(payload);
       onToggle?.();
     });
 
-    const disposeStop = window.electronAPI.onStopDictation?.(() => {
-      handleStop();
+    const disposeStop = window.electronAPI.onStopDictation?.((payload) => {
+      handleStop(payload);
       onToggle?.();
     });
 
@@ -193,7 +256,7 @@ export const useAudioRecording = (toast, options = {}) => {
         audioManagerRef.current.cleanup();
       }
     };
-  }, [toast, onToggle, performStartRecording, performStopRecording]);
+  }, [normalizeTriggerPayload, onToggle, performStartRecording, performStopRecording, toast]);
 
   const startRecording = async () => {
     return performStartRecording();
@@ -204,6 +267,7 @@ export const useAudioRecording = (toast, options = {}) => {
   };
 
   const cancelRecording = async () => {
+    activeSessionRef.current = null;
     if (audioManagerRef.current) {
       const state = audioManagerRef.current.getState();
       if (state.isStreaming) {
@@ -215,6 +279,7 @@ export const useAudioRecording = (toast, options = {}) => {
   };
 
   const cancelProcessing = () => {
+    activeSessionRef.current = null;
     if (audioManagerRef.current) {
       return audioManagerRef.current.cancelProcessing();
     }

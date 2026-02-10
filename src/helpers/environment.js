@@ -16,6 +16,7 @@ const PERSISTED_KEYS = [
   "REASONING_PROVIDER",
   "LOCAL_REASONING_MODEL",
   "DICTATION_KEY",
+  "DICTATION_KEY_CLIPBOARD",
   "ACTIVATION_MODE",
 ];
 
@@ -114,6 +115,16 @@ class EnvironmentManager {
 
   saveDictationKey(key) {
     const result = this._saveKey("DICTATION_KEY", key);
+    this.saveAllKeysToEnvFile();
+    return result;
+  }
+
+  getClipboardDictationKey() {
+    return this._getKey("DICTATION_KEY_CLIPBOARD");
+  }
+
+  saveClipboardDictationKey(key) {
+    const result = this._saveKey("DICTATION_KEY_CLIPBOARD", key);
     this.saveAllKeysToEnvFile();
     return result;
   }

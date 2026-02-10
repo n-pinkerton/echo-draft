@@ -1,4 +1,11 @@
 export type LocalTranscriptionProvider = "whisper" | "nvidia";
+export type DictationOutputMode = "insert" | "clipboard";
+
+export interface DictationTriggerPayload {
+  outputMode?: DictationOutputMode;
+  sessionId?: string;
+  triggeredAt?: number;
+}
 
 export interface TranscriptionItem {
   id: number;
@@ -172,9 +179,9 @@ declare global {
       pasteText: (text: string, options?: { fromStreaming?: boolean }) => Promise<void>;
       hideWindow: () => Promise<void>;
       showDictationPanel: () => Promise<void>;
-      onToggleDictation: (callback: () => void) => () => void;
-      onStartDictation?: (callback: () => void) => () => void;
-      onStopDictation?: (callback: () => void) => () => void;
+      onToggleDictation: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
+      onStartDictation?: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
+      onStopDictation?: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
 
       // Database operations
       saveTranscription: (
@@ -337,9 +344,11 @@ declare global {
 
       // Hotkey management
       updateHotkey: (key: string) => Promise<{ success: boolean; message: string }>;
+      updateClipboardHotkey?: (key: string) => Promise<{ success: boolean; message: string }>;
       setHotkeyListeningMode?: (
         enabled: boolean,
-        newHotkey?: string | null
+        newHotkey?: string | null,
+        target?: "insert" | "clipboard"
       ) => Promise<{ success: boolean }>;
       getHotkeyModeInfo?: () => Promise<{ isUsingGnome: boolean }>;
 
@@ -382,6 +391,8 @@ declare global {
       // Dictation key persistence (file-based for reliable startup)
       getDictationKey?: () => Promise<string | null>;
       saveDictationKey?: (key: string) => Promise<void>;
+      getDictationKeyClipboard?: () => Promise<string | null>;
+      saveDictationKeyClipboard?: (key: string) => Promise<void>;
 
       // Activation mode persistence (file-based for reliable startup)
       getActivationMode?: () => Promise<"tap" | "push">;
@@ -423,6 +434,7 @@ declare global {
       // Windows Push-to-Talk notifications
       notifyActivationModeChanged?: (mode: "tap" | "push") => void;
       notifyHotkeyChanged?: (hotkey: string) => void;
+      notifyClipboardHotkeyChanged?: (hotkey: string) => void;
 
       // Auto-start at login
       getAutoStartEnabled?: () => Promise<boolean>;

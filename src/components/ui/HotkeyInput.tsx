@@ -146,6 +146,7 @@ export interface HotkeyInputProps {
   disabled?: boolean;
   autoFocus?: boolean;
   validate?: (hotkey: string) => string | null | undefined;
+  captureTarget?: "insert" | "clipboard";
 }
 
 export function mapKeyboardEventToHotkey(e: KeyboardEvent): string | null {
@@ -187,6 +188,7 @@ export function HotkeyInput({
   autoFocus = false,
   variant = "default",
   validate,
+  captureTarget = "insert",
 }: HotkeyInputProps & HotkeyInputVariant) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [activeModifiers, setActiveModifiers] = useState<Set<string>>(new Set());
@@ -399,19 +401,23 @@ export function HotkeyInput({
       setIsCapturing(true);
       setValidationWarning(null);
       clearFnHeld();
-      window.electronAPI?.setHotkeyListeningMode?.(true);
+      window.electronAPI?.setHotkeyListeningMode?.(true, null, captureTarget);
     }
-  }, [disabled, clearFnHeld]);
+  }, [captureTarget, disabled, clearFnHeld]);
 
   const handleBlur = useCallback(() => {
     setIsCapturing(false);
     setActiveModifiers(new Set());
     setValidationWarning(null);
     clearFnHeld();
-    window.electronAPI?.setHotkeyListeningMode?.(false, lastCapturedHotkeyRef.current);
+    window.electronAPI?.setHotkeyListeningMode?.(
+      false,
+      lastCapturedHotkeyRef.current,
+      captureTarget
+    );
     lastCapturedHotkeyRef.current = null;
     onBlur?.();
-  }, [onBlur, clearFnHeld]);
+  }, [captureTarget, onBlur, clearFnHeld]);
 
   useEffect(() => {
     if (autoFocus && containerRef.current) {
@@ -421,10 +427,10 @@ export function HotkeyInput({
 
   useEffect(() => {
     return () => {
-      window.electronAPI?.setHotkeyListeningMode?.(false, null);
+      window.electronAPI?.setHotkeyListeningMode?.(false, null, captureTarget);
       if (warningTimeoutRef.current) clearTimeout(warningTimeoutRef.current);
     };
-  }, []);
+  }, [captureTarget]);
 
   useEffect(() => {
     if (!isCapturing || !isMac) return;

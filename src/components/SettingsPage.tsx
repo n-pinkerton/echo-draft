@@ -607,6 +607,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     groqApiKey,
     mistralApiKey,
     dictationKey,
+    dictationKeyClipboard,
     activationMode,
     setActivationMode,
     preferBuiltInMic,
@@ -635,6 +636,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     customReasoningApiKey,
     setCustomReasoningApiKey,
     setDictationKey,
+    setDictationKeyClipboard,
     updateTranscriptionSettings,
     updateReasoningSettings,
     cloudTranscriptionMode,
@@ -702,9 +704,51 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     showAlert: showAlertDialog,
   });
 
-  const validateHotkeyForInput = useCallback(
-    (hotkey: string) => getValidationMessage(hotkey, getPlatform()),
-    []
+  const { registerHotkey: registerClipboardHotkey, isRegistering: isClipboardHotkeyRegistering } =
+    useHotkeyRegistration({
+      onSuccess: (registeredHotkey) => {
+        setDictationKeyClipboard(registeredHotkey);
+      },
+      registerHandler: async (hotkey: string) => {
+        if (!window.electronAPI?.updateClipboardHotkey) {
+          return { success: true, message: "Clipboard hotkey updated." };
+        }
+        return window.electronAPI.updateClipboardHotkey(hotkey);
+      },
+      showSuccessToast: false,
+      showErrorToast: true,
+      showAlert: showAlertDialog,
+    });
+
+  const validateInsertHotkeyForInput = useCallback(
+    (hotkey: string) => {
+      const validationMessage = getValidationMessage(hotkey, getPlatform());
+      if (validationMessage) {
+        return validationMessage;
+      }
+      if (hotkey === dictationKeyClipboard) {
+        return "Insert and Clipboard hotkeys must be different.";
+      }
+      return null;
+    },
+    [dictationKeyClipboard]
+  );
+
+  const validateClipboardHotkeyForInput = useCallback(
+    (hotkey: string) => {
+      const validationMessage = getValidationMessage(hotkey, getPlatform());
+      if (validationMessage) {
+        return validationMessage;
+      }
+      if (hotkey === "GLOBE") {
+        return "Globe is reserved for the primary dictation hotkey.";
+      }
+      if (hotkey === dictationKey) {
+        return "Insert and Clipboard hotkeys must be different.";
+      }
+      return null;
+    },
+    [dictationKey]
   );
 
   const [isUsingGnomeHotkeys, setIsUsingGnomeHotkeys] = useState(false);
@@ -1389,13 +1433,32 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
               />
               <SettingsPanel>
                 <SettingsPanelRow>
+                  <p className="text-[11px] font-medium text-muted-foreground/80 mb-2">
+                    Insert mode hotkey
+                  </p>
                   <HotkeyInput
                     value={dictationKey}
                     onChange={async (newHotkey) => {
                       await registerHotkey(newHotkey);
                     }}
                     disabled={isHotkeyRegistering}
-                    validate={validateHotkeyForInput}
+                    validate={validateInsertHotkeyForInput}
+                    captureTarget="insert"
+                  />
+                </SettingsPanelRow>
+
+                <SettingsPanelRow>
+                  <p className="text-[11px] font-medium text-muted-foreground/80 mb-2">
+                    Clipboard mode hotkey
+                  </p>
+                  <HotkeyInput
+                    value={dictationKeyClipboard}
+                    onChange={async (newHotkey) => {
+                      await registerClipboardHotkey(newHotkey);
+                    }}
+                    disabled={isClipboardHotkeyRegistering}
+                    validate={validateClipboardHotkeyForInput}
+                    captureTarget="clipboard"
                   />
                 </SettingsPanelRow>
 

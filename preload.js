@@ -28,15 +28,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
   onToggleDictation: registerListener(
     "toggle-dictation",
-    (callback) => () => callback()
+    (callback) => (_event, payload) => callback(payload)
   ),
   onStartDictation: registerListener(
     "start-dictation",
-    (callback) => () => callback()
+    (callback) => (_event, payload) => callback(payload)
   ),
   onStopDictation: registerListener(
     "stop-dictation",
-    (callback) => () => callback()
+    (callback) => (_event, payload) => callback(payload)
   ),
 
   // Database functions
@@ -138,8 +138,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Cleanup function
   cleanupApp: () => ipcRenderer.invoke("cleanup-app"),
   updateHotkey: (hotkey) => ipcRenderer.invoke("update-hotkey", hotkey),
-  setHotkeyListeningMode: (enabled, newHotkey) =>
-    ipcRenderer.invoke("set-hotkey-listening-mode", enabled, newHotkey),
+  updateClipboardHotkey: (hotkey) => ipcRenderer.invoke("update-clipboard-hotkey", hotkey),
+  setHotkeyListeningMode: (enabled, newHotkey, target = "insert") =>
+    ipcRenderer.invoke("set-hotkey-listening-mode", enabled, newHotkey, target),
   getHotkeyModeInfo: () => ipcRenderer.invoke("get-hotkey-mode-info"),
   startWindowDrag: () => ipcRenderer.invoke("start-window-drag"),
   stopWindowDrag: () => ipcRenderer.invoke("stop-window-drag"),
@@ -205,6 +206,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Dictation key persistence (file-based for reliable startup)
   getDictationKey: () => ipcRenderer.invoke("get-dictation-key"),
   saveDictationKey: (key) => ipcRenderer.invoke("save-dictation-key", key),
+  getDictationKeyClipboard: () => ipcRenderer.invoke("get-dictation-key-clipboard"),
+  saveDictationKeyClipboard: (key) => ipcRenderer.invoke("save-dictation-key-clipboard", key),
 
   // Activation mode persistence (file-based for reliable startup)
   getActivationMode: () => ipcRenderer.invoke("get-activation-mode"),
@@ -300,6 +303,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Notify main process of activation mode changes (for Windows Push-to-Talk)
   notifyActivationModeChanged: (mode) => ipcRenderer.send("activation-mode-changed", mode),
   notifyHotkeyChanged: (hotkey) => ipcRenderer.send("hotkey-changed", hotkey),
+  notifyClipboardHotkeyChanged: (hotkey) => ipcRenderer.send("clipboard-hotkey-changed", hotkey),
 
   // Auto-start management
   getAutoStartEnabled: () => ipcRenderer.invoke("get-auto-start-enabled"),
