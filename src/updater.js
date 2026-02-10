@@ -6,6 +6,14 @@ function isTruthyFlag(value) {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+function getGithubUpdateConfig() {
+  // Fork-safe defaults: this should NOT point at upstream unless explicitly overridden.
+  const owner = process.env.OPENWHISPR_UPDATE_OWNER?.trim() || "n-pinkerton";
+  const repo = process.env.OPENWHISPR_UPDATE_REPO?.trim() || "openwhispr";
+
+  return { provider: "github", owner, repo, private: false };
+}
+
 class UpdateManager {
   constructor() {
     this.mainWindow = null;
@@ -33,12 +41,7 @@ class UpdateManager {
     }
 
     // Configure auto-updater for GitHub releases
-    autoUpdater.setFeedURL({
-      provider: "github",
-      owner: "OpenWhispr",
-      repo: "openwhispr",
-      private: false,
-    });
+    autoUpdater.setFeedURL(getGithubUpdateConfig());
 
     // Disable auto-download - let user control when to download
     autoUpdater.autoDownload = false;

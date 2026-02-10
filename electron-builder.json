@@ -173,7 +173,7 @@
   },
   "publish": {
     "provider": "github",
-    "owner": "OpenWhispr",
+    "owner": "n-pinkerton",
     "repo": "openwhispr",
     "private": false,
     "releaseType": "draft"
