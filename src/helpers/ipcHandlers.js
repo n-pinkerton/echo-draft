@@ -453,22 +453,35 @@ class IPCHandlers {
         const insertAccelerator = normalizeAccel(insertHotkey);
         const clipboardAccelerator = normalizeAccel(clipboardHotkey);
 
+        const insertUsesNativeListener = Boolean(
+          this.windowManager?.shouldUseWindowsNativeListener?.(insertHotkey, activationMode)
+        );
+        const clipboardUsesNativeListener = Boolean(
+          this.windowManager?.shouldUseWindowsNativeListener?.(clipboardHotkey, activationMode)
+        );
+
+        const safeIsRegistered = (accelerator, usesNativeListener) => {
+          if (!accelerator || usesNativeListener) {
+            return false;
+          }
+          try {
+            return globalShortcut.isRegistered(accelerator);
+          } catch {
+            return false;
+          }
+        };
+
         return {
           activationMode,
           insertHotkey,
           clipboardHotkey,
-          insertUsesNativeListener: Boolean(
-            this.windowManager?.shouldUseWindowsNativeListener?.(insertHotkey, activationMode)
+          insertUsesNativeListener,
+          clipboardUsesNativeListener,
+          insertGlobalRegistered: safeIsRegistered(insertAccelerator, insertUsesNativeListener),
+          clipboardGlobalRegistered: safeIsRegistered(
+            clipboardAccelerator,
+            clipboardUsesNativeListener
           ),
-          clipboardUsesNativeListener: Boolean(
-            this.windowManager?.shouldUseWindowsNativeListener?.(clipboardHotkey, activationMode)
-          ),
-          insertGlobalRegistered: insertAccelerator
-            ? globalShortcut.isRegistered(insertAccelerator)
-            : false,
-          clipboardGlobalRegistered: clipboardAccelerator
-            ? globalShortcut.isRegistered(clipboardAccelerator)
-            : false,
           windowsPushToTalkAvailable: Boolean(this.windowManager?.windowsPushToTalkAvailable),
         };
       });

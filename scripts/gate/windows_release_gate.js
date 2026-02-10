@@ -817,8 +817,8 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
           return { success: false, error: "e2eGetHotkeyStatus unavailable" };
         }
         try {
-          await window.electronAPI.updateHotkey("F9");
-          await window.electronAPI.updateClipboardHotkey("F10");
+          await window.electronAPI.updateHotkey("Pause");
+          await window.electronAPI.updateClipboardHotkey("ScrollLock");
         } catch (err) {
           return { success: false, error: String(err?.message || err) };
         }
