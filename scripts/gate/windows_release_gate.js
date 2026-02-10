@@ -705,8 +705,30 @@ async function main() {
 
   const cleanup = async () => {
     try {
-      if (!appProc.killed) {
+      if (!appProc || appProc.exitCode !== null) {
+        return;
+      }
+
+      try {
         appProc.kill();
+      } catch {
+        // ignore
+      }
+
+      await Promise.race([
+        new Promise((resolve) => appProc.once("exit", resolve)),
+        sleep(5000),
+      ]);
+
+      if (appProc.exitCode === null) {
+        await runPowerShell(
+          `
+param([Int32]$Pid)
+try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
+          `.trim(),
+          [String(appProc.pid)],
+          { timeoutMs: 10000 }
+        );
       }
     } catch {
       // ignore
