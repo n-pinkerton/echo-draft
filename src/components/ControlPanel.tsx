@@ -132,7 +132,7 @@ export default function ControlPanel() {
         } else {
           toast({
             title: "Daily Limit Reached",
-            description: "Resets at midnight UTC. Upgrade to Pro or use your own API key.",
+            description: "Resets at midnight UTC. Use your own API key or switch to local.",
             duration: 5000,
           });
         }

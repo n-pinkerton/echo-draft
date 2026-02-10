@@ -15,7 +15,7 @@ export default function UpgradePrompt({
   wordsUsed = 2000,
   limit = 2000,
 }: UpgradePromptProps) {
-  const usage = useUsage();
+  useUsage();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -33,20 +33,13 @@ export default function UpgradePrompt({
 
         <div className="space-y-2 pt-2">
           <OptionCard
-            title="Upgrade to Pro"
-            description="Unlimited transcriptions. $9/month."
-            onClick={() => {
-              usage?.openCheckout();
-            }}
-            highlighted
-          />
-          <OptionCard
             title="Use your own API key"
             description="Bring your own key for unlimited use."
             onClick={() => {
               localStorage.setItem("cloudTranscriptionMode", "byok");
               onOpenChange(false);
             }}
+            highlighted
           />
           <OptionCard
             title="Switch to local"

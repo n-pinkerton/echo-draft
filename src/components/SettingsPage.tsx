@@ -1267,42 +1267,25 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     )}
 
                     <SettingsPanelRow>
-                      {usage.isSubscribed && !usage.isTrial ? (
-                        <Button
-                          onClick={async () => {
-                            const result = await usage.openBillingPortal();
-                            if (!result.success) {
-                              toast({
-                                title: "Couldn't open billing",
-                                description: result.error,
-                                variant: "destructive",
-                              });
-                            }
-                          }}
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                        >
-                          Manage Billing
-                        </Button>
-                      ) : (
-                        <Button
-                          onClick={async () => {
-                            const result = await usage.openCheckout();
-                            if (!result.success) {
-                              toast({
-                                title: "Couldn't open checkout",
-                                description: result.error,
-                                variant: "destructive",
-                              });
-                            }
-                          }}
-                          size="sm"
-                          className="w-full"
-                        >
-                          Upgrade to Pro
-                        </Button>
-                      )}
+                      <Button
+                        onClick={async () => {
+                          const result = await window.electronAPI?.openExternal(
+                            "https://github.com/n-pinkerton/openwhispr/releases"
+                          );
+                          if (!result?.success) {
+                            toast({
+                              title: "Couldn't open releases",
+                              description: result?.error ?? "App not ready",
+                              variant: "destructive",
+                            });
+                          }
+                        }}
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                      >
+                        Open Releases
+                      </Button>
                     </SettingsPanelRow>
                   </SettingsPanel>
                 )}
