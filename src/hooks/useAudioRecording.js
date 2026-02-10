@@ -668,12 +668,12 @@ export const useAudioRecording = (toast, options = {}) => {
     return () => clearInterval(timer);
   }, [progress.stage]);
 
-  const startRecording = async () => {
-    return performStartRecording();
+  const startRecording = async (payload = {}) => {
+    return performStartRecording(payload);
   };
 
-  const stopRecording = async () => {
-    return performStopRecording();
+  const stopRecording = async (payload = {}) => {
+    return performStopRecording(payload);
   };
 
   const cancelRecording = async () => {
@@ -698,11 +698,11 @@ export const useAudioRecording = (toast, options = {}) => {
     return false;
   };
 
-  const toggleListening = async () => {
+  const toggleListening = async (payload = {}) => {
     if (!isRecording && !isProcessing) {
-      await startRecording();
+      await startRecording(payload);
     } else if (isRecording) {
-      await stopRecording();
+      await stopRecording(payload);
     }
   };
 

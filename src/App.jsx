@@ -234,7 +234,7 @@ export default function App() {
       case "hover":
         return {
           className: `${baseClasses} bg-black/50 cursor-pointer`,
-          tooltip: `[${hotkey}] to speak`,
+          tooltip: "Click to speak (Clipboard)",
         };
       case "recording":
         return {
@@ -320,7 +320,7 @@ export default function App() {
                 onClick={(e) => {
                   if (!hasDragged) {
                     setIsCommandMenuOpen(false);
-                    toggleListening();
+                    toggleListening({ outputMode: "clipboard" });
                   }
                   e.preventDefault();
                 }}
@@ -390,7 +390,7 @@ export default function App() {
                 <button
                   className="w-full px-3 py-2 text-left text-sm font-medium hover:bg-muted focus:bg-muted focus:outline-none"
                   onClick={() => {
-                    toggleListening();
+                    toggleListening({ outputMode: "clipboard" });
                   }}
                 >
                   {isRecording ? "Stop listening" : "Start listening"}
