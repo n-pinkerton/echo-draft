@@ -210,7 +210,7 @@ class CdpClient {
 }
 
 async function runPowerShell(script, args = [], options = {}) {
-  const { sta = false, timeoutMs = 15000 } = options;
+  const { sta = false, timeoutMs = 15000, stdin = null } = options;
   const wrappedScript = `& {\n${script}\n}`;
   const psArgs = [
     "-NoProfile",
@@ -237,6 +237,19 @@ async function runPowerShell(script, args = [], options = {}) {
   child.stderr?.on("data", (data) => {
     stderr += data.toString();
   });
+
+  if (stdin !== null && stdin !== undefined) {
+    try {
+      child.stdin?.write(String(stdin));
+    } catch {
+      // ignore
+    }
+    try {
+      child.stdin?.end();
+    } catch {
+      // ignore
+    }
+  }
 
   const exitResult = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -608,6 +621,26 @@ $active = [Int64][WinApiActivate2]::GetForegroundWindow()
   return result.parsed;
 }
 
+async function ensureForegroundWindow(hwnd, label = "target", attempts = 6) {
+  let last = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    last = await setForegroundWindow(hwnd);
+    if (last?.success) {
+      return { success: true, attempt, details: last };
+    }
+    await sleep(180);
+  }
+
+  let foreground = null;
+  try {
+    foreground = await getForegroundWindowInfo();
+  } catch {
+    foreground = null;
+  }
+
+  return { success: false, attempt: attempts, details: last, foreground, label };
+}
+
 async function readEditText(editHwnd) {
   const script = `
 param([Int64]$EditHwnd)
@@ -699,6 +732,131 @@ async function getClipboardText() {
   return safeString(result.stdout).trim();
 }
 
+async function snapshotClipboardForRestore() {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$text = $null
+$rtf = $null
+$html = $null
+$imagePngB64 = $null
+
+try {
+  if ([System.Windows.Forms.Clipboard]::ContainsText([System.Windows.Forms.TextDataFormat]::UnicodeText)) {
+    $text = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText)
+  }
+} catch {}
+
+try {
+  if ([System.Windows.Forms.Clipboard]::ContainsText([System.Windows.Forms.TextDataFormat]::Rtf)) {
+    $rtf = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::Rtf)
+  }
+} catch {}
+
+try {
+  if ([System.Windows.Forms.Clipboard]::ContainsText([System.Windows.Forms.TextDataFormat]::Html)) {
+    $html = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::Html)
+  }
+} catch {}
+
+try {
+  if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
+    $img = [System.Windows.Forms.Clipboard]::GetImage()
+    if ($img -ne $null) {
+      $ms = New-Object System.IO.MemoryStream
+      $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+      $bytes = $ms.ToArray()
+      if ($bytes -ne $null -and $bytes.Length -gt 0) {
+        $imagePngB64 = [System.Convert]::ToBase64String($bytes)
+      }
+    }
+  }
+} catch {}
+
+[pscustomobject]@{
+  success = $true
+  text = $text
+  rtf = $rtf
+  html = $html
+  imagePngB64 = $imagePngB64
+} | ConvertTo-Json -Compress
+`.trim();
+
+  const result = await psJson(script, [], { sta: true, timeoutMs: 20000 });
+  if (result.code !== 0 || !result.parsed?.success) {
+    return null;
+  }
+  return result.parsed;
+}
+
+async function restoreClipboardSnapshot(snapshot) {
+  if (!snapshot || snapshot.success !== true) return false;
+
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$raw = [Console]::In.ReadToEnd()
+if (-not $raw) {
+  [pscustomobject]@{ success = $false; reason = "no_input" } | ConvertTo-Json -Compress
+  exit 0
+}
+
+try { $snap = $raw | ConvertFrom-Json } catch {
+  [pscustomobject]@{ success = $false; reason = "invalid_json"; error = $_.Exception.Message } | ConvertTo-Json -Compress
+  exit 0
+}
+
+$dataObj = New-Object System.Windows.Forms.DataObject
+
+try {
+  if ($snap.text -ne $null -and ($snap.text.ToString()).Length -gt 0) {
+    $dataObj.SetText($snap.text.ToString(), [System.Windows.Forms.TextDataFormat]::UnicodeText)
+  }
+} catch {}
+
+try {
+  if ($snap.rtf -ne $null -and ($snap.rtf.ToString()).Length -gt 0) {
+    $dataObj.SetText($snap.rtf.ToString(), [System.Windows.Forms.TextDataFormat]::Rtf)
+  }
+} catch {}
+
+try {
+  if ($snap.html -ne $null -and ($snap.html.ToString()).Length -gt 0) {
+    $dataObj.SetText($snap.html.ToString(), [System.Windows.Forms.TextDataFormat]::Html)
+  }
+} catch {}
+
+try {
+  if ($snap.imagePngB64 -ne $null -and ($snap.imagePngB64.ToString()).Length -gt 0) {
+    $bytes = [System.Convert]::FromBase64String($snap.imagePngB64.ToString())
+    if ($bytes -ne $null -and $bytes.Length -gt 0) {
+      $ms = New-Object System.IO.MemoryStream(, $bytes)
+      $img = [System.Drawing.Image]::FromStream($ms)
+      if ($img -ne $null) {
+        $dataObj.SetImage($img)
+      }
+    }
+  }
+} catch {}
+
+try {
+  [System.Windows.Forms.Clipboard]::SetDataObject($dataObj, $true)
+  [pscustomobject]@{ success = $true } | ConvertTo-Json -Compress
+} catch {
+  [pscustomobject]@{ success = $false; reason = "restore_failed"; error = $_.Exception.Message } | ConvertTo-Json -Compress
+}
+`.trim();
+
+  const result = await psJson(script, [], {
+    sta: true,
+    timeoutMs: 20000,
+    stdin: JSON.stringify(snapshot),
+  });
+  return Boolean(result.parsed?.success);
+}
+
 async function main() {
   assert(process.platform === "win32", "windows_release_gate.js must be run on Windows.");
 
@@ -720,6 +878,8 @@ async function main() {
     OPENWHISPR_E2E_RUN_ID: runId,
     OPENWHISPR_CHANNEL: process.env.OPENWHISPR_CHANNEL || "staging",
   };
+
+  const originalClipboardSnapshot = await snapshotClipboardForRestore();
 
   console.log(`[gate] Launching: ${exePath}`);
   console.log(`[gate] CDP port: ${port}`);
@@ -785,6 +945,14 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
       }
     } catch {
       // ignore
+    } finally {
+      if (originalClipboardSnapshot) {
+        try {
+          await restoreClipboardSnapshot(originalClipboardSnapshot);
+        } catch {
+          // ignore
+        }
+      }
     }
   };
 
@@ -932,8 +1100,15 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     record("Stage label updates (Transcribing)", stageTranscribing.trim() === "Transcribing", stageTranscribing);
 
     // A) Dual output modes + insertion
-    const notepad = await startTextTarget();
-    await setForegroundWindow(notepad.hwnd);
+    let notepad = await startTextTarget();
+
+    const focusTarget = await ensureForegroundWindow(notepad.hwnd, notepad.kind === "notepad" ? "notepad" : "gatepad");
+    record(
+      `Target foreground (${notepad.kind === "notepad" ? "Notepad" : "GatePad"})`,
+      Boolean(focusTarget?.success),
+      JSON.stringify(focusTarget?.details || focusTarget)
+    );
+    assert(focusTarget?.success, "Could not focus the target window. Close interfering windows and re-run the gate without typing.");
 
     const fgBeforeShow = await getForegroundWindowInfo();
     await dictation.eval(`window.electronAPI.showDictationPanel(); true;`);
@@ -946,31 +1121,103 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     );
 
     const capture = await dictation.eval(`window.electronAPI.captureInsertionTarget()`);
+    const expectedHwnd = Number(notepad.hwnd);
+    const capturedHwnd = Number(capture?.target?.hwnd || 0);
+    const captureOk = Boolean(capture?.success) && capturedHwnd === expectedHwnd;
     record(
       `Capture insertion target (${notepad.kind === "notepad" ? "Notepad" : "GatePad"} foreground)`,
-      Boolean(capture?.success),
-      JSON.stringify(capture)
+      captureOk,
+      JSON.stringify({
+        success: capture?.success,
+        expectedHwnd,
+        capturedHwnd,
+        processName: capture?.target?.processName || "",
+      })
+    );
+    assert(
+      captureOk,
+      `captureInsertionTarget did not match expected foreground window (expected ${expectedHwnd}, got ${capturedHwnd}). Re-run without typing.`
     );
 
-    const insertText = `E2E Insert ${runId}`;
-    const beforeText = await readEditText(notepad.editHwnd);
+    // A1) Insert-mode: should insert into target when focus is stable
+    const insertForegroundText = `E2E InsertForeground ${runId}`;
+    const beforeForegroundText = await readEditText(notepad.editHwnd);
     await dictation.eval(`
       (async function () {
         await window.__openwhisprE2E.simulateTranscriptionComplete(
-          { text: ${JSON.stringify(insertText)}, source: "e2e" },
-          { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-${runId}`)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
+          { text: ${JSON.stringify(insertForegroundText)}, source: "e2e" },
+          { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-foreground-${runId}`)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
         );
         return true;
       })()
     `);
-
-    await sleep(1200);
-    const afterInsertText = await readEditText(notepad.editHwnd);
+    await sleep(300);
+    const afterForegroundText = await readEditText(notepad.editHwnd);
     record(
-      `Insert mode writes into ${notepad.kind === "notepad" ? "Notepad" : "GatePad"}`,
-      afterInsertText.includes(insertText) && afterInsertText.length > beforeText.length,
-      `len ${beforeText.length} -> ${afterInsertText.length}`
+      `Insert mode writes into ${notepad.kind === "notepad" ? "Notepad" : "GatePad"} (foreground stable)`,
+      afterForegroundText.includes(insertForegroundText) &&
+        afterForegroundText.length > beforeForegroundText.length,
+      `len ${beforeForegroundText.length} -> ${afterForegroundText.length}`
     );
+
+    // F) "Remember insertion target": switch focus away before insert, then ensure paste
+    // returns to the captured target (best-effort on Windows).
+    const decoy = await startGateTextWindow();
+    try {
+      const decoyFocus = await ensureForegroundWindow(decoy.hwnd, "decoy", 4);
+      record(
+        "Switch focus away before insert (decoy foreground)",
+        Boolean(decoyFocus?.success),
+        JSON.stringify(decoyFocus?.details || decoyFocus)
+      );
+
+      const insertLockedText = `E2E InsertLocked ${runId}`;
+      const beforeLockedText = await readEditText(notepad.editHwnd);
+
+      await dictation.eval(`
+        (async function () {
+          await window.__openwhisprE2E.simulateTranscriptionComplete(
+            { text: ${JSON.stringify(insertLockedText)}, source: "e2e" },
+            { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-locked-${runId}`)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
+          );
+          return true;
+        })()
+      `);
+
+      const afterInsertText = await readEditText(notepad.editHwnd);
+      const insertedIntoTarget =
+        afterInsertText.includes(insertLockedText) && afterInsertText.length > beforeLockedText.length;
+
+      let clipboardAfterLocked = "";
+      let clipboardHasLockedText = false;
+      if (!insertedIntoTarget) {
+        clipboardAfterLocked = await getClipboardText();
+        clipboardHasLockedText = clipboardAfterLocked.includes(insertLockedText);
+      }
+
+      record(
+        `Target lock inserts into ${notepad.kind === "notepad" ? "Notepad" : "GatePad"} OR falls back to clipboard`,
+        insertedIntoTarget || clipboardHasLockedText,
+        `insertedIntoTarget=${insertedIntoTarget} clipboardHasText=${clipboardHasLockedText}`
+      );
+
+      const decoyText = await readEditText(decoy.editHwnd);
+      record(
+        "Target lock does not insert into decoy",
+        !decoyText.includes(insertLockedText),
+        `len=${decoyText.length}`
+      );
+
+      if (!insertedIntoTarget) {
+        record(
+          "Target lock safe fallback leaves text in clipboard",
+          clipboardHasLockedText,
+          clipboardAfterLocked.slice(0, 80)
+        );
+      }
+    } finally {
+      await closeProcess(decoy.pid);
+    }
 
     const clipText = `E2E Clipboard ${runId}`;
     const notepadTextBeforeClipboardMode = await readEditText(notepad.editHwnd);
@@ -994,6 +1241,32 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
 
     const clipboardNow = await getClipboardText();
     record("Clipboard mode copies to clipboard", clipboardNow.includes(clipText), clipboardNow.slice(0, 80));
+
+    // A/F) Safe fallback if activation fails: insertion does not happen, but clipboard contains text.
+    const insertFailText = `E2E InsertFail ${runId}`;
+    const beforeFailText = await readEditText(notepad.editHwnd);
+    await dictation.eval(`
+      (async function () {
+        await window.__openwhisprE2E.simulateTranscriptionComplete(
+          { text: ${JSON.stringify(insertFailText)}, source: "e2e" },
+          { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-fail-${runId}`)}, insertionTarget: { hwnd: 1, pid: 0, processName: "invalid", title: "invalid" } }
+        );
+        return true;
+      })()
+    `);
+    await sleep(900);
+    const afterFailText = await readEditText(notepad.editHwnd);
+    record(
+      "Insert failure does not insert",
+      afterFailText === beforeFailText,
+      `len ${beforeFailText.length} -> ${afterFailText.length}`
+    );
+    const clipboardAfterFail = await getClipboardText();
+    record(
+      "Insert failure leaves text in clipboard",
+      clipboardAfterFail.includes(insertFailText),
+      clipboardAfterFail.slice(0, 80)
+    );
 
     // G) Clipboard image preservation (insert success path)
     const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
