@@ -85,7 +85,11 @@ export const useAudioRecording = (toast, options = {}) => {
         typeof payload?.sessionId === "string" && payload.sessionId.trim()
           ? payload.sessionId
           : createSessionId();
-      return { outputMode, sessionId };
+      const insertionTarget =
+        payload?.insertionTarget && typeof payload.insertionTarget === "object"
+          ? payload.insertionTarget
+          : null;
+      return { outputMode, sessionId, insertionTarget };
     },
     [createSessionId]
   );
@@ -174,6 +178,18 @@ export const useAudioRecording = (toast, options = {}) => {
       }
 
       const session = normalizeTriggerPayload(payload);
+
+      if (session.outputMode === "insert" && window.electronAPI?.captureInsertionTarget) {
+        try {
+          const captureResult = await window.electronAPI.captureInsertionTarget();
+          if (captureResult?.success && captureResult?.target?.hwnd) {
+            session.insertionTarget = captureResult.target;
+          }
+        } catch (error) {
+          logger.warn("Failed to capture insertion target", { error: error?.message }, "clipboard");
+        }
+      }
+
       const didStart = audioManagerRef.current.shouldUseStreaming()
         ? await audioManagerRef.current.startStreamingRecording()
         : await audioManagerRef.current.startRecording();
@@ -354,10 +370,14 @@ export const useAudioRecording = (toast, options = {}) => {
 
           const isResultStreaming = result.source?.includes("streaming");
           const pasteStart = performance.now();
-          pasteSucceeded = await audioManagerRef.current.safePaste(
-            result.text,
-            isResultStreaming ? { fromStreaming: true } : {}
-          );
+          const pasteOptions = {};
+          if (isResultStreaming) {
+            pasteOptions.fromStreaming = true;
+          }
+          if (session.insertionTarget) {
+            pasteOptions.insertionTarget = session.insertionTarget;
+          }
+          pasteSucceeded = await audioManagerRef.current.safePaste(result.text, pasteOptions);
           pasteMs = Math.round(performance.now() - pasteStart);
 
           logger.info(
@@ -403,6 +423,7 @@ export const useAudioRecording = (toast, options = {}) => {
             source: result.source,
             provider,
             model,
+            insertionTarget: session.insertionTarget || null,
             pasteSucceeded,
             timings: baseTimings,
           },

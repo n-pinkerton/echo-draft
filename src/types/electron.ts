@@ -18,6 +18,7 @@ export interface TranscriptionMeta {
   source?: string;
   provider?: string;
   model?: string;
+  insertionTarget?: InsertionTargetSnapshot | null;
   pasteSucceeded?: boolean;
   error?: string;
   timings?: TranscriptionTimings;
@@ -28,6 +29,15 @@ export interface DictationTriggerPayload {
   outputMode?: DictationOutputMode;
   sessionId?: string;
   triggeredAt?: number;
+  insertionTarget?: InsertionTargetSnapshot | null;
+}
+
+export interface InsertionTargetSnapshot {
+  hwnd: number;
+  pid?: number | null;
+  processName?: string;
+  title?: string;
+  capturedAt?: number;
 }
 
 export interface TranscriptionItem {
@@ -218,7 +228,10 @@ declare global {
   interface Window {
     electronAPI: {
       // Basic window operations
-      pasteText: (text: string, options?: { fromStreaming?: boolean }) => Promise<void>;
+      pasteText: (
+        text: string,
+        options?: { fromStreaming?: boolean; insertionTarget?: InsertionTargetSnapshot | null }
+      ) => Promise<void>;
       hideWindow: () => Promise<void>;
       showDictationPanel: () => Promise<void>;
       onToggleDictation: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
@@ -276,6 +289,12 @@ declare global {
       // Clipboard operations
       readClipboard: () => Promise<string>;
       writeClipboard: (text: string) => Promise<{ success: boolean }>;
+      captureInsertionTarget?: () => Promise<{
+        success: boolean;
+        reason?: string;
+        error?: string;
+        target?: InsertionTargetSnapshot;
+      }>;
       checkPasteTools: () => Promise<PasteToolsResult>;
 
       // Audio

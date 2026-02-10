@@ -1785,7 +1785,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         (typeof error?.toString === "function" ? error.toString() : String(error));
       this.onError?.({
         title: "Paste Error",
-        description: `Failed to paste text. Please check accessibility permissions. ${message}`,
+        description: `Failed to insert text automatically. ${message}`,
       });
       return false;
     }

@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Clipboard functions
   readClipboard: () => ipcRenderer.invoke("read-clipboard"),
   writeClipboard: (text) => ipcRenderer.invoke("write-clipboard", text),
+  captureInsertionTarget: () => ipcRenderer.invoke("capture-insertion-target"),
   checkPasteTools: () => ipcRenderer.invoke("check-paste-tools"),
 
   // Local Whisper functions (whisper.cpp)

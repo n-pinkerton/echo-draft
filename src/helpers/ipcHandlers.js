@@ -396,6 +396,13 @@ class IPCHandlers {
       return this.clipboardManager.writeClipboard(text, event.sender);
     });
 
+    ipcMain.handle("capture-insertion-target", async () => {
+      if (!this.clipboardManager?.captureInsertionTarget) {
+        return { success: false, reason: "unavailable" };
+      }
+      return this.clipboardManager.captureInsertionTarget();
+    });
+
     ipcMain.handle("check-paste-tools", async () => {
       return this.clipboardManager.checkPasteTools();
     });

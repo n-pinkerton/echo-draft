@@ -42,9 +42,15 @@ const PASTE_DELAYS = {
 // ms after paste completes before restoring clipboard
 const RESTORE_DELAYS = {
   darwin: 450,
-  win32_nircmd: 80,
-  win32_pwsh: 80,
+  win32_nircmd: 850,
+  win32_pwsh: 850,
   linux: 200,
+};
+
+const isTruthyFlag = (value) => {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 };
 
 function writeClipboardInRenderer(webContents, text) {
@@ -194,6 +200,314 @@ class ClipboardManager {
     }
   }
 
+  shouldPreferNircmd() {
+    return isTruthyFlag(
+      process.env.OPENWHISPR_WINDOWS_USE_NIRCMD || process.env.OPENWHISPR_USE_NIRCMD
+    );
+  }
+
+  snapshotClipboard() {
+    const snapshot = {
+      text: "",
+      formats: [],
+    };
+
+    try {
+      snapshot.text = clipboard.readText();
+    } catch {
+      snapshot.text = "";
+    }
+
+    try {
+      const formats = clipboard.availableFormats();
+      for (const format of formats) {
+        try {
+          const buffer = clipboard.readBuffer(format);
+          if (Buffer.isBuffer(buffer)) {
+            snapshot.formats.push({ format, buffer: Buffer.from(buffer) });
+          }
+        } catch {
+          // Ignore unreadable formats and preserve what we can.
+        }
+      }
+    } catch {
+      // Ignore format enumeration failures and fall back to plain text.
+    }
+
+    return snapshot;
+  }
+
+  restoreClipboardSnapshot(snapshot, webContents = null) {
+    if (!snapshot) {
+      return;
+    }
+
+    const formatEntries = Array.isArray(snapshot.formats) ? snapshot.formats : [];
+    if (formatEntries.length > 0) {
+      try {
+        clipboard.clear();
+        for (const entry of formatEntries) {
+          if (!entry?.format || !Buffer.isBuffer(entry.buffer)) {
+            continue;
+          }
+          clipboard.writeBuffer(entry.format, entry.buffer);
+        }
+        return;
+      } catch (error) {
+        this.safeLog("⚠️ Failed to restore full clipboard formats, falling back to text", {
+          error: error?.message,
+        });
+      }
+    }
+
+    const textValue = typeof snapshot.text === "string" ? snapshot.text : "";
+    if (process.platform === "linux" && this._isWayland()) {
+      this._writeClipboardWayland(textValue, webContents);
+    } else {
+      clipboard.writeText(textValue);
+    }
+  }
+
+  scheduleClipboardRestore(snapshot, delayMs, webContents = null) {
+    setTimeout(() => {
+      this.restoreClipboardSnapshot(snapshot, webContents);
+      this.safeLog("🔄 Clipboard restored", {
+        delayMs,
+        restoredFormats: snapshot?.formats?.length || 0,
+      });
+    }, delayMs);
+  }
+
+  runWindowsPowerShellScript(script, args = []) {
+    return new Promise((resolve, reject) => {
+      const psArgs = [
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+        ...args.map((arg) => String(arg)),
+      ];
+
+      const processHandle = spawn("powershell.exe", psArgs);
+      let stdout = "";
+      let stderr = "";
+
+      processHandle.stdout?.on("data", (data) => {
+        stdout += data.toString();
+      });
+      processHandle.stderr?.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      processHandle.on("error", (error) => {
+        reject(error);
+      });
+
+      processHandle.on("close", (code) => {
+        resolve({
+          code,
+          stdout,
+          stderr,
+        });
+      });
+    });
+  }
+
+  parsePowerShellJsonOutput(stdout = "") {
+    const trimmed = (stdout || "").trim();
+    if (!trimmed) {
+      return null;
+    }
+    const lines = trimmed.split(/\r?\n/).map((line) => line.trim());
+    const candidate = [...lines]
+      .reverse()
+      .find((line) => line.startsWith("{") || line.startsWith("["));
+    if (!candidate) {
+      return null;
+    }
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  }
+
+  resolveTargetLabel(target = {}) {
+    const processName = target?.processName ? String(target.processName) : "";
+    const title = target?.title ? String(target.title) : "";
+    if (processName && title) return `${processName} (${title})`;
+    if (processName) return processName;
+    if (title) return title;
+    return "original app";
+  }
+
+  async captureInsertionTarget() {
+    if (process.platform !== "win32") {
+      return {
+        success: false,
+        reason: "unsupported_platform",
+      };
+    }
+
+    const captureScript = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class WinApiCapture {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", SetLastError=true)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+$hwnd = [WinApiCapture]::GetForegroundWindow()
+if ($hwnd -eq [IntPtr]::Zero) {
+  [pscustomobject]@{ success = $false; reason = "no_foreground_window" } | ConvertTo-Json -Compress
+  exit 0
+}
+$pid = 0
+[void][WinApiCapture]::GetWindowThreadProcessId($hwnd, [ref]$pid)
+$titleBuilder = New-Object System.Text.StringBuilder 512
+[void][WinApiCapture]::GetWindowText($hwnd, $titleBuilder, $titleBuilder.Capacity)
+$processName = ""
+try { $processName = (Get-Process -Id $pid -ErrorAction Stop).ProcessName } catch {}
+[pscustomobject]@{
+  success = $true
+  hwnd = [Int64]$hwnd
+  pid = [Int32]$pid
+  processName = $processName
+  title = $titleBuilder.ToString()
+} | ConvertTo-Json -Compress
+`.trim();
+
+    try {
+      const result = await this.runWindowsPowerShellScript(captureScript);
+      const parsed = this.parsePowerShellJsonOutput(result.stdout);
+
+      if (result.code !== 0) {
+        return {
+          success: false,
+          reason: "capture_failed",
+          error: (result.stderr || "").trim() || `PowerShell exited with code ${result.code}`,
+        };
+      }
+
+      if (!parsed || parsed.success !== true || !parsed.hwnd) {
+        return {
+          success: false,
+          reason: parsed?.reason || "capture_failed",
+          error: (result.stderr || "").trim() || null,
+        };
+      }
+
+      return {
+        success: true,
+        target: {
+          hwnd: Number(parsed.hwnd),
+          pid: Number(parsed.pid) || null,
+          processName: parsed.processName || "",
+          title: parsed.title || "",
+          capturedAt: Date.now(),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        reason: "capture_failed",
+        error: error?.message || String(error),
+      };
+    }
+  }
+
+  async activateInsertionTarget(target) {
+    if (process.platform !== "win32") {
+      return {
+        success: false,
+        reason: "unsupported_platform",
+      };
+    }
+
+    const hwnd = Number(target?.hwnd);
+    if (!Number.isFinite(hwnd) || hwnd <= 0) {
+      return {
+        success: false,
+        reason: "invalid_target",
+      };
+    }
+
+    const activateScript = `
+param([Int64]$TargetHwnd)
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinApiActivate {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+}
+"@
+$target = [IntPtr]$TargetHwnd
+if (-not [WinApiActivate]::IsWindow($target)) {
+  [pscustomobject]@{ success = $false; reason = "window_not_found"; targetHwnd = $TargetHwnd } | ConvertTo-Json -Compress
+  exit 0
+}
+[void][WinApiActivate]::ShowWindowAsync($target, 9)
+$setResult = [WinApiActivate]::SetForegroundWindow($target)
+Start-Sleep -Milliseconds 140
+$active = [Int64][WinApiActivate]::GetForegroundWindow()
+$success = ($active -eq $TargetHwnd)
+if (-not $success -and $setResult) {
+  Start-Sleep -Milliseconds 120
+  $active = [Int64][WinApiActivate]::GetForegroundWindow()
+  $success = ($active -eq $TargetHwnd)
+}
+[pscustomobject]@{
+  success = $success
+  reason = $(if ($success) { "" } else { "foreground_switch_blocked" })
+  targetHwnd = $TargetHwnd
+  activeHwnd = $active
+  setForegroundReturned = [bool]$setResult
+} | ConvertTo-Json -Compress
+`.trim();
+
+    try {
+      const result = await this.runWindowsPowerShellScript(activateScript, [String(hwnd)]);
+      const parsed = this.parsePowerShellJsonOutput(result.stdout);
+
+      if (result.code !== 0) {
+        return {
+          success: false,
+          reason: "activation_failed",
+          error: (result.stderr || "").trim() || `PowerShell exited with code ${result.code}`,
+        };
+      }
+
+      if (!parsed || parsed.success !== true) {
+        return {
+          success: false,
+          reason: parsed?.reason || "activation_failed",
+          details: parsed || null,
+        };
+      }
+
+      return {
+        success: true,
+        details: parsed,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        reason: "activation_failed",
+        error: error?.message || String(error),
+      };
+    }
+  }
+
   commandExists(cmd) {
     const now = Date.now();
     const cached = this.commandAvailabilityCache.get(cmd);
@@ -226,11 +540,11 @@ class ClipboardManager {
     const webContents = options.webContents;
 
     try {
-      const originalClipboard = clipboard.readText();
-      this.safeLog(
-        "💾 Saved original clipboard content:",
-        originalClipboard.substring(0, 50) + "..."
-      );
+      const originalClipboardSnapshot = this.snapshotClipboard();
+      this.safeLog("💾 Saved original clipboard snapshot", {
+        formats: originalClipboardSnapshot.formats.length,
+        textLength: (originalClipboardSnapshot.text || "").length,
+      });
 
       if (platform === "linux" && this._isWayland()) {
         this._writeClipboardWayland(text, webContents);
@@ -252,14 +566,25 @@ class ClipboardManager {
         }
 
         this.safeLog("✅ Permissions granted, attempting to paste...");
-        await this.pasteMacOS(originalClipboard, options);
+        await this.pasteMacOS(originalClipboardSnapshot, options);
       } else if (platform === "win32") {
-        const nircmdPath = this.getNircmdPath();
-        method = nircmdPath ? "nircmd" : "powershell";
-        await this.pasteWindows(originalClipboard);
+        method = this.shouldPreferNircmd() && this.getNircmdPath() ? "nircmd" : "powershell";
+
+        if (options?.insertionTarget?.hwnd) {
+          const activationResult = await this.activateInsertionTarget(options.insertionTarget);
+          if (!activationResult.success) {
+            const targetLabel = this.resolveTargetLabel(options.insertionTarget);
+            const reason = activationResult.reason || "focus switch blocked";
+            throw new Error(
+              `Could not return focus to ${targetLabel} (${reason}). Text is copied to clipboard - please paste manually with Ctrl+V.`
+            );
+          }
+        }
+
+        await this.pasteWindows(originalClipboardSnapshot, options);
       } else {
         method = "linux-tools";
-        await this.pasteLinux(originalClipboard, options);
+        await this.pasteLinux(originalClipboardSnapshot, options);
       }
 
       this.safeLog("✅ Paste operation complete", {
@@ -279,7 +604,7 @@ class ClipboardManager {
     }
   }
 
-  async pasteMacOS(originalClipboard, options = {}) {
+  async pasteMacOS(originalClipboardSnapshot, options = {}) {
     const fastPasteBinary = this.resolveFastPasteBinary();
     const useFastPaste = !!fastPasteBinary;
     const pasteDelay = options.fromStreaming ? (useFastPaste ? 15 : 50) : PASTE_DELAYS.darwin;
@@ -307,9 +632,7 @@ class ClipboardManager {
 
           if (code === 0) {
             this.safeLog(`Text pasted successfully via ${useFastPaste ? "CGEvent" : "osascript"}`);
-            setTimeout(() => {
-              clipboard.writeText(originalClipboard);
-            }, RESTORE_DELAYS.darwin);
+            this.scheduleClipboardRestore(originalClipboardSnapshot, RESTORE_DELAYS.darwin);
             resolve();
           } else if (useFastPaste) {
             this.safeLog(
@@ -319,7 +642,7 @@ class ClipboardManager {
             );
             this.fastPasteChecked = true;
             this.fastPastePath = null;
-            this.pasteMacOSWithOsascript(originalClipboard).then(resolve).catch(reject);
+            this.pasteMacOSWithOsascript(originalClipboardSnapshot).then(resolve).catch(reject);
           } else {
             this.accessibilityCache = { value: null, expiresAt: 0 };
             const errorMsg = `Paste failed (code ${code}). Text is copied to clipboard - please paste manually with Cmd+V.`;
@@ -336,7 +659,7 @@ class ClipboardManager {
             this.safeLog("CGEvent paste error, falling back to osascript");
             this.fastPasteChecked = true;
             this.fastPastePath = null;
-            this.pasteMacOSWithOsascript(originalClipboard).then(resolve).catch(reject);
+            this.pasteMacOSWithOsascript(originalClipboardSnapshot).then(resolve).catch(reject);
           } else {
             const errorMsg = `Paste command failed: ${error.message}. Text is copied to clipboard - please paste manually with Cmd+V.`;
             reject(new Error(errorMsg));
@@ -355,7 +678,7 @@ class ClipboardManager {
     });
   }
 
-  async pasteMacOSWithOsascript(originalClipboard) {
+  async pasteMacOSWithOsascript(originalClipboardSnapshot) {
     return new Promise((resolve, reject) => {
       const pasteProcess = spawn("osascript", [
         "-e",
@@ -371,9 +694,7 @@ class ClipboardManager {
 
         if (code === 0) {
           this.safeLog("Text pasted successfully via osascript fallback");
-          setTimeout(() => {
-            clipboard.writeText(originalClipboard);
-          }, RESTORE_DELAYS.darwin);
+          this.scheduleClipboardRestore(originalClipboardSnapshot, RESTORE_DELAYS.darwin);
           resolve();
         } else {
           this.accessibilityCache = { value: null, expiresAt: 0 };
@@ -403,20 +724,39 @@ class ClipboardManager {
     });
   }
 
-  async pasteWindows(originalClipboard) {
+  async pasteWindows(originalClipboardSnapshot, options = {}) {
     const nircmdPath = this.getNircmdPath();
+    const preferNircmd = this.shouldPreferNircmd();
 
-    if (nircmdPath) {
-      return this.pasteWithNircmd(nircmdPath, originalClipboard);
-    } else {
-      return this.pasteWithPowerShell(originalClipboard);
+    if (preferNircmd && nircmdPath) {
+      try {
+        return await this.pasteWithNircmd(nircmdPath, originalClipboardSnapshot, options);
+      } catch (error) {
+        this.safeLog("⚠️ Preferred nircmd paste failed, trying PowerShell fallback", {
+          error: error?.message,
+        });
+        return this.pasteWithPowerShell(originalClipboardSnapshot, options);
+      }
+    }
+
+    try {
+      return await this.pasteWithPowerShell(originalClipboardSnapshot, options);
+    } catch (error) {
+      if (nircmdPath) {
+        this.safeLog("⚠️ PowerShell paste failed, trying optional nircmd fallback", {
+          error: error?.message,
+        });
+        return this.pasteWithNircmd(nircmdPath, originalClipboardSnapshot, options);
+      }
+      throw error;
     }
   }
 
-  async pasteWithNircmd(nircmdPath, originalClipboard) {
+  async pasteWithNircmd(nircmdPath, originalClipboardSnapshot, options = {}) {
     return new Promise((resolve, reject) => {
       const pasteDelay = PASTE_DELAYS.win32_nircmd;
       const restoreDelay = RESTORE_DELAYS.win32_nircmd;
+      const webContents = options.webContents;
 
       setTimeout(() => {
         let hasTimedOut = false;
@@ -443,17 +783,19 @@ class ClipboardManager {
               elapsedMs: elapsed,
               restoreDelayMs: restoreDelay,
             });
-            setTimeout(() => {
-              clipboard.writeText(originalClipboard);
-              this.safeLog("🔄 Clipboard restored");
-            }, restoreDelay);
+            this.scheduleClipboardRestore(originalClipboardSnapshot, restoreDelay, webContents);
             resolve();
           } else {
-            this.safeLog(`❌ nircmd failed (code ${code}), falling back to PowerShell`, {
+            this.safeLog(`❌ nircmd paste failed`, {
               elapsedMs: elapsed,
               stderr: errorOutput,
+              exitCode: code,
             });
-            this.pasteWithPowerShell(originalClipboard).then(resolve).catch(reject);
+            reject(
+              new Error(
+                `Windows paste failed with nircmd (code ${code}). Text is copied to clipboard - please paste manually with Ctrl+V.`
+              )
+            );
           }
         });
 
@@ -461,29 +803,38 @@ class ClipboardManager {
           if (hasTimedOut) return;
           clearTimeout(timeoutId);
           const elapsed = Date.now() - startTime;
-          this.safeLog(`❌ nircmd error, falling back to PowerShell`, {
+          this.safeLog(`❌ nircmd paste error`, {
             elapsedMs: elapsed,
             error: error.message,
           });
-          this.pasteWithPowerShell(originalClipboard).then(resolve).catch(reject);
+          reject(
+            new Error(
+              `Windows nircmd paste failed: ${error.message}. Text is copied to clipboard - please paste manually with Ctrl+V.`
+            )
+          );
         });
 
         const timeoutId = setTimeout(() => {
           hasTimedOut = true;
           const elapsed = Date.now() - startTime;
-          this.safeLog(`⏱️ nircmd timeout, falling back to PowerShell`, { elapsedMs: elapsed });
+          this.safeLog(`⏱️ nircmd timeout`, { elapsedMs: elapsed });
           killProcess(pasteProcess, "SIGKILL");
           pasteProcess.removeAllListeners();
-          this.pasteWithPowerShell(originalClipboard).then(resolve).catch(reject);
+          reject(
+            new Error(
+              "Windows nircmd paste timed out. Text is copied to clipboard - please paste manually with Ctrl+V."
+            )
+          );
         }, 2000);
       }, pasteDelay);
     });
   }
 
-  async pasteWithPowerShell(originalClipboard) {
+  async pasteWithPowerShell(originalClipboardSnapshot, options = {}) {
     return new Promise((resolve, reject) => {
       const pasteDelay = PASTE_DELAYS.win32_pwsh;
       const restoreDelay = RESTORE_DELAYS.win32_pwsh;
+      const webContents = options.webContents;
 
       setTimeout(() => {
         let hasTimedOut = false;
@@ -519,10 +870,7 @@ class ClipboardManager {
               elapsedMs: elapsed,
               restoreDelayMs: restoreDelay,
             });
-            setTimeout(() => {
-              clipboard.writeText(originalClipboard);
-              this.safeLog("🔄 Clipboard restored");
-            }, restoreDelay);
+            this.scheduleClipboardRestore(originalClipboardSnapshot, restoreDelay, webContents);
             resolve();
           } else {
             this.safeLog(`❌ PowerShell paste failed`, {
@@ -569,7 +917,7 @@ class ClipboardManager {
     });
   }
 
-  async pasteLinux(originalClipboard, options = {}) {
+  async pasteLinux(originalClipboardSnapshot, options = {}) {
     const { isWayland, xwaylandAvailable, isGnome } = getLinuxSessionInfo();
     const webContents = options.webContents;
     const xdotoolExists = this.commandExists("xdotool");
@@ -782,13 +1130,11 @@ class ClipboardManager {
 
             if (code === 0) {
               debugLogger.debug("Paste successful", { cmd: tool.cmd }, "clipboard");
-              setTimeout(() => {
-                if (isWayland) {
-                  this._writeClipboardWayland(originalClipboard, webContents);
-                } else {
-                  clipboard.writeText(originalClipboard);
-                }
-              }, RESTORE_DELAYS.linux);
+              this.scheduleClipboardRestore(
+                originalClipboardSnapshot,
+                RESTORE_DELAYS.linux,
+                webContents
+              );
               resolve();
             } else {
               debugLogger.error(
