@@ -480,6 +480,24 @@ catch { [pscustomobject]@{ success = $false; error = $_.Exception.Message } }
 
 async function startTextTarget() {
   try {
+    const notepadCheck = await psJson(
+      `
+try {
+  $count = @(Get-Process -Name Notepad -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }).Count
+} catch { $count = 0 }
+[pscustomobject]@{ success = $true; count = [Int32]$count } | ConvertTo-Json -Compress
+      `.trim()
+    );
+
+    if (Number(notepadCheck.parsed?.count || 0) > 0) {
+      console.warn("[gate] Detected existing Notepad windows; using GatePad text window instead.");
+      return await startGateTextWindow();
+    }
+  } catch {
+    // Ignore detection failures and try Notepad; fallback will cover failures.
+  }
+
+  try {
     const notepad = await startNotepad();
     return { ...notepad, kind: "notepad" };
   } catch (error) {
