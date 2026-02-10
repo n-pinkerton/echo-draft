@@ -40,6 +40,25 @@ export interface TranscriptionItem {
   created_at: string;
 }
 
+export interface DictionaryImportResult {
+  success: boolean;
+  canceled?: boolean;
+  filePath?: string;
+  words?: string[];
+  parsedCount?: number;
+  uniqueCount?: number;
+  duplicatesRemoved?: number;
+  error?: string;
+}
+
+export interface DictionaryExportResult {
+  success: boolean;
+  canceled?: boolean;
+  format?: "txt" | "csv";
+  filePath?: string;
+  count?: number;
+}
+
 export interface WhisperCheckResult {
   installed: boolean;
   working: boolean;
@@ -230,6 +249,8 @@ declare global {
       // Dictionary operations
       getDictionary: () => Promise<string[]>;
       setDictionary: (words: string[]) => Promise<{ success: boolean }>;
+      importDictionaryFile?: () => Promise<DictionaryImportResult>;
+      exportDictionary?: (format?: "txt" | "csv") => Promise<DictionaryExportResult>;
 
       // Database event listeners
       onTranscriptionAdded?: (callback: (item: TranscriptionItem) => void) => () => void;

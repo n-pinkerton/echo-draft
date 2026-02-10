@@ -49,6 +49,7 @@ import DeveloperSection from "./DeveloperSection";
 import LanguageSelector from "./ui/LanguageSelector";
 import { Skeleton } from "./ui/skeleton";
 import { Progress } from "./ui/progress";
+import { Textarea } from "./ui/textarea";
 import { useToast } from "./ui/Toast";
 import { useTheme } from "../hooks/useTheme";
 import type { LocalTranscriptionProvider } from "../types/electron";
@@ -109,6 +110,34 @@ function SectionHeader({ title, description }: { title: string; description?: st
     </div>
   );
 }
+
+const DICTIONARY_SPLIT_REGEX = /[\n,;\t]+/g;
+
+const parseDictionaryEntries = (input: string): string[] =>
+  input
+    .split(DICTIONARY_SPLIT_REGEX)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+const dedupeDictionaryEntries = (entries: string[]): string[] => {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const entry of entries) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const normalized = trimmed.toLocaleLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push(trimmed);
+  }
+  return unique;
+};
+
+const getFileNameFromPath = (filePath = ""): string => {
+  if (!filePath) return "";
+  const parts = filePath.split(/[\\/]/);
+  return parts[parts.length - 1] || filePath;
+};
 
 interface TranscriptionSectionProps {
   isSignedIn: boolean;
@@ -761,11 +790,29 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
   }, []);
 
   const [newDictionaryWord, setNewDictionaryWord] = useState("");
+  const [dictionaryBatchText, setDictionaryBatchText] = useState("");
+  const [dictionaryImportMode, setDictionaryImportMode] = useState<"merge" | "replace">("merge");
+  const [importedDictionaryFileName, setImportedDictionaryFileName] = useState("");
+  const [isImportingDictionaryFile, setIsImportingDictionaryFile] = useState(false);
+  const [isExportingDictionary, setIsExportingDictionary] = useState(false);
+
+  const dictionaryBatchPreview = useMemo(() => {
+    const parsedEntries = parseDictionaryEntries(dictionaryBatchText);
+    const uniqueWords = dedupeDictionaryEntries(parsedEntries);
+    return {
+      parsedCount: parsedEntries.length,
+      uniqueWords,
+      duplicatesRemoved: Math.max(0, parsedEntries.length - uniqueWords.length),
+    };
+  }, [dictionaryBatchText]);
 
   const handleAddDictionaryWord = useCallback(() => {
     const word = newDictionaryWord.trim();
-    if (word && !customDictionary.includes(word)) {
-      setCustomDictionary([...customDictionary, word]);
+    if (word) {
+      const nextWords = dedupeDictionaryEntries([...customDictionary, word]);
+      if (nextWords.length !== customDictionary.length) {
+        setCustomDictionary(nextWords);
+      }
       setNewDictionaryWord("");
     }
   }, [newDictionaryWord, customDictionary, setCustomDictionary]);
@@ -776,6 +823,136 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     },
     [customDictionary, setCustomDictionary]
   );
+
+  const applyDictionaryBatch = useCallback(() => {
+    const batchWords = dictionaryBatchPreview.uniqueWords;
+    if (batchWords.length === 0) {
+      toast({
+        title: "Nothing to import",
+        description: "Add words first, then apply the import.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const runImport = () => {
+      const nextWords =
+        dictionaryImportMode === "replace"
+          ? batchWords
+          : dedupeDictionaryEntries([...customDictionary, ...batchWords]);
+
+      const addedCount = Math.max(0, nextWords.length - customDictionary.length);
+      const replacedCount = customDictionary.length;
+      setCustomDictionary(nextWords);
+
+      toast({
+        title: dictionaryImportMode === "replace" ? "Dictionary replaced" : "Dictionary merged",
+        description:
+          dictionaryImportMode === "replace"
+            ? `Replaced ${replacedCount} existing words with ${nextWords.length} imported words.`
+            : `Imported ${batchWords.length} words (${addedCount} new additions).`,
+        variant: "success",
+      });
+    };
+
+    if (dictionaryImportMode === "replace" && customDictionary.length > 0) {
+      showConfirmDialog({
+        title: "Replace dictionary?",
+        description:
+          "This will replace your current dictionary with the imported words. Existing words will be removed.",
+        confirmText: "Replace Dictionary",
+        variant: "destructive",
+        onConfirm: runImport,
+      });
+      return;
+    }
+
+    runImport();
+  }, [
+    customDictionary,
+    dictionaryBatchPreview.uniqueWords,
+    dictionaryImportMode,
+    setCustomDictionary,
+    showConfirmDialog,
+    toast,
+  ]);
+
+  const handleImportDictionaryFile = useCallback(async () => {
+    if (!window.electronAPI?.importDictionaryFile) {
+      toast({
+        title: "Import unavailable",
+        description: "File import is not available in this build.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsImportingDictionaryFile(true);
+    try {
+      const result = await window.electronAPI.importDictionaryFile();
+      if (!result || result.canceled) {
+        return;
+      }
+
+      if (!result.success) {
+        throw new Error(result.error || "Failed to import dictionary file.");
+      }
+
+      const importedWords = Array.isArray(result.words) ? result.words : [];
+      setDictionaryBatchText(importedWords.join("\n"));
+      setImportedDictionaryFileName(getFileNameFromPath(result.filePath || ""));
+
+      toast({
+        title: "File imported",
+        description: `Loaded ${importedWords.length} unique words from file.`,
+        variant: "success",
+      });
+    } catch (error) {
+      toast({
+        title: "Import failed",
+        description: (error as Error)?.message || "Could not read dictionary file.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImportingDictionaryFile(false);
+    }
+  }, [toast]);
+
+  const handleExportDictionary = useCallback(async () => {
+    if (!window.electronAPI?.exportDictionary) {
+      toast({
+        title: "Export unavailable",
+        description: "Dictionary export is not available in this build.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsExportingDictionary(true);
+    try {
+      const result = await window.electronAPI.exportDictionary("txt");
+      if (!result || result.canceled) {
+        return;
+      }
+      if (!result.success) {
+        throw new Error("Failed to export dictionary.");
+      }
+
+      toast({
+        title: "Dictionary exported",
+        description: `Saved ${result.count ?? customDictionary.length} words to ${getFileNameFromPath(result.filePath || "")}.`,
+        variant: "success",
+      });
+    } catch (error) {
+      toast({
+        title: "Export failed",
+        description: (error as Error)?.message || "Could not export dictionary.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExportingDictionary(false);
+    }
+  }, [customDictionary.length, toast]);
 
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [autoStartLoading, setAutoStartLoading] = useState(true);
@@ -1582,6 +1759,104 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     </Button>
                   </div>
                   <p className="text-[10px] text-muted-foreground/50">Press Enter to add</p>
+                </div>
+              </SettingsPanelRow>
+            </SettingsPanel>
+
+            {/* Batch Import / Export */}
+            <SettingsPanel>
+              <SettingsPanelRow>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[12px] font-medium text-foreground">Batch import / export</p>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2"
+                        onClick={handleImportDictionaryFile}
+                        disabled={isImportingDictionaryFile}
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        {isImportingDictionaryFile ? "Importing..." : "Import file"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2"
+                        onClick={handleExportDictionary}
+                        disabled={customDictionary.length === 0 || isExportingDictionary}
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        {isExportingDictionary ? "Exporting..." : "Export"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Textarea
+                    value={dictionaryBatchText}
+                    onChange={(e) => setDictionaryBatchText(e.target.value)}
+                    placeholder="Paste one word or phrase per line. Commas and semicolons are also supported."
+                    className="min-h-[110px] text-[12px] leading-relaxed dark:bg-surface-2/80 dark:border-border-subtle focus:border-primary/40 focus:ring-primary/10"
+                  />
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        variant={dictionaryImportMode === "merge" ? "default" : "outline"}
+                        size="sm"
+                        className="h-7"
+                        onClick={() => setDictionaryImportMode("merge")}
+                      >
+                        Merge
+                      </Button>
+                      <Button
+                        variant={dictionaryImportMode === "replace" ? "destructive" : "outline"}
+                        size="sm"
+                        className="h-7"
+                        onClick={() => setDictionaryImportMode("replace")}
+                      >
+                        Replace
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-[11px]"
+                        onClick={() => {
+                          setDictionaryBatchText("");
+                          setImportedDictionaryFileName("");
+                        }}
+                        disabled={!dictionaryBatchText.trim()}
+                      >
+                        Clear draft
+                      </Button>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      className="h-7"
+                      onClick={applyDictionaryBatch}
+                      disabled={dictionaryBatchPreview.uniqueWords.length === 0}
+                    >
+                      Apply {dictionaryImportMode === "replace" ? "Replace" : "Merge"}
+                    </Button>
+                  </div>
+
+                  <div className="rounded-md border border-border/40 dark:border-border-subtle bg-muted/40 dark:bg-surface-2/70 px-3 py-2 space-y-1">
+                    <p className="text-[10px] text-muted-foreground/80">
+                      {dictionaryBatchPreview.parsedCount > 0
+                        ? `Preview: ${dictionaryBatchPreview.uniqueWords.length} unique words (${dictionaryBatchPreview.duplicatesRemoved} duplicates removed).`
+                        : "Preview: Add words to see import counts."}
+                    </p>
+                    {importedDictionaryFileName && (
+                      <p className="text-[10px] text-muted-foreground/70">
+                        Source file: {importedDictionaryFileName}
+                      </p>
+                    )}
+                    <p className="text-[10px] text-muted-foreground/70">
+                      Merge adds new words to your existing dictionary. Replace overwrites it.
+                    </p>
+                  </div>
                 </div>
               </SettingsPanelRow>
             </SettingsPanel>

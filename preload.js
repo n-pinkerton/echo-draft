@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Dictionary functions
   getDictionary: () => ipcRenderer.invoke("db-get-dictionary"),
   setDictionary: (words) => ipcRenderer.invoke("db-set-dictionary", words),
+  importDictionaryFile: () => ipcRenderer.invoke("db-import-dictionary-file"),
+  exportDictionary: (format) => ipcRenderer.invoke("db-export-dictionary", format),
 
   onTranscriptionAdded: (callback) => {
     const listener = (_event, transcription) => callback?.(transcription);
