@@ -250,6 +250,190 @@ export const useAudioRecording = (toast, options = {}) => {
   useEffect(() => {
     audioManagerRef.current = new AudioManager();
 
+    const isE2E =
+      typeof window !== "undefined" &&
+      (() => {
+        try {
+          return new URLSearchParams(window.location.search).get("e2e") === "true";
+        } catch {
+          return false;
+        }
+      })();
+
+    const handleTranscriptionComplete = async (result) => {
+      if (!result.success) {
+        updateStage("error", { message: "Transcription did not complete." });
+        return;
+      }
+
+      setTranscript(result.text);
+      const session = activeSessionRef.current || normalizeTriggerPayload();
+      activeSessionRef.current = null;
+
+      let pasteSucceeded = false;
+      let pasteMs = null;
+
+      if (session.outputMode === "insert") {
+        updateStage("inserting", {
+          outputMode: session.outputMode,
+          sessionId: session.sessionId,
+        });
+
+        const isResultStreaming = result.source?.includes("streaming");
+        const pasteStart = performance.now();
+        const pasteOptions = {};
+        if (isResultStreaming) {
+          pasteOptions.fromStreaming = true;
+        }
+        if (session.insertionTarget) {
+          pasteOptions.insertionTarget = session.insertionTarget;
+        }
+        pasteSucceeded = await audioManagerRef.current.safePaste(result.text, pasteOptions);
+        pasteMs = Math.round(performance.now() - pasteStart);
+
+        logger.info(
+          "Paste timing",
+          {
+            pasteMs,
+            source: result.source,
+            textLength: result.text.length,
+            outputMode: session.outputMode,
+            pasteSucceeded,
+          },
+          "streaming"
+        );
+      } else {
+        try {
+          await window.electronAPI?.writeClipboard?.(result.text);
+        } catch (error) {
+          logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
+        }
+
+        toast({
+          title: "Copied to Clipboard",
+          description: "Dictation finished. Paste where you want the text.",
+          duration: 2500,
+        });
+      }
+
+      updateStage("saving", {
+        outputMode: session.outputMode,
+        sessionId: session.sessionId,
+      });
+
+      const saveStart = performance.now();
+      const latestProgress = latestProgressRef.current || {};
+      const recordDurationMs =
+        typeof latestProgress.recordedMs === "number" && latestProgress.recordedMs > 0
+          ? Math.round(latestProgress.recordedMs)
+          : null;
+      const baseTimings = {
+        ...(result.timings || {}),
+        ...(recordDurationMs !== null ? { recordDurationMs } : {}),
+        pasteDurationMs: pasteMs,
+      };
+      const provider = latestProgress.provider || result.source || "";
+      const model = latestProgress.model || "";
+
+      const saveResult = await audioManagerRef.current.saveTranscription({
+        text: result.text,
+        rawText: result.rawText || result.text,
+        meta: {
+          sessionId: session.sessionId,
+          outputMode: session.outputMode,
+          status: "success",
+          source: result.source,
+          provider,
+          model,
+          insertionTarget: session.insertionTarget || null,
+          pasteSucceeded,
+          timings: baseTimings,
+        },
+      });
+      const saveSucceeded = Boolean(saveResult?.success);
+      const savedId = saveResult?.id || saveResult?.transcription?.id;
+      const saveMs = Math.round(performance.now() - saveStart);
+      const totalDurationMs = sessionStartedAtRef.current
+        ? Math.max(0, Date.now() - sessionStartedAtRef.current)
+        : null;
+
+      if (saveSucceeded && savedId && window.electronAPI?.patchTranscriptionMeta) {
+        try {
+          await window.electronAPI.patchTranscriptionMeta(savedId, {
+            provider,
+            model,
+            timings: {
+              ...baseTimings,
+              saveDurationMs: saveMs,
+              totalDurationMs,
+            },
+          });
+        } catch (error) {
+          logger.warn(
+            "Failed to patch transcription metadata",
+            { error: error?.message, id: savedId },
+            "transcription"
+          );
+        }
+      }
+
+      if (!saveSucceeded) {
+        const fallbackDescription =
+          session.outputMode === "insert" && pasteSucceeded
+            ? "Text was inserted, but saving to history failed."
+            : "Text is copied to clipboard, but saving to history failed.";
+        toast({
+          title: "History Save Failed",
+          description: fallbackDescription,
+          variant: "destructive",
+          duration: 4000,
+        });
+      }
+
+      if (result.source === "openai" && localStorage.getItem("useLocalWhisper") === "true") {
+        toast({
+          title: "Fallback Mode",
+          description: "Local Whisper failed. Used OpenAI API instead.",
+          variant: "default",
+        });
+      }
+
+      if (result.source === "openwhispr" && result.limitReached) {
+        window.electronAPI?.notifyLimitReached?.({
+          wordsUsed: result.wordsUsed,
+          limit:
+            result.wordsRemaining !== undefined ? result.wordsUsed + result.wordsRemaining : 2000,
+        });
+      }
+
+      updateStage("done", {
+        outputMode: session.outputMode,
+        sessionId: session.sessionId,
+        stageProgress: 1,
+        overallProgress: 1,
+        message: saveSucceeded
+          ? null
+          : session.outputMode === "insert" && pasteSucceeded
+            ? "Inserted, but history save failed."
+            : "Saved to clipboard, but history save failed.",
+        provider,
+        model,
+        generatedChars: result.text.length,
+        generatedWords: countWords(result.text),
+      });
+
+      setProgress((prev) => ({
+        ...prev,
+        elapsedMs: sessionStartedAtRef.current
+          ? Math.max(0, Date.now() - sessionStartedAtRef.current)
+          : prev.elapsedMs,
+        recordedMs: prev.recordedMs,
+        message: saveSucceeded && saveMs > 0 ? `Saved in ${saveMs}ms` : prev.message,
+      }));
+
+      audioManagerRef.current.warmupStreamingConnection();
+    };
+
     audioManagerRef.current.setCallbacks({
       onStateChange: ({ isRecording, isProcessing, isStreaming }) => {
         setIsRecording(isRecording);
@@ -343,180 +527,47 @@ export const useAudioRecording = (toast, options = {}) => {
           };
         });
       },
-      onTranscriptionComplete: async (result) => {
-        if (!result.success) {
-          updateStage("error", { message: "Transcription did not complete." });
-          return;
-        }
-
-        setTranscript(result.text);
-        const session = activeSessionRef.current || normalizeTriggerPayload();
-        activeSessionRef.current = null;
-
-        let pasteSucceeded = false;
-        let pasteMs = null;
-
-        if (session.outputMode === "insert") {
-          updateStage("inserting", {
-            outputMode: session.outputMode,
-            sessionId: session.sessionId,
-          });
-
-          const isResultStreaming = result.source?.includes("streaming");
-          const pasteStart = performance.now();
-          const pasteOptions = {};
-          if (isResultStreaming) {
-            pasteOptions.fromStreaming = true;
-          }
-          if (session.insertionTarget) {
-            pasteOptions.insertionTarget = session.insertionTarget;
-          }
-          pasteSucceeded = await audioManagerRef.current.safePaste(result.text, pasteOptions);
-          pasteMs = Math.round(performance.now() - pasteStart);
-
-          logger.info(
-            "Paste timing",
-            {
-              pasteMs,
-              source: result.source,
-              textLength: result.text.length,
-              outputMode: session.outputMode,
-              pasteSucceeded,
-            },
-            "streaming"
-          );
-        } else {
-          try {
-            await window.electronAPI?.writeClipboard?.(result.text);
-          } catch (error) {
-            logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
-          }
-
-          toast({
-            title: "Copied to Clipboard",
-            description: "Dictation finished. Paste where you want the text.",
-            duration: 2500,
-          });
-        }
-
-        updateStage("saving", {
-          outputMode: session.outputMode,
-          sessionId: session.sessionId,
-        });
-
-        const saveStart = performance.now();
-        const latestProgress = latestProgressRef.current || {};
-        const recordDurationMs =
-          typeof latestProgress.recordedMs === "number" && latestProgress.recordedMs > 0
-            ? Math.round(latestProgress.recordedMs)
-            : null;
-        const baseTimings = {
-          ...(result.timings || {}),
-          ...(recordDurationMs !== null ? { recordDurationMs } : {}),
-          pasteDurationMs: pasteMs,
-        };
-        const provider = latestProgress.provider || result.source || "";
-        const model = latestProgress.model || "";
-
-        const saveResult = await audioManagerRef.current.saveTranscription({
-          text: result.text,
-          rawText: result.rawText || result.text,
-          meta: {
-            sessionId: session.sessionId,
-            outputMode: session.outputMode,
-            status: "success",
-            source: result.source,
-            provider,
-            model,
-            insertionTarget: session.insertionTarget || null,
-            pasteSucceeded,
-            timings: baseTimings,
-          },
-        });
-        const saveSucceeded = Boolean(saveResult?.success);
-        const savedId = saveResult?.id || saveResult?.transcription?.id;
-        const saveMs = Math.round(performance.now() - saveStart);
-        const totalDurationMs = sessionStartedAtRef.current
-          ? Math.max(0, Date.now() - sessionStartedAtRef.current)
-          : null;
-
-        if (saveSucceeded && savedId && window.electronAPI?.patchTranscriptionMeta) {
-          try {
-            await window.electronAPI.patchTranscriptionMeta(savedId, {
-              provider,
-              model,
-              timings: {
-                ...baseTimings,
-                saveDurationMs: saveMs,
-                totalDurationMs,
-              },
-            });
-          } catch (error) {
-            logger.warn(
-              "Failed to patch transcription metadata",
-              { error: error?.message, id: savedId },
-              "transcription"
-            );
-          }
-        }
-
-        if (!saveSucceeded) {
-          const fallbackDescription =
-            session.outputMode === "insert" && pasteSucceeded
-              ? "Text was inserted, but saving to history failed."
-              : "Text is copied to clipboard, but saving to history failed.";
-          toast({
-            title: "History Save Failed",
-            description: fallbackDescription,
-            variant: "destructive",
-            duration: 4000,
-          });
-        }
-
-        if (result.source === "openai" && localStorage.getItem("useLocalWhisper") === "true") {
-          toast({
-            title: "Fallback Mode",
-            description: "Local Whisper failed. Used OpenAI API instead.",
-            variant: "default",
-          });
-        }
-
-        if (result.source === "openwhispr" && result.limitReached) {
-          window.electronAPI?.notifyLimitReached?.({
-            wordsUsed: result.wordsUsed,
-            limit:
-              result.wordsRemaining !== undefined ? result.wordsUsed + result.wordsRemaining : 2000,
-          });
-        }
-
-        updateStage("done", {
-          outputMode: session.outputMode,
-          sessionId: session.sessionId,
-          stageProgress: 1,
-          overallProgress: 1,
-          message: saveSucceeded
-            ? null
-            : session.outputMode === "insert" && pasteSucceeded
-              ? "Inserted, but history save failed."
-              : "Saved to clipboard, but history save failed.",
-          provider,
-          model,
-          generatedChars: result.text.length,
-          generatedWords: countWords(result.text),
-        });
-
-        setProgress((prev) => ({
-          ...prev,
-          elapsedMs: sessionStartedAtRef.current
-            ? Math.max(0, Date.now() - sessionStartedAtRef.current)
-            : prev.elapsedMs,
-          recordedMs: prev.recordedMs,
-          message: saveSucceeded && saveMs > 0 ? `Saved in ${saveMs}ms` : prev.message,
-        }));
-
-        audioManagerRef.current.warmupStreamingConnection();
-      },
+      onTranscriptionComplete: handleTranscriptionComplete,
     });
+
+    if (isE2E && typeof window !== "undefined") {
+      window.__openwhisprE2E = {
+        getProgress: () => latestProgressRef.current,
+        setStage: (stage, patch = {}) => {
+          updateStage(stage, patch);
+          return latestProgressRef.current;
+        },
+        setActiveSession: (payload = {}) => {
+          activeSessionRef.current = normalizeTriggerPayload(payload);
+          return activeSessionRef.current;
+        },
+        simulateTranscriptionComplete: async (resultPatch = {}, sessionPatch = {}) => {
+          const session = normalizeTriggerPayload(sessionPatch);
+          activeSessionRef.current = session;
+          const text =
+            typeof resultPatch.text === "string"
+              ? resultPatch.text
+              : String(resultPatch.text ?? "");
+          const rawText =
+            typeof resultPatch.rawText === "string"
+              ? resultPatch.rawText
+              : resultPatch.rawText == null
+                ? null
+                : String(resultPatch.rawText);
+
+          return handleTranscriptionComplete({
+            success: true,
+            text,
+            rawText: rawText || text,
+            source: resultPatch.source || "e2e",
+            timings: resultPatch.timings || {},
+            limitReached: Boolean(resultPatch.limitReached),
+            wordsUsed: resultPatch.wordsUsed,
+            wordsRemaining: resultPatch.wordsRemaining,
+          });
+        },
+      };
+    }
 
     audioManagerRef.current.warmupStreamingConnection();
 
@@ -573,6 +624,9 @@ export const useAudioRecording = (toast, options = {}) => {
       clearProgressResetTimer();
       if (audioManagerRef.current) {
         audioManagerRef.current.cleanup();
+      }
+      if (isE2E && typeof window !== "undefined" && window.__openwhisprE2E) {
+        delete window.__openwhisprE2E;
       }
     };
   }, [

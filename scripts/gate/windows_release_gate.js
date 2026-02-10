@@ -1,0 +1,789 @@
+#!/usr/bin/env node
+/**
+ * OpenWhispr Windows packaged-runtime release gate.
+ *
+ * Runs a small suite of Windows-first checks against a PACKAGED build
+ * using Chrome DevTools Protocol (CDP) + PowerShell helpers.
+ *
+ * Usage (Windows):
+ *   node scripts\\gate\\windows_release_gate.js [path\\to\\OpenWhispr.exe]
+ *
+ * Required env:
+ *   OPENWHISPR_E2E=1 (enables guarded E2E helpers in preload + IPC)
+ */
+
+const { spawn } = require("child_process");
+const fs = require("fs");
+const http = require("http");
+const path = require("path");
+const WebSocket = require("ws");
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function safeString(value) {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+async function fetchJson(url, timeoutMs = 2000) {
+  return await new Promise((resolve, reject) => {
+    const request = http.get(url, { timeout: timeoutMs }, (res) => {
+      let raw = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => (raw += chunk));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(raw));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    request.on("error", reject);
+    request.on("timeout", () => {
+      request.destroy(new Error("Request timeout"));
+    });
+  });
+}
+
+class CdpClient {
+  constructor(wsUrl) {
+    this.wsUrl = wsUrl;
+    this.ws = null;
+    this.nextId = 1;
+    this.pending = new Map();
+  }
+
+  async connect() {
+    this.ws = new WebSocket(this.wsUrl);
+
+    await new Promise((resolve, reject) => {
+      this.ws.on("open", resolve);
+      this.ws.on("error", reject);
+    });
+
+    this.ws.on("message", (data) => {
+      const message = JSON.parse(data.toString());
+      if (message.id && this.pending.has(message.id)) {
+        const { resolve, reject } = this.pending.get(message.id);
+        this.pending.delete(message.id);
+        if (message.error) {
+          reject(new Error(message.error.message || "CDP error"));
+        } else {
+          resolve(message.result);
+        }
+      }
+    });
+
+    await this.send("Runtime.enable");
+    await this.send("Page.enable");
+  }
+
+  async send(method, params = {}) {
+    const id = this.nextId++;
+    const payload = { id, method, params };
+    const text = JSON.stringify(payload);
+
+    return await new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.ws.send(text, (error) => {
+        if (error) {
+          this.pending.delete(id);
+          reject(error);
+        }
+      });
+    });
+  }
+
+  async eval(expression) {
+    const result = await this.send("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+      userGesture: true,
+    });
+
+    if (result?.exceptionDetails) {
+      const description =
+        result.exceptionDetails?.exception?.description ||
+        result.exceptionDetails?.text ||
+        "CDP evaluation exception";
+      throw new Error(description);
+    }
+
+    return result?.result?.value;
+  }
+
+  async waitFor(predicateExpression, timeoutMs = 10000, intervalMs = 150) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        const value = await this.eval(`Boolean(${predicateExpression})`);
+        if (value) return true;
+      } catch {
+        // ignore and retry
+      }
+      await sleep(intervalMs);
+    }
+    throw new Error(`Timed out waiting for: ${predicateExpression}`);
+  }
+
+  async waitForSelector(selector, timeoutMs = 10000) {
+    const escaped = JSON.stringify(selector);
+    return await this.waitFor(`document.querySelector(${escaped})`, timeoutMs);
+  }
+
+  async click(selector) {
+    const escaped = JSON.stringify(selector);
+    await this.eval(`
+      (function () {
+        const el = document.querySelector(${escaped});
+        if (!el) throw new Error("Element not found: " + ${escaped});
+        el.click();
+        return true;
+      })()
+    `);
+  }
+
+  async setInputValue(selector, value) {
+    const escapedSel = JSON.stringify(selector);
+    const escapedVal = JSON.stringify(value);
+    await this.eval(`
+      (function () {
+        const el = document.querySelector(${escapedSel});
+        if (!el) throw new Error("Element not found: " + ${escapedSel});
+        el.focus();
+        el.value = ${escapedVal};
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      })()
+    `);
+  }
+
+  async close() {
+    try {
+      this.ws?.close();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function runPowerShell(script, args = [], options = {}) {
+  const { sta = false, timeoutMs = 15000 } = options;
+  const psArgs = [
+    "-NoProfile",
+    "-NonInteractive",
+    "-WindowStyle",
+    "Hidden",
+    ...(sta ? ["-STA"] : []),
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script,
+    ...args.map((arg) => String(arg)),
+  ];
+
+  const child = spawn("powershell.exe", psArgs, { windowsHide: true });
+
+  let stdout = "";
+  let stderr = "";
+
+  child.stdout?.on("data", (data) => {
+    stdout += data.toString();
+  });
+
+  child.stderr?.on("data", (data) => {
+    stderr += data.toString();
+  });
+
+  const exitResult = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      reject(new Error(`PowerShell timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+
+  return exitResult;
+}
+
+function parseJsonFromStdout(stdout) {
+  const trimmed = safeString(stdout).trim();
+  if (!trimmed) return null;
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim());
+  const candidate = [...lines].reverse().find((line) => line.startsWith("{") || line.startsWith("["));
+  if (!candidate) return null;
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    return null;
+  }
+}
+
+async function psJson(script, args = [], options = {}) {
+  const result = await runPowerShell(script, args, options);
+  const parsed = parseJsonFromStdout(result.stdout);
+  return { ...result, parsed };
+}
+
+async function startNotepad() {
+  const script = `
+param()
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinApiNp {
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string className, string windowTitle);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}
+"@
+
+$proc = Start-Process notepad -PassThru
+try { $proc.WaitForInputIdle() | Out-Null } catch {}
+for ($i = 0; $i -lt 80 -and $proc.MainWindowHandle -eq 0; $i++) {
+  Start-Sleep -Milliseconds 100
+  $proc.Refresh()
+}
+$hwnd = [Int64]$proc.MainWindowHandle
+if ($hwnd -eq 0) {
+  [pscustomobject]@{ success = $false; error = "notepad_no_window" } | ConvertTo-Json -Compress
+  exit 0
+}
+[void][WinApiNp]::ShowWindowAsync([IntPtr]$hwnd, 9)
+[void][WinApiNp]::SetForegroundWindow([IntPtr]$hwnd)
+Start-Sleep -Milliseconds 120
+$edit = [WinApiNp]::FindWindowEx([IntPtr]$hwnd, [IntPtr]::Zero, "Edit", $null)
+[pscustomobject]@{
+  success = $true
+  pid = [Int32]$proc.Id
+  hwnd = [Int64]$hwnd
+  editHwnd = [Int64]$edit
+} | ConvertTo-Json -Compress
+`.trim();
+
+  const result = await psJson(script);
+  assert(result.code === 0, `startNotepad failed: ${result.stderr}`);
+  assert(result.parsed?.success, `startNotepad returned failure: ${result.stdout} ${result.stderr}`);
+  return result.parsed;
+}
+
+async function closeProcess(pid) {
+  const script = `
+param([Int32]$Pid)
+try { Stop-Process -Id $Pid -Force -ErrorAction Stop; [pscustomobject]@{ success = $true } }
+catch { [pscustomobject]@{ success = $false; error = $_.Exception.Message } }
+| ConvertTo-Json -Compress
+`.trim();
+  const result = await psJson(script, [pid]);
+  return Boolean(result.parsed?.success);
+}
+
+async function getForegroundWindowInfo() {
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class WinApiFg {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", SetLastError=true)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+$hwnd = [WinApiFg]::GetForegroundWindow()
+if ($hwnd -eq [IntPtr]::Zero) {
+  [pscustomobject]@{ success = $false; reason = "no_foreground_window" } | ConvertTo-Json -Compress
+  exit 0
+}
+$pid = 0
+[void][WinApiFg]::GetWindowThreadProcessId($hwnd, [ref]$pid)
+$titleBuilder = New-Object System.Text.StringBuilder 512
+[void][WinApiFg]::GetWindowText($hwnd, $titleBuilder, $titleBuilder.Capacity)
+$processName = ""
+try { $processName = (Get-Process -Id $pid -ErrorAction Stop).ProcessName } catch {}
+[pscustomobject]@{
+  success = $true
+  hwnd = [Int64]$hwnd
+  pid = [Int32]$pid
+  processName = $processName
+  title = $titleBuilder.ToString()
+} | ConvertTo-Json -Compress
+`.trim();
+
+  const result = await psJson(script);
+  assert(result.code === 0, `getForegroundWindowInfo failed: ${result.stderr}`);
+  assert(result.parsed?.success, `getForegroundWindowInfo returned failure: ${result.stdout} ${result.stderr}`);
+  return result.parsed;
+}
+
+async function setForegroundWindow(hwnd) {
+  const script = `
+param([Int64]$TargetHwnd)
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinApiActivate2 {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+}
+"@
+$target = [IntPtr]$TargetHwnd
+if (-not [WinApiActivate2]::IsWindow($target)) {
+  [pscustomobject]@{ success = $false; reason = "window_not_found"; targetHwnd = $TargetHwnd } | ConvertTo-Json -Compress
+  exit 0
+}
+[void][WinApiActivate2]::ShowWindowAsync($target, 9)
+$setResult = [WinApiActivate2]::SetForegroundWindow($target)
+Start-Sleep -Milliseconds 140
+$active = [Int64][WinApiActivate2]::GetForegroundWindow()
+[pscustomobject]@{
+  success = ($active -eq $TargetHwnd)
+  targetHwnd = $TargetHwnd
+  activeHwnd = $active
+  setForegroundReturned = [bool]$setResult
+} | ConvertTo-Json -Compress
+`.trim();
+
+  const result = await psJson(script, [String(hwnd)]);
+  assert(result.code === 0, `setForegroundWindow failed: ${result.stderr}`);
+  return result.parsed;
+}
+
+async function readEditText(editHwnd) {
+  const script = `
+param([Int64]$EditHwnd)
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class WinApiText {
+  [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int SendMessage(IntPtr hWnd, int msg, int wParam, StringBuilder lParam);
+  [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int SendMessage(IntPtr hWnd, int msg, int wParam, IntPtr lParam);
+  public const int WM_GETTEXT = 0x000D;
+  public const int WM_GETTEXTLENGTH = 0x000E;
+}
+"@
+$h = [IntPtr]$EditHwnd
+$len = [WinApiText]::SendMessage($h, [WinApiText]::WM_GETTEXTLENGTH, 0, [IntPtr]::Zero)
+if ($len -lt 0) { $len = 0 }
+$sb = New-Object System.Text.StringBuilder ($len + 1)
+[void][WinApiText]::SendMessage($h, [WinApiText]::WM_GETTEXT, $sb.Capacity, $sb)
+[pscustomobject]@{ success = $true; text = $sb.ToString() } | ConvertTo-Json -Compress
+`.trim();
+
+  const result = await psJson(script, [String(editHwnd)]);
+  assert(result.code === 0, `readEditText failed: ${result.stderr}`);
+  assert(result.parsed?.success, `readEditText returned failure: ${result.stdout} ${result.stderr}`);
+  return safeString(result.parsed.text);
+}
+
+async function setClipboardTestImage() {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bmp = New-Object System.Drawing.Bitmap 24, 24
+for ($x = 0; $x -lt 24; $x++) {
+  for ($y = 0; $y -lt 24; $y++) {
+    $bmp.SetPixel($x, $y, [System.Drawing.Color]::FromArgb(255, ($x * 10) % 255, ($y * 10) % 255, 80))
+  }
+}
+[System.Windows.Forms.Clipboard]::SetImage($bmp)
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+$ms = New-Object System.IO.MemoryStream
+$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+$bytes = $ms.ToArray()
+$sha = [System.Security.Cryptography.SHA256]::Create()
+$hashBytes = $sha.ComputeHash($bytes)
+$hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
+[pscustomobject]@{ success = $true; hasImage = $true; width = $img.Width; height = $img.Height; hash = $hash } | ConvertTo-Json -Compress
+`.trim();
+
+  const result = await psJson(script, [], { sta: true, timeoutMs: 20000 });
+  assert(result.code === 0, `setClipboardTestImage failed: ${result.stderr}`);
+  assert(result.parsed?.success, `setClipboardTestImage returned failure: ${result.stdout} ${result.stderr}`);
+  return result.parsed;
+}
+
+async function getClipboardImageHash() {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+if (-not [System.Windows.Forms.Clipboard]::ContainsImage()) {
+  [pscustomobject]@{ success = $true; hasImage = $false } | ConvertTo-Json -Compress
+  exit 0
+}
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+$ms = New-Object System.IO.MemoryStream
+$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+$bytes = $ms.ToArray()
+$sha = [System.Security.Cryptography.SHA256]::Create()
+$hashBytes = $sha.ComputeHash($bytes)
+$hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
+[pscustomobject]@{ success = $true; hasImage = $true; width = $img.Width; height = $img.Height; hash = $hash } | ConvertTo-Json -Compress
+`.trim();
+
+  const result = await psJson(script, [], { sta: true, timeoutMs: 20000 });
+  assert(result.code === 0, `getClipboardImageHash failed: ${result.stderr}`);
+  assert(result.parsed?.success, `getClipboardImageHash returned failure: ${result.stdout} ${result.stderr}`);
+  return result.parsed;
+}
+
+async function getClipboardText() {
+  const script = `Get-Clipboard -Raw | ConvertTo-Json -Compress`.trim();
+  const result = await psJson(script, [], { sta: true, timeoutMs: 10000 });
+  if (result.code !== 0) {
+    return "";
+  }
+  if (typeof result.parsed === "string") {
+    return result.parsed;
+  }
+  return safeString(result.stdout).trim();
+}
+
+async function main() {
+  assert(process.platform === "win32", "windows_release_gate.js must be run on Windows.");
+
+  const exePathArg = process.argv.slice(2).find((arg) => arg && !arg.startsWith("--"));
+  const exePath = exePathArg
+    ? path.resolve(exePathArg)
+    : path.join(process.cwd(), "dist", "win-unpacked", "OpenWhispr.exe");
+
+  assert(fs.existsSync(exePath), `Packaged app not found: ${exePath}`);
+
+  const runId = new Date().toISOString().replace(/[:.]/g, "-");
+  const port =
+    Number(process.env.OPENWHISPR_E2E_CDP_PORT || "") ||
+    9222 + Math.floor(Math.random() * 200);
+
+  const env = {
+    ...process.env,
+    OPENWHISPR_E2E: "1",
+    OPENWHISPR_E2E_RUN_ID: runId,
+    OPENWHISPR_CHANNEL: process.env.OPENWHISPR_CHANNEL || "staging",
+  };
+
+  console.log(`[gate] Launching: ${exePath}`);
+  console.log(`[gate] CDP port: ${port}`);
+  console.log(`[gate] OPENWHISPR_CHANNEL=${env.OPENWHISPR_CHANNEL} OPENWHISPR_E2E_RUN_ID=${runId}`);
+
+  const appProc = spawn(exePath, [`--remote-debugging-port=${port}`], {
+    env,
+    stdio: "inherit",
+  });
+
+  const cleanup = async () => {
+    try {
+      if (!appProc.killed) {
+        appProc.kill();
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const results = [];
+  const record = (name, ok, details = "") => {
+    results.push({ name, ok: Boolean(ok), details: safeString(details) });
+    console.log(`[gate] ${ok ? "PASS" : "FAIL"}: ${name}${details ? ` — ${details}` : ""}`);
+  };
+
+  try {
+    const versionUrl = `http://127.0.0.1:${port}/json/version`;
+    let version = null;
+    for (let i = 0; i < 60; i++) {
+      try {
+        version = await fetchJson(versionUrl, 1000);
+        if (version) break;
+      } catch {
+        // retry
+      }
+      await sleep(250);
+    }
+
+    assert(version, "CDP server did not come up (json/version unavailable).");
+
+    const listUrl = `http://127.0.0.1:${port}/json/list`;
+    let targets = [];
+    for (let i = 0; i < 60; i++) {
+      try {
+        targets = await fetchJson(listUrl, 1000);
+        if (Array.isArray(targets) && targets.length >= 1) break;
+      } catch {
+        // retry
+      }
+      await sleep(250);
+    }
+
+    assert(Array.isArray(targets) && targets.length > 0, "No CDP targets found.");
+
+    const panelTarget = targets.find((t) => safeString(t.url).includes("panel=true"));
+    const dictationTarget = targets.find(
+      (t) => t.type === "page" && safeString(t.url) && !safeString(t.url).includes("panel=true")
+    );
+
+    assert(panelTarget?.webSocketDebuggerUrl, "Control panel target not found (panel=true).");
+    assert(dictationTarget?.webSocketDebuggerUrl, "Dictation panel target not found.");
+
+    const panel = new CdpClient(panelTarget.webSocketDebuggerUrl);
+    const dictation = new CdpClient(dictationTarget.webSocketDebuggerUrl);
+    await panel.connect();
+    await dictation.connect();
+
+    // Skip onboarding in both windows
+    const skipOnboarding = async (client) => {
+      await client.eval(`
+        (function () {
+          try {
+            localStorage.setItem("onboardingCompleted", "true");
+            localStorage.setItem("onboardingCurrentStep", "5");
+          } catch {}
+          return true;
+        })()
+      `);
+      await client.eval(`location.reload(); true;`);
+    };
+
+    await skipOnboarding(panel);
+    await skipOnboarding(dictation);
+
+    await panel.waitFor("document.readyState === 'complete'", 15000);
+    await dictation.waitFor("document.readyState === 'complete'", 15000);
+
+    // Wait for E2E helper to exist in dictation panel
+    await dictation.waitFor("window.__openwhisprE2E && typeof window.__openwhisprE2E.getProgress === 'function'", 15000);
+
+    // B) Always-visible status bar
+    await dictation.waitForSelector('[data-testid="dictation-status-bar"]', 15000);
+    record("Status bar present", true);
+
+    await dictation.eval(`window.__openwhisprE2E.setStage("listening", { stageLabel: "Listening" }); true;`);
+    await sleep(250);
+    await dictation.eval(`window.__openwhisprE2E.setStage("listening", { stageLabel: "Listening" }); true;`);
+    const stageListening = await dictation.eval(
+      `document.querySelector('[data-testid="dictation-status-stage"]')?.textContent || ""`
+    );
+    record("Stage label updates (Listening)", stageListening.trim() === "Listening", stageListening);
+
+    await dictation.eval(`window.__openwhisprE2E.setStage("transcribing", { stageLabel: "Transcribing", generatedWords: 12 }); true;`);
+    const stageTranscribing = await dictation.eval(
+      `document.querySelector('[data-testid="dictation-status-stage"]')?.textContent || ""`
+    );
+    record("Stage label updates (Transcribing)", stageTranscribing.trim() === "Transcribing", stageTranscribing);
+
+    // A) Dual output modes + insertion
+    const notepad = await startNotepad();
+    await setForegroundWindow(notepad.hwnd);
+
+    const fgBeforeShow = await getForegroundWindowInfo();
+    await dictation.eval(`window.electronAPI.showDictationPanel(); true;`);
+    await sleep(250);
+    const fgAfterShow = await getForegroundWindowInfo();
+    record(
+      "No focus-steal on showDictationPanel",
+      fgBeforeShow.hwnd === fgAfterShow.hwnd,
+      `${fgBeforeShow.processName} -> ${fgAfterShow.processName}`
+    );
+
+    const capture = await dictation.eval(`window.electronAPI.captureInsertionTarget()`);
+    record("Capture insertion target (Notepad foreground)", Boolean(capture?.success), JSON.stringify(capture));
+
+    const insertText = `E2E Insert ${runId}`;
+    const beforeText = await readEditText(notepad.editHwnd);
+    await dictation.eval(`
+      (async function () {
+        await window.__openwhisprE2E.simulateTranscriptionComplete(
+          { text: ${JSON.stringify(insertText)}, source: "e2e" },
+          { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-${runId}`)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
+        );
+        return true;
+      })()
+    `);
+
+    await sleep(1200);
+    const afterInsertText = await readEditText(notepad.editHwnd);
+    record(
+      "Insert mode writes into Notepad",
+      afterInsertText.includes(insertText) && afterInsertText.length > beforeText.length,
+      `len ${beforeText.length} -> ${afterInsertText.length}`
+    );
+
+    const clipText = `E2E Clipboard ${runId}`;
+    const notepadTextBeforeClipboardMode = await readEditText(notepad.editHwnd);
+    await dictation.eval(`
+      (async function () {
+        await window.__openwhisprE2E.simulateTranscriptionComplete(
+          { text: ${JSON.stringify(clipText)}, source: "e2e" },
+          { outputMode: "clipboard", sessionId: ${JSON.stringify(`sess-clip-${runId}`)} }
+        );
+        return true;
+      })()
+    `);
+
+    await sleep(700);
+    const notepadTextAfterClipboardMode = await readEditText(notepad.editHwnd);
+    record(
+      "Clipboard mode does not insert",
+      notepadTextAfterClipboardMode === notepadTextBeforeClipboardMode,
+      `len ${notepadTextBeforeClipboardMode.length} -> ${notepadTextAfterClipboardMode.length}`
+    );
+
+    const clipboardNow = await getClipboardText();
+    record("Clipboard mode copies to clipboard", clipboardNow.includes(clipText), clipboardNow.slice(0, 80));
+
+    // G) Clipboard image preservation (insert success path)
+    const clipImageBefore = await setClipboardTestImage();
+    const imageHashBefore = clipImageBefore.hash;
+
+    await setForegroundWindow(notepad.hwnd);
+    const capture2 = await dictation.eval(`window.electronAPI.captureInsertionTarget()`);
+    await dictation.eval(`
+      (async function () {
+        await window.__openwhisprE2E.simulateTranscriptionComplete(
+          { text: ${JSON.stringify(`E2E ImagePreserve ${runId}`)}, source: "e2e" },
+          { outputMode: "insert", sessionId: ${JSON.stringify(`sess-img-${runId}`)}, insertionTarget: ${JSON.stringify(capture2?.target || null)} }
+        );
+        return true;
+      })()
+    `);
+
+    await sleep(2500);
+    const clipImageAfter = await getClipboardImageHash();
+    record(
+      "Clipboard image preserved after insert",
+      Boolean(clipImageAfter.hasImage) && clipImageAfter.hash === imageHashBefore,
+      `${imageHashBefore} -> ${clipImageAfter.hash || "none"}`
+    );
+
+    // C/D) History workspace + export
+    await panel.waitForSelector('[data-testid="history-search"]', 15000);
+    const historyCount = await panel.eval(
+      `document.querySelectorAll('[data-testid="transcription-item"]').length`
+    );
+    record("History renders items", historyCount >= 2, `count=${historyCount}`);
+
+    await panel.setInputValue('[data-testid="history-search"]', "Clipboard");
+    await sleep(250);
+    const filteredCount = await panel.eval(
+      `document.querySelectorAll('[data-testid="transcription-item"]').length`
+    );
+    record("History search filters results", filteredCount >= 1 && filteredCount <= historyCount, `count=${filteredCount}`);
+
+    const exportDir = path.join(process.env.TEMP || process.env.TMP || "C:\\\\Windows\\\\Temp", "openwhispr-e2e");
+    const exportJsonPath = path.join(exportDir, `transcriptions-${runId}.json`);
+    const exportCsvPath = path.join(exportDir, `transcriptions-${runId}.csv`);
+
+    const exportJsonResult = await panel.eval(
+      `(async () => window.electronAPI.e2eExportTranscriptions("json", ${JSON.stringify(exportJsonPath)}) )()`
+    );
+    record("E2E export transcriptions (JSON)", Boolean(exportJsonResult?.success), JSON.stringify(exportJsonResult));
+
+    const exportCsvResult = await panel.eval(
+      `(async () => window.electronAPI.e2eExportTranscriptions("csv", ${JSON.stringify(exportCsvPath)}) )()`
+    );
+    record("E2E export transcriptions (CSV)", Boolean(exportCsvResult?.success), JSON.stringify(exportCsvResult));
+
+    // E) Dictionary batch parsing + merge/replace + export/import (E2E IPC)
+    await panel.eval(`
+      (function () {
+        const openSettings = document.querySelector('button[aria-label="Open settings"]');
+        if (!openSettings) throw new Error("Open settings button not found");
+        openSettings.click();
+        return true;
+      })()
+    `);
+    await panel.waitForSelector('button[data-section-id="dictionary"]', 15000);
+    await panel.click('button[data-section-id="dictionary"]');
+    await panel.waitForSelector('textarea[placeholder^="Paste one word"]', 15000);
+
+    const batchText = "OpenWhispr\\n Kubernetes\\nopenwhispr\\n;Dr. Martinez,  \\n\\n";
+    await panel.setInputValue('textarea[placeholder^="Paste one word"]', batchText);
+    await sleep(250);
+    const previewText = await panel.eval(`
+      (function () {
+        const nodes = Array.from(document.querySelectorAll("p"));
+        const preview = nodes.find((n) => (n.textContent || "").includes("Preview:"));
+        return preview ? preview.textContent : "";
+      })()
+    `);
+    record("Dictionary preview shows dedupe counts", safeString(previewText).includes("duplicates removed"), safeString(previewText));
+
+    // Apply merge
+    await panel.eval(`
+      (function () {
+        const apply = Array.from(document.querySelectorAll("button")).find((b) =>
+          (b.textContent || "").trim().startsWith("Apply ")
+        );
+        if (!apply) throw new Error("Apply button not found");
+        apply.click();
+        return true;
+      })()
+    `);
+    await sleep(700);
+
+    const dictWordsAfterMerge = await panel.eval(`(async () => window.electronAPI.getDictionary())()`);
+    record(
+      "Dictionary merge writes to DB",
+      Array.isArray(dictWordsAfterMerge) && dictWordsAfterMerge.length >= 3,
+      JSON.stringify(dictWordsAfterMerge)
+    );
+
+    // Export dictionary via E2E IPC and round-trip import
+    const exportDictPath = path.join(exportDir, `dictionary-${runId}.txt`);
+    const exportDictResult = await panel.eval(
+      `(async () => window.electronAPI.e2eExportDictionary("txt", ${JSON.stringify(exportDictPath)}) )()`
+    );
+    record("E2E export dictionary (TXT)", Boolean(exportDictResult?.success), JSON.stringify(exportDictResult));
+
+    const importDictResult = await panel.eval(
+      `(async () => window.electronAPI.e2eImportDictionary(${JSON.stringify(exportDictPath)}) )()`
+    );
+    record("E2E import dictionary (TXT)", Boolean(importDictResult?.success), JSON.stringify(importDictResult));
+
+    await closeProcess(notepad.pid);
+
+    await panel.close();
+    await dictation.close();
+
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length > 0) {
+      console.error("\n[gate] FAILURES:");
+      for (const f of failed) {
+        console.error(`- ${f.name}${f.details ? ` — ${f.details}` : ""}`);
+      }
+      process.exitCode = 1;
+    } else {
+      console.log("\n[gate] ALL CHECKS PASSED");
+    }
+  } finally {
+    await cleanup();
+  }
+}
+
+main().catch((error) => {
+  console.error(`[gate] ERROR: ${error.message}`);
+  process.exitCode = 1;
+});

@@ -256,6 +256,26 @@ declare global {
       exportTranscriptions?: (
         format?: "csv" | "json"
       ) => Promise<{ success: boolean; canceled?: boolean; filePath?: string; count?: number }>;
+      e2eExportTranscriptions?: (
+        format: "csv" | "json",
+        filePath: string
+      ) => Promise<{
+        success: boolean;
+        format?: "csv" | "json";
+        filePath?: string;
+        count?: number;
+        error?: string;
+      }>;
+      e2eGetHotkeyStatus?: () => Promise<{
+        activationMode: "tap" | "push" | string;
+        insertHotkey: string | null;
+        clipboardHotkey: string | null;
+        insertUsesNativeListener: boolean;
+        clipboardUsesNativeListener: boolean;
+        insertGlobalRegistered: boolean;
+        clipboardGlobalRegistered: boolean;
+        windowsPushToTalkAvailable: boolean;
+      }>;
       clearTranscriptions: () => Promise<{ cleared: number; success: boolean }>;
       deleteTranscription: (id: number) => Promise<{ success: boolean }>;
 
@@ -264,6 +284,17 @@ declare global {
       setDictionary: (words: string[]) => Promise<{ success: boolean }>;
       importDictionaryFile?: () => Promise<DictionaryImportResult>;
       exportDictionary?: (format?: "txt" | "csv") => Promise<DictionaryExportResult>;
+      e2eExportDictionary?: (
+        format: "txt" | "csv",
+        filePath: string
+      ) => Promise<{
+        success: boolean;
+        format?: "txt" | "csv";
+        filePath?: string;
+        count?: number;
+        error?: string;
+      }>;
+      e2eImportDictionary?: (filePath: string) => Promise<DictionaryImportResult>;
 
       // Database event listeners
       onTranscriptionAdded?: (callback: (item: TranscriptionItem) => void) => () => void;

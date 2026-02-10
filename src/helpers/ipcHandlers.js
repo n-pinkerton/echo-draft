@@ -12,6 +12,14 @@ const AssemblyAiStreaming = require("./assemblyAiStreaming");
 const MISTRAL_TRANSCRIPTION_URL = "https://api.mistral.ai/v1/audio/transcriptions";
 const DICTIONARY_SPLIT_REGEX = /[\n,;\t]+/g;
 
+const isTruthyFlag = (value) => {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+};
+
+const IS_E2E_MODE = isTruthyFlag(process.env.OPENWHISPR_E2E);
+
 function parseDictionaryWords(input = "") {
   if (typeof input !== "string") {
     return [];
@@ -35,6 +43,31 @@ function dedupeDictionaryWords(words = []) {
     uniqueWords.push(trimmed);
   }
   return uniqueWords;
+}
+
+function stripDictionaryHeader(words = [], filePath = "") {
+  if (!Array.isArray(words) || words.length === 0) {
+    return [];
+  }
+
+  const ext = path.extname(filePath || "").toLowerCase();
+  if (ext !== ".csv" && ext !== ".tsv") {
+    return words;
+  }
+
+  const first = String(words[0] || "")
+    .trim()
+    .toLowerCase();
+  if (first === "word" && words.length > 1) {
+    return words.slice(1);
+  }
+
+  return words;
+}
+
+function isPathWithin(parentDir, childPath) {
+  const relative = path.relative(parentDir, childPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 class IPCHandlers {
@@ -201,7 +234,7 @@ class IPCHandlers {
     ipcMain.handle("db-export-transcriptions", async (event, format = "json") => {
       const exportFormat = format === "csv" ? "csv" : "json";
       const rows = this.databaseManager.getAllTranscriptions();
-      const flattened = rows.map((row) => {
+      const flattenTranscriptionRow = (row) => {
         const meta = row?.meta || {};
         const timings = meta?.timings || {};
         return {
@@ -225,7 +258,9 @@ class IPCHandlers {
           saveMs: timings.saveDurationMs ?? "",
           totalMs: timings.totalDurationMs ?? "",
         };
-      });
+      };
+
+      const flattened = rows.map((row) => flattenTranscriptionRow(row));
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const extension = exportFormat === "csv" ? "csv" : "json";
@@ -282,6 +317,163 @@ class IPCHandlers {
       };
     });
 
+    if (IS_E2E_MODE) {
+      const { globalShortcut } = require("electron");
+
+      const e2eBaseDir = path.join(app.getPath("temp"), "openwhispr-e2e");
+      const resolveE2eFilePath = (filePath) => {
+        if (typeof filePath !== "string" || !filePath.trim()) {
+          throw new Error("filePath is required");
+        }
+
+        const resolved = path.resolve(e2eBaseDir, filePath);
+        if (!isPathWithin(e2eBaseDir, resolved)) {
+          throw new Error("filePath must be within the OpenWhispr E2E temp directory");
+        }
+
+        fs.mkdirSync(path.dirname(resolved), { recursive: true });
+        return resolved;
+      };
+
+      ipcMain.handle("e2e-export-transcriptions", async (_event, payload = {}) => {
+        const exportFormat = payload?.format === "csv" ? "csv" : "json";
+        const outputPath = resolveE2eFilePath(payload?.filePath || "");
+
+        const rows = this.databaseManager.getAllTranscriptions();
+        const flattened = rows.map((row) => {
+          const meta = row?.meta || {};
+          const timings = meta?.timings || {};
+          return {
+            id: row.id,
+            timestamp: row.timestamp,
+            text: row.text || "",
+            rawText: row.raw_text || "",
+            outputMode: meta.outputMode || "",
+            status: meta.status || "",
+            provider: meta.provider || meta.source || "",
+            model: meta.model || "",
+            source: meta.source || "",
+            pasteSucceeded:
+              meta.pasteSucceeded === true ? "true" : meta.pasteSucceeded === false ? "false" : "",
+            error: meta.error || "",
+            recordMs: timings.recordDurationMs ?? timings.recordMs ?? "",
+            transcribeMs:
+              timings.transcriptionProcessingDurationMs ?? timings.transcribeDurationMs ?? "",
+            cleanupMs: timings.reasoningProcessingDurationMs ?? timings.cleanupDurationMs ?? "",
+            pasteMs: timings.pasteDurationMs ?? "",
+            saveMs: timings.saveDurationMs ?? "",
+            totalMs: timings.totalDurationMs ?? "",
+          };
+        });
+
+        if (exportFormat === "json") {
+          fs.writeFileSync(outputPath, JSON.stringify(flattened, null, 2), "utf8");
+          return {
+            success: true,
+            format: exportFormat,
+            filePath: outputPath,
+            count: flattened.length,
+          };
+        }
+
+        const headers = Object.keys(flattened[0] || { id: "", timestamp: "", text: "" });
+        const escapeCsvValue = (value) => {
+          const raw = value === null || value === undefined ? "" : String(value);
+          if (!/[",\n]/.test(raw)) {
+            return raw;
+          }
+          return `"${raw.replace(/"/g, '""')}"`;
+        };
+
+        const csvRows = [headers.join(",")];
+        for (const row of flattened) {
+          csvRows.push(headers.map((header) => escapeCsvValue(row[header])).join(","));
+        }
+        fs.writeFileSync(outputPath, csvRows.join("\n"), "utf8");
+
+        return {
+          success: true,
+          format: exportFormat,
+          filePath: outputPath,
+          count: flattened.length,
+        };
+      });
+
+      ipcMain.handle("e2e-export-dictionary", async (_event, payload = {}) => {
+        const exportFormat = payload?.format === "csv" ? "csv" : "txt";
+        const outputPath = resolveE2eFilePath(payload?.filePath || "");
+
+        const words = dedupeDictionaryWords(this.databaseManager.getDictionary());
+
+        if (exportFormat === "csv") {
+          const escapeCsvValue = (value) => {
+            const raw = value === null || value === undefined ? "" : String(value);
+            if (!/[",\n]/.test(raw)) {
+              return raw;
+            }
+            return `"${raw.replace(/"/g, '""')}"`;
+          };
+          const lines = ["word"];
+          for (const word of words) {
+            lines.push(escapeCsvValue(word));
+          }
+          fs.writeFileSync(outputPath, lines.join("\n"), "utf8");
+        } else {
+          fs.writeFileSync(outputPath, words.join("\n"), "utf8");
+        }
+
+        return { success: true, format: exportFormat, filePath: outputPath, count: words.length };
+      });
+
+      ipcMain.handle("e2e-import-dictionary", async (_event, payload = {}) => {
+        const inputPath = resolveE2eFilePath(payload?.filePath || "");
+        const content = fs.readFileSync(inputPath, "utf8");
+        const parsedWords = stripDictionaryHeader(parseDictionaryWords(content), inputPath);
+        const uniqueWords = dedupeDictionaryWords(parsedWords);
+        return {
+          success: true,
+          filePath: inputPath,
+          words: uniqueWords,
+          parsedCount: parsedWords.length,
+          uniqueCount: uniqueWords.length,
+          duplicatesRemoved: Math.max(0, parsedWords.length - uniqueWords.length),
+        };
+      });
+
+      ipcMain.handle("e2e-get-hotkey-status", async () => {
+        const activationMode = this.windowManager?.getActivationMode?.() || "tap";
+        const insertHotkey = this.windowManager?.hotkeyManager?.getCurrentHotkey?.() || null;
+        const clipboardHotkey = this.windowManager?.getCurrentClipboardHotkey?.() || null;
+
+        const normalizeAccel = (hotkey) => {
+          if (!hotkey || typeof hotkey !== "string") return null;
+          return hotkey.startsWith("Fn+") ? hotkey.slice(3) : hotkey;
+        };
+
+        const insertAccelerator = normalizeAccel(insertHotkey);
+        const clipboardAccelerator = normalizeAccel(clipboardHotkey);
+
+        return {
+          activationMode,
+          insertHotkey,
+          clipboardHotkey,
+          insertUsesNativeListener: Boolean(
+            this.windowManager?.shouldUseWindowsNativeListener?.(insertHotkey, activationMode)
+          ),
+          clipboardUsesNativeListener: Boolean(
+            this.windowManager?.shouldUseWindowsNativeListener?.(clipboardHotkey, activationMode)
+          ),
+          insertGlobalRegistered: insertAccelerator
+            ? globalShortcut.isRegistered(insertAccelerator)
+            : false,
+          clipboardGlobalRegistered: clipboardAccelerator
+            ? globalShortcut.isRegistered(clipboardAccelerator)
+            : false,
+          windowsPushToTalkAvailable: Boolean(this.windowManager?.windowsPushToTalkAvailable),
+        };
+      });
+    }
+
     // Dictionary handlers
     ipcMain.handle("db-get-dictionary", async () => {
       return this.databaseManager.getDictionary();
@@ -314,7 +506,7 @@ class IPCHandlers {
       const filePath = openDialogResult.filePaths[0];
       try {
         const content = fs.readFileSync(filePath, "utf8");
-        const parsedWords = parseDictionaryWords(content);
+        const parsedWords = stripDictionaryHeader(parseDictionaryWords(content), filePath);
         const uniqueWords = dedupeDictionaryWords(parsedWords);
         return {
           success: true,

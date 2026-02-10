@@ -47,6 +47,7 @@ export default function DictationStatusBar({ progress }) {
 
   return (
     <div
+      data-testid="dictation-status-bar"
       className={cn(
         "w-[170px] rounded-lg border px-2.5 py-2 backdrop-blur-sm transition-all duration-200",
         isIdle
@@ -55,7 +56,10 @@ export default function DictationStatusBar({ progress }) {
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] font-semibold tracking-wide text-foreground/95 truncate">
+        <p
+          data-testid="dictation-status-stage"
+          className="text-[10px] font-semibold tracking-wide text-foreground/95 truncate"
+        >
           {progress.stageLabel}
         </p>
         <span className="text-[10px] text-muted-foreground tabular-nums">

@@ -16,6 +16,14 @@ const parseDevServerPort = () => {
 const DEV_SERVER_PORT = parseDevServerPort();
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}/`;
 
+const isTruthyFlag = (value) => {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+};
+
+const IS_E2E_MODE = isTruthyFlag(process.env.OPENWHISPR_E2E);
+
 class DevServerManager {
   static async waitForDevServer(url = DEV_SERVER_URL, maxAttempts = 30, delay = 1000) {
     for (let i = 0; i < maxAttempts; i++) {
@@ -56,7 +64,15 @@ class DevServerManager {
 
   static getAppUrl(isControlPanel = false) {
     if (process.env.NODE_ENV === "development") {
-      return isControlPanel ? `${DEV_SERVER_URL}?panel=true` : DEV_SERVER_URL;
+      const params = new URLSearchParams();
+      if (isControlPanel) {
+        params.set("panel", "true");
+      }
+      if (IS_E2E_MODE) {
+        params.set("e2e", "true");
+      }
+      const suffix = params.toString();
+      return suffix ? `${DEV_SERVER_URL}?${suffix}` : DEV_SERVER_URL;
     } else {
       // For production, return null - caller should use loadFile() instead
       return null;
@@ -81,9 +97,17 @@ class DevServerManager {
     const appPath = app.getAppPath();
     const htmlPath = path.join(appPath, "src", "dist", "index.html");
 
+    const query = {};
+    if (isControlPanel) {
+      query.panel = "true";
+    }
+    if (IS_E2E_MODE) {
+      query.e2e = "true";
+    }
+
     return {
       path: htmlPath,
-      query: isControlPanel ? { panel: "true" } : {},
+      query,
     };
   }
 }

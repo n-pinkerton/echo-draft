@@ -12,6 +12,12 @@ const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
 const BASE_WINDOWS_APP_ID = "com.herotools.openwispr";
 const DEFAULT_AUTH_BRIDGE_PORT = 5199;
 
+function isTruthyFlag(value) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
 function isElectronBinaryExec() {
   const execPath = (process.execPath || "").toLowerCase();
   return (
@@ -48,7 +54,12 @@ function configureChannelUserDataPath() {
     return;
   }
 
-  const isolatedPath = path.join(app.getPath("appData"), `OpenWhispr-${APP_CHANNEL}`);
+  const e2eRunId = (process.env.OPENWHISPR_E2E_RUN_ID || "").trim();
+  const e2eSuffix = isTruthyFlag(process.env.OPENWHISPR_E2E)
+    ? `-e2e${e2eRunId ? `-${e2eRunId}` : ""}`
+    : "";
+
+  const isolatedPath = path.join(app.getPath("appData"), `OpenWhispr-${APP_CHANNEL}${e2eSuffix}`);
   app.setPath("userData", isolatedPath);
 }
 

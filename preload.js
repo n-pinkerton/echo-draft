@@ -1,5 +1,13 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+const isTruthyFlag = (value) => {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+};
+
+const IS_E2E_MODE = isTruthyFlag(process.env.OPENWHISPR_E2E);
+
 /**
  * Helper to register an IPC listener and return a cleanup function.
  * Ensures renderer code can easily remove listeners to avoid leaks.
@@ -45,6 +53,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   patchTranscriptionMeta: (id, metaPatch) =>
     ipcRenderer.invoke("db-patch-transcription-meta", id, metaPatch),
   exportTranscriptions: (format) => ipcRenderer.invoke("db-export-transcriptions", format),
+  ...(IS_E2E_MODE
+    ? {
+        e2eExportTranscriptions: (format, filePath) =>
+          ipcRenderer.invoke("e2e-export-transcriptions", { format, filePath }),
+        e2eGetHotkeyStatus: () => ipcRenderer.invoke("e2e-get-hotkey-status"),
+      }
+    : {}),
   clearTranscriptions: () => ipcRenderer.invoke("db-clear-transcriptions"),
   deleteTranscription: (id) => ipcRenderer.invoke("db-delete-transcription", id),
   // Dictionary functions
@@ -52,6 +67,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setDictionary: (words) => ipcRenderer.invoke("db-set-dictionary", words),
   importDictionaryFile: () => ipcRenderer.invoke("db-import-dictionary-file"),
   exportDictionary: (format) => ipcRenderer.invoke("db-export-dictionary", format),
+  ...(IS_E2E_MODE
+    ? {
+        e2eExportDictionary: (format, filePath) =>
+          ipcRenderer.invoke("e2e-export-dictionary", { format, filePath }),
+        e2eImportDictionary: (filePath) => ipcRenderer.invoke("e2e-import-dictionary", { filePath }),
+      }
+    : {}),
 
   onTranscriptionAdded: (callback) => {
     const listener = (_event, transcription) => callback?.(transcription);

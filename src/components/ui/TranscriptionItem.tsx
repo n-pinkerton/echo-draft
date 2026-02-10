@@ -99,7 +99,10 @@ export default function TranscriptionItem({
   ].filter((entry) => Boolean(entry.value));
 
   return (
-    <div className="group relative px-3 py-2.5 transition-colors duration-150 hover:bg-muted/30 dark:hover:bg-white/2">
+    <div
+      data-testid="transcription-item"
+      className="group relative px-3 py-2.5 transition-colors duration-150 hover:bg-muted/30 dark:hover:bg-white/2"
+    >
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0 mt-0.5">
           <span className="inline-flex items-center justify-center min-w-[28px] h-5 px-1.5 rounded-sm bg-primary/10 dark:bg-primary/15 text-primary text-[10px] font-semibold tabular-nums">

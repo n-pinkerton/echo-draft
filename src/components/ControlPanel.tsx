@@ -450,6 +450,7 @@ export default function ControlPanel() {
             <Button
               variant="ghost"
               size="icon"
+              aria-label="Open settings"
               onClick={() => {
                 setSettingsSection(undefined);
                 setShowSettings(true);
@@ -581,12 +582,14 @@ export default function ControlPanel() {
             <div className="border-b border-border/50 p-3 space-y-2">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                 <Input
+                  data-testid="history-search"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   placeholder="Search text, provider, model…"
                   className="h-8 text-xs"
                 />
                 <select
+                  data-testid="history-filter-mode"
                   value={modeFilter}
                   onChange={(event) => setModeFilter(event.target.value as typeof modeFilter)}
                   className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
@@ -596,6 +599,7 @@ export default function ControlPanel() {
                   <option value="clipboard">Clipboard</option>
                 </select>
                 <select
+                  data-testid="history-filter-status"
                   value={statusFilter}
                   onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
                   className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
@@ -606,6 +610,7 @@ export default function ControlPanel() {
                   <option value="cancelled">Cancelled</option>
                 </select>
                 <select
+                  data-testid="history-filter-provider"
                   value={providerFilter}
                   onChange={(event) => setProviderFilter(event.target.value)}
                   className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
