@@ -528,10 +528,20 @@ async function main() {
 
     const listUrl = `http://127.0.0.1:${port}/json/list`;
     let targets = [];
-    for (let i = 0; i < 60; i++) {
+    let panelTarget = null;
+    let dictationTarget = null;
+    for (let i = 0; i < 80; i++) {
       try {
         targets = await fetchJson(listUrl, 1000);
-        if (Array.isArray(targets) && targets.length >= 1) break;
+        if (Array.isArray(targets) && targets.length >= 1) {
+          panelTarget = targets.find((t) => safeString(t.url).includes("panel=true"));
+          dictationTarget = targets.find(
+            (t) => t.type === "page" && safeString(t.url) && !safeString(t.url).includes("panel=true")
+          );
+          if (panelTarget?.webSocketDebuggerUrl && dictationTarget?.webSocketDebuggerUrl) {
+            break;
+          }
+        }
       } catch {
         // retry
       }
@@ -539,12 +549,6 @@ async function main() {
     }
 
     assert(Array.isArray(targets) && targets.length > 0, "No CDP targets found.");
-
-    const panelTarget = targets.find((t) => safeString(t.url).includes("panel=true"));
-    const dictationTarget = targets.find(
-      (t) => t.type === "page" && safeString(t.url) && !safeString(t.url).includes("panel=true")
-    );
-
     assert(panelTarget?.webSocketDebuggerUrl, "Control panel target not found (panel=true).");
     assert(dictationTarget?.webSocketDebuggerUrl, "Dictation panel target not found.");
 
