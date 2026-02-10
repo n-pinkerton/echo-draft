@@ -810,6 +810,31 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     // Wait for E2E helper to exist in dictation panel
     await dictation.waitFor("window.__openwhisprE2E && typeof window.__openwhisprE2E.getProgress === 'function'", 15000);
 
+    // A) Verify both hotkeys can be registered (runtime: globalShortcut status)
+    const hotkeyStatus = await panel.eval(`
+      (async function () {
+        if (!window.electronAPI?.e2eGetHotkeyStatus) {
+          return { success: false, error: "e2eGetHotkeyStatus unavailable" };
+        }
+        try {
+          await window.electronAPI.updateHotkey("F9");
+          await window.electronAPI.updateClipboardHotkey("F10");
+        } catch (err) {
+          return { success: false, error: String(err?.message || err) };
+        }
+        await new Promise((r) => setTimeout(r, 500));
+        const status = await window.electronAPI.e2eGetHotkeyStatus();
+        return { success: true, status };
+      })()
+    `);
+    record(
+      "Hotkeys registered (insert+clipboard)",
+      Boolean(hotkeyStatus?.success) &&
+        Boolean(hotkeyStatus?.status?.insertGlobalRegistered) &&
+        Boolean(hotkeyStatus?.status?.clipboardGlobalRegistered),
+      JSON.stringify(hotkeyStatus)
+    );
+
     // B) Always-visible status bar
     await dictation.waitForSelector('[data-testid="dictation-status-bar"]', 15000);
     record("Status bar present", true);
