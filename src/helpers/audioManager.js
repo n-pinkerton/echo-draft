@@ -144,6 +144,20 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
 
+  shouldApplyReasoningCleanup() {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return false;
+    }
+
+    const enabled = localStorage.getItem("useReasoningModel");
+    if (!enabled || enabled === "false") {
+      return false;
+    }
+
+    const reasoningModel = localStorage.getItem("reasoningModel") || "";
+    return Boolean(reasoningModel.trim());
+  }
+
   async getAudioConstraints() {
     const preferBuiltIn = localStorage.getItem("preferBuiltInMic") !== "false";
     const selectedDeviceId = localStorage.getItem("selectedMicDeviceId") || "";
@@ -534,21 +548,26 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       );
 
       if (result.success && result.text) {
-        this.emitProgress({
-          stage: "cleaning",
-          stageLabel: "Cleaning up",
-          provider: "local-whisper",
-          model,
-        });
-        const reasoningStart = performance.now();
-        const text = await this.processTranscription(result.text, "local");
-        timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+        const rawText = result.text;
+        let cleanedText = rawText;
 
-        if (text !== null && text !== undefined) {
-          return { success: true, text: text || result.text, source: "local", timings };
-        } else {
-          throw new Error("No text transcribed");
+        if (this.shouldApplyReasoningCleanup()) {
+          this.emitProgress({
+            stage: "cleaning",
+            stageLabel: "Cleaning up",
+          });
+          const reasoningStart = performance.now();
+          cleanedText = await this.processTranscription(rawText, "local");
+          timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
         }
+
+        return {
+          success: true,
+          text: cleanedText || rawText,
+          rawText,
+          source: "local",
+          timings,
+        };
       } else if (result.success === false && result.message === "No audio detected") {
         throw new Error("No audio detected");
       } else {
@@ -614,21 +633,26 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       );
 
       if (result.success && result.text) {
-        this.emitProgress({
-          stage: "cleaning",
-          stageLabel: "Cleaning up",
-          provider: "local-parakeet",
-          model,
-        });
-        const reasoningStart = performance.now();
-        const text = await this.processTranscription(result.text, "local-parakeet");
-        timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+        const rawText = result.text;
+        let cleanedText = rawText;
 
-        if (text !== null && text !== undefined) {
-          return { success: true, text: text || result.text, source: "local-parakeet", timings };
-        } else {
-          throw new Error("No text transcribed");
+        if (this.shouldApplyReasoningCleanup()) {
+          this.emitProgress({
+            stage: "cleaning",
+            stageLabel: "Cleaning up",
+          });
+          const reasoningStart = performance.now();
+          cleanedText = await this.processTranscription(rawText, "local-parakeet");
+          timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
         }
+
+        return {
+          success: true,
+          text: cleanedText || rawText,
+          rawText,
+          source: "local-parakeet",
+          timings,
+        };
       } else if (result.success === false && result.message === "No audio detected") {
         throw new Error("No audio detected");
       } else {
@@ -1375,18 +1399,22 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
         if (proxyText && proxyText.trim().length > 0) {
           timings.transcriptionProcessingDurationMs = Math.round(performance.now() - apiCallStart);
-          this.emitProgress({
-            stage: "cleaning",
-            stageLabel: "Cleaning up",
-            provider,
-            model,
-          });
-          const reasoningStart = performance.now();
-          const text = await this.processTranscription(proxyText, "mistral");
-          timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+          const rawText = proxyText;
+          let cleanedText = rawText;
+          let source = "mistral";
 
-          const source = (await this.isReasoningAvailable()) ? "mistral-reasoned" : "mistral";
-          return { success: true, text, source, timings };
+          if (this.shouldApplyReasoningCleanup()) {
+            this.emitProgress({
+              stage: "cleaning",
+              stageLabel: "Cleaning up",
+            });
+            const reasoningStart = performance.now();
+            cleanedText = await this.processTranscription(rawText, "mistral");
+            timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+            source = "mistral-reasoned";
+          }
+
+          return { success: true, text: cleanedText || rawText, rawText, source, timings };
         }
 
         throw new Error("No text transcribed - Mistral response was empty");
@@ -1516,29 +1544,33 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       if (result.text && result.text.trim().length > 0) {
         timings.transcriptionProcessingDurationMs = Math.round(performance.now() - apiCallStart);
 
-        this.emitProgress({
-          stage: "cleaning",
-          stageLabel: "Cleaning up",
-          provider,
-          model,
-        });
-        const reasoningStart = performance.now();
-        const text = await this.processTranscription(result.text, "openai");
-        timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+        const rawText = result.text;
+        let cleanedText = rawText;
+        let source = "openai";
 
-        const source = (await this.isReasoningAvailable()) ? "openai-reasoned" : "openai";
+        if (this.shouldApplyReasoningCleanup()) {
+          this.emitProgress({
+            stage: "cleaning",
+            stageLabel: "Cleaning up",
+          });
+          const reasoningStart = performance.now();
+          cleanedText = await this.processTranscription(rawText, "openai");
+          timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+          source = "openai-reasoned";
+        }
+
         logger.debug(
           "Transcription successful",
           {
-            originalLength: result.text.length,
-            processedLength: text.length,
+            originalLength: rawText.length,
+            processedLength: cleanedText.length,
             source,
             transcriptionProcessingDurationMs: timings.transcriptionProcessingDurationMs,
             reasoningProcessingDurationMs: timings.reasoningProcessingDurationMs,
           },
           "transcription"
         );
-        return { success: true, text, source, timings };
+        return { success: true, text: cleanedText || rawText, rawText, source, timings };
       } else {
         // Log at info level so it shows without debug mode
         logger.info(
