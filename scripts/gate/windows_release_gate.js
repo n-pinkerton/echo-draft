@@ -159,7 +159,13 @@ class CdpClient {
         const el = document.querySelector(${escapedSel});
         if (!el) throw new Error("Element not found: " + ${escapedSel});
         el.focus();
-        el.value = ${escapedVal};
+        const proto = Object.getPrototypeOf(el);
+        const protoDesc = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
+        if (protoDesc && typeof protoDesc.set === "function") {
+          protoDesc.set.call(el, ${escapedVal});
+        } else {
+          el.value = ${escapedVal};
+        }
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
         return true;
