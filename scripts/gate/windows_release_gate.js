@@ -816,23 +816,48 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
         if (!window.electronAPI?.e2eGetHotkeyStatus) {
           return { success: false, error: "e2eGetHotkeyStatus unavailable" };
         }
-        try {
-          await window.electronAPI.updateHotkey("Pause");
-          await window.electronAPI.updateClipboardHotkey("ScrollLock");
-        } catch (err) {
-          return { success: false, error: String(err?.message || err) };
+        const candidates = ["F8", "F9", "F10", "F11", "F12", "ScrollLock"];
+        let last = null;
+
+        for (const insertHotkey of candidates) {
+          try {
+            await window.electronAPI.updateHotkey(insertHotkey);
+          } catch {}
+
+          for (const clipboardHotkey of candidates) {
+            if (clipboardHotkey === insertHotkey) continue;
+            try {
+              await window.electronAPI.updateClipboardHotkey(clipboardHotkey);
+            } catch {}
+
+            await new Promise((r) => setTimeout(r, 600));
+            const status = await window.electronAPI.e2eGetHotkeyStatus();
+            const ok =
+              Boolean(status?.insertGlobalRegistered) &&
+              Boolean(status?.clipboardGlobalRegistered) &&
+              status?.insertHotkey === insertHotkey &&
+              status?.clipboardHotkey === clipboardHotkey;
+
+            last = { chosen: { insertHotkey, clipboardHotkey }, status, ok };
+            if (ok) {
+              return { success: true, ...last };
+            }
+          }
         }
-        await new Promise((r) => setTimeout(r, 500));
-        const status = await window.electronAPI.e2eGetHotkeyStatus();
-        return { success: true, status };
+
+        return { success: false, ...last, error: "Failed to register two distinct global hotkeys" };
       })()
     `);
     record(
       "Hotkeys registered (insert+clipboard)",
-      Boolean(hotkeyStatus?.success) &&
-        Boolean(hotkeyStatus?.status?.insertGlobalRegistered) &&
-        Boolean(hotkeyStatus?.status?.clipboardGlobalRegistered),
-      JSON.stringify(hotkeyStatus)
+      Boolean(hotkeyStatus?.success) && Boolean(hotkeyStatus?.ok),
+      JSON.stringify({
+        success: hotkeyStatus?.success,
+        chosen: hotkeyStatus?.chosen,
+        ok: hotkeyStatus?.ok,
+        status: hotkeyStatus?.status,
+        error: hotkeyStatus?.error,
+      })
     );
 
     // B) Always-visible status bar
