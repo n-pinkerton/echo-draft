@@ -3,7 +3,7 @@
 - Review date: **2026-02-11** (NZDT) / **2026-02-10** (UTC)
 - Repo: `/home/npinkerton/ReposOther/openwhispr`
 - Branch: `main`
-- Commit (HEAD): `fc16cdd` (packaged gate ran on code commit `717dbc9`; `fc16cdd` updates this report only)
+- Code verified: `717dbc9` (last non-docs change in this review; packaged gate runId `2026-02-10T22-18-17-163Z` was built from this code)
 
 ## Scope & standards
 
