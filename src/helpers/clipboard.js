@@ -266,6 +266,18 @@ class ClipboardManager {
       return;
     }
 
+    if (Buffer.isBuffer(snapshot.imagePng) && snapshot.imagePng.length > 0) {
+      try {
+        clipboard.clear();
+        clipboard.writeImage(nativeImage.createFromBuffer(snapshot.imagePng));
+        return;
+      } catch (error) {
+        this.safeLog("⚠️ Failed to restore clipboard image", {
+          error: error?.message,
+        });
+      }
+    }
+
     const data = {};
     if (typeof snapshot.text === "string" && snapshot.text.length > 0) {
       data.text = snapshot.text;
