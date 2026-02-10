@@ -793,7 +793,7 @@ async function main() {
     await panel.click('button[data-section-id="dictionary"]');
     await panel.waitForSelector('textarea[placeholder^="Paste one word"]', 15000);
 
-    const batchText = "OpenWhispr\\n Kubernetes\\nopenwhispr\\n;Dr. Martinez,  \\n\\n";
+    const batchText = "OpenWhispr\nKubernetes\nopenwhispr\n;Dr. Martinez,  \n\n";
     await panel.setInputValue('textarea[placeholder^="Paste one word"]', batchText);
     await sleep(250);
     const previewText = await panel.eval(`
@@ -803,7 +803,11 @@ async function main() {
         return preview ? preview.textContent : "";
       })()
     `);
-    record("Dictionary preview shows dedupe counts", safeString(previewText).includes("duplicates removed"), safeString(previewText));
+    record(
+      "Dictionary preview shows dedupe counts",
+      safeString(previewText).includes("duplicates removed") && safeString(previewText).includes("1 duplicates removed"),
+      safeString(previewText)
+    );
 
     // Apply merge
     await panel.eval(`
@@ -819,9 +823,15 @@ async function main() {
     await sleep(700);
 
     const dictWordsAfterMerge = await panel.eval(`(async () => window.electronAPI.getDictionary())()`);
+    const dictWordsNormalized = Array.isArray(dictWordsAfterMerge)
+      ? dictWordsAfterMerge.map((word) => safeString(word).trim()).filter(Boolean)
+      : [];
     record(
       "Dictionary merge writes to DB",
-      Array.isArray(dictWordsAfterMerge) && dictWordsAfterMerge.length >= 3,
+      dictWordsNormalized.length === 3 &&
+        dictWordsNormalized.includes("OpenWhispr") &&
+        dictWordsNormalized.includes("Kubernetes") &&
+        dictWordsNormalized.includes("Dr. Martinez"),
       JSON.stringify(dictWordsAfterMerge)
     );
 
