@@ -405,11 +405,16 @@ export const useAudioRecording = (toast, options = {}) => {
         });
 
         const saveStart = performance.now();
+        const latestProgress = latestProgressRef.current || {};
+        const recordDurationMs =
+          typeof latestProgress.recordedMs === "number" && latestProgress.recordedMs > 0
+            ? Math.round(latestProgress.recordedMs)
+            : null;
         const baseTimings = {
           ...(result.timings || {}),
+          ...(recordDurationMs !== null ? { recordDurationMs } : {}),
           pasteDurationMs: pasteMs,
         };
-        const latestProgress = latestProgressRef.current || {};
         const provider = latestProgress.provider || result.source || "";
         const model = latestProgress.model || "";
 
