@@ -303,17 +303,30 @@ public static class WinApiNp {
 }
 "@
 
-$proc = Start-Process notepad -PassThru
-try { $proc.WaitForInputIdle(2000) | Out-Null } catch {}
-for ($i = 0; $i -lt 200 -and -not $proc.HasExited -and $proc.MainWindowHandle -eq 0; $i++) {
+$existingHwnd = @{}
+try {
+  @(Get-Process -Name Notepad -ErrorAction SilentlyContinue) | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object {
+    $existingHwnd[[Int64]$_.MainWindowHandle] = $true
+  }
+} catch {}
+
+$launcherProc = Start-Process notepad -PassThru
+try { $launcherProc.WaitForInputIdle(1500) | Out-Null } catch {}
+
+$uiProc = $null
+$hwnd = [Int64]0
+for ($i = 0; $i -lt 250 -and $hwnd -eq 0; $i++) {
   Start-Sleep -Milliseconds 100
-  $proc.Refresh()
+  try {
+    $candidates = @(Get-Process -Name Notepad -ErrorAction SilentlyContinue) | Where-Object { $_.MainWindowHandle -ne 0 }
+    $uiProc = $candidates | Where-Object { -not $existingHwnd.ContainsKey([Int64]$_.MainWindowHandle) } | Select-Object -First 1
+    if (-not $uiProc -and $existingHwnd.Count -eq 0 -and $candidates.Count -gt 0) {
+      $uiProc = $candidates[0]
+    }
+    if ($uiProc) { $hwnd = [Int64]$uiProc.MainWindowHandle }
+  } catch {}
 }
-$hwnd = [Int64]$proc.MainWindowHandle
-if ($hwnd -eq 0 -and -not $proc.HasExited) {
-  $found = [WinApiNp]::FindTopWindowForPid([Int32]$proc.Id)
-  if ($found -ne [IntPtr]::Zero) { $hwnd = [Int64]$found }
-}
+
 if ($hwnd -eq 0) {
   [pscustomobject]@{ success = $false; error = "notepad_no_window" } | ConvertTo-Json -Compress
   exit 0
@@ -327,6 +340,7 @@ $pid = 0
 [pscustomobject]@{
   success = $true
   pid = [Int32]$pid
+  launcherPid = [Int32]$launcherProc.Id
   hwnd = [Int64]$hwnd
   editHwnd = [Int64]$edit
 } | ConvertTo-Json -Compress
@@ -817,6 +831,13 @@ async function main() {
     record("E2E import dictionary (TXT)", Boolean(importDictResult?.success), JSON.stringify(importDictResult));
 
     await closeProcess(notepad.pid);
+    if (
+      Number.isInteger(notepad.launcherPid) &&
+      notepad.launcherPid &&
+      notepad.launcherPid !== notepad.pid
+    ) {
+      await closeProcess(notepad.launcherPid);
+    }
 
     await panel.close();
     await dictation.close();
