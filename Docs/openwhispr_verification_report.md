@@ -3,7 +3,7 @@
 - Review date: **2026-02-11** (NZDT) / **2026-02-10** (UTC)
 - Repo: `/home/npinkerton/ReposOther/openwhispr`
 - Branch: `main`
-- Commit (HEAD): `717dbc9` (includes gate safety fixes `0e7dc2c`, `b143bcd`, Windows PTT fix `f4c0178`, fork-safe updates `164f9f7`, and removes Pro upgrade CTAs `717dbc9`)
+- Commit (HEAD): `fc16cdd` (packaged gate ran on code commit `717dbc9`; `fc16cdd` updates this report only)
 
 ## Scope & standards
 
