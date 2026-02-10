@@ -189,9 +189,7 @@ class WindowManager {
       return;
     }
 
-    if (!this.mainWindow.isVisible()) {
-      this.mainWindow.show();
-    }
+    this.showDictationPanel({ focus: false });
     this.emitDictationEvent("toggle-dictation", payload);
   }
 
@@ -374,9 +372,7 @@ class WindowManager {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      if (!this.mainWindow.isVisible()) {
-        this.mainWindow.show();
-      }
+      this.showDictationPanel({ focus: false });
       this.emitDictationEvent("start-dictation", payload);
     }
   }
