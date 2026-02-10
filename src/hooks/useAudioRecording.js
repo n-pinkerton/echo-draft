@@ -28,6 +28,7 @@ const INITIAL_PROGRESS = {
   generatedWords: 0,
   outputMode: "insert",
   sessionId: null,
+  jobId: null,
   provider: null,
   model: null,
   message: null,
@@ -45,8 +46,13 @@ export const useAudioRecording = (toast, options = {}) => {
   const [transcript, setTranscript] = useState("");
   const [partialTranscript, setPartialTranscript] = useState("");
   const [progress, setProgress] = useState(INITIAL_PROGRESS);
+  const [jobs, setJobs] = useState([]);
   const audioManagerRef = useRef(null);
   const activeSessionRef = useRef(null);
+  const sessionsByIdRef = useRef(new Map());
+  const jobsBySessionIdRef = useRef(new Map());
+  const nextJobIdRef = useRef(0);
+  const recordingSessionIdRef = useRef(null);
   const latestProgressRef = useRef(INITIAL_PROGRESS);
   const sessionStartedAtRef = useRef(null);
   const recordingStartedAtRef = useRef(null);
@@ -94,12 +100,48 @@ export const useAudioRecording = (toast, options = {}) => {
     [createSessionId]
   );
 
+  const getNextJobId = useCallback(() => {
+    nextJobIdRef.current += 1;
+    return nextJobIdRef.current;
+  }, []);
+
+  const syncJobs = useCallback(() => {
+    const values = [...jobsBySessionIdRef.current.values()];
+    values.sort((a, b) => (a.jobId || 0) - (b.jobId || 0));
+    setJobs(values);
+  }, []);
+
+  const upsertJob = useCallback(
+    (sessionId, patch = {}) => {
+      const existing = jobsBySessionIdRef.current.get(sessionId);
+      const jobId = existing?.jobId ?? getNextJobId();
+      const next = { sessionId, jobId, status: "queued", ...existing, ...patch };
+      jobsBySessionIdRef.current.set(sessionId, next);
+      syncJobs();
+      return next;
+    },
+    [getNextJobId, syncJobs]
+  );
+
+  const removeJob = useCallback(
+    (sessionId) => {
+      jobsBySessionIdRef.current.delete(sessionId);
+      syncJobs();
+    },
+    [syncJobs]
+  );
+
   const updateStage = useCallback(
     (stage, patch = {}) => {
       const normalizedStage = STAGE_META[stage] ? stage : "idle";
       const now = Date.now();
 
-      if (!sessionStartedAtRef.current) {
+      const previousSessionId = latestProgressRef.current?.sessionId;
+      const nextSessionId = patch.sessionId || previousSessionId;
+      if (nextSessionId && nextSessionId !== previousSessionId) {
+        sessionStartedAtRef.current = now;
+        recordingStartedAtRef.current = null;
+      } else if (!sessionStartedAtRef.current) {
         sessionStartedAtRef.current = now;
       }
 
@@ -154,11 +196,16 @@ export const useAudioRecording = (toast, options = {}) => {
           message: patch.message !== undefined ? patch.message : null,
           outputMode: patch.outputMode || prev.outputMode,
           sessionId: patch.sessionId || prev.sessionId,
+          jobId: patch.jobId !== undefined ? patch.jobId : prev.jobId,
         };
       });
 
       if (TERMINAL_STAGES.has(normalizedStage)) {
         progressResetTimerRef.current = setTimeout(() => {
+          const state = audioManagerRef.current?.getState?.();
+          if (state?.isRecording || state?.isProcessing || jobsBySessionIdRef.current.size > 0) {
+            return;
+          }
           resetProgress();
         }, 3000);
       }
@@ -173,11 +220,24 @@ export const useAudioRecording = (toast, options = {}) => {
       }
 
       const currentState = audioManagerRef.current.getState();
-      if (currentState.isRecording || currentState.isProcessing) {
+      const session = normalizeTriggerPayload(payload);
+      if (currentState.isRecording) {
+        return false;
+      }
+      if (currentState.isProcessing && session.outputMode !== "clipboard") {
         return false;
       }
 
-      const session = normalizeTriggerPayload(payload);
+      const job = upsertJob(session.sessionId, {
+        outputMode: session.outputMode,
+        status: "recording",
+        startedAt: Date.now(),
+        recordedMs: null,
+        provider: null,
+        model: null,
+      });
+      sessionsByIdRef.current.set(session.sessionId, session);
+      recordingSessionIdRef.current = session.sessionId;
 
       if (session.outputMode === "insert" && window.electronAPI?.captureInsertionTarget) {
         try {
@@ -190,9 +250,17 @@ export const useAudioRecording = (toast, options = {}) => {
         }
       }
 
-      const didStart = audioManagerRef.current.shouldUseStreaming()
-        ? await audioManagerRef.current.startStreamingRecording()
-        : await audioManagerRef.current.startRecording();
+      const shouldForceNonStreaming = currentState.isProcessing && session.outputMode === "clipboard";
+      const recordingContext = {
+        sessionId: session.sessionId,
+        jobId: job.jobId,
+        outputMode: session.outputMode,
+      };
+
+      const didStart =
+        !shouldForceNonStreaming && audioManagerRef.current.shouldUseStreaming()
+          ? await audioManagerRef.current.startStreamingRecording(recordingContext)
+          : await audioManagerRef.current.startRecording(recordingContext);
 
       if (didStart) {
         activeSessionRef.current = session;
@@ -201,16 +269,21 @@ export const useAudioRecording = (toast, options = {}) => {
         updateStage("listening", {
           outputMode: session.outputMode,
           sessionId: session.sessionId,
+          jobId: job.jobId,
           generatedChars: 0,
           generatedWords: 0,
           message: session.outputMode === "clipboard" ? "Clipboard mode" : null,
         });
         void playStartCue();
+      } else {
+        sessionsByIdRef.current.delete(session.sessionId);
+        recordingSessionIdRef.current = null;
+        removeJob(session.sessionId);
       }
 
       return didStart;
     },
-    [normalizeTriggerPayload, updateStage]
+    [normalizeTriggerPayload, removeJob, updateStage, upsertJob]
   );
 
   const performStopRecording = useCallback(
@@ -228,9 +301,21 @@ export const useAudioRecording = (toast, options = {}) => {
         activeSessionRef.current = normalizeTriggerPayload(payload);
       }
 
-      updateStage("transcribing", {
-        stageProgress: null,
-      });
+      const session = activeSessionRef.current;
+      if (session?.sessionId) {
+        const recordedMsSnapshot =
+          typeof latestProgressRef.current?.recordedMs === "number" &&
+          latestProgressRef.current.recordedMs > 0
+            ? Math.round(latestProgressRef.current.recordedMs)
+            : null;
+        upsertJob(session.sessionId, {
+          status:
+            currentState.isProcessing && session.outputMode === "clipboard" ? "queued" : "processing",
+          ...(recordedMsSnapshot !== null ? { recordedMs: recordedMsSnapshot } : {}),
+          stoppedAt: Date.now(),
+        });
+      }
+      recordingSessionIdRef.current = null;
 
       if (currentState.isStreaming) {
         void playStopCue();
@@ -244,7 +329,7 @@ export const useAudioRecording = (toast, options = {}) => {
 
       return didStop;
     },
-    [normalizeTriggerPayload, updateStage]
+    [normalizeTriggerPayload, upsertJob]
   );
 
   useEffect(() => {
@@ -261,23 +346,60 @@ export const useAudioRecording = (toast, options = {}) => {
       })();
 
     const handleTranscriptionComplete = async (result) => {
+      const contextSessionId =
+        typeof result?.context?.sessionId === "string" && result.context.sessionId.trim()
+          ? result.context.sessionId.trim()
+          : null;
+
+      const fallbackSession = contextSessionId
+        ? normalizeTriggerPayload(result?.context || {})
+        : activeSessionRef.current || normalizeTriggerPayload(result?.context || {});
+      const resolvedSessionId = contextSessionId || fallbackSession.sessionId;
+      const storedSession = resolvedSessionId
+        ? sessionsByIdRef.current.get(resolvedSessionId)
+        : null;
+      const session = resolvedSessionId
+        ? { ...fallbackSession, ...storedSession, sessionId: resolvedSessionId }
+        : fallbackSession;
+
+      const job = resolvedSessionId ? jobsBySessionIdRef.current.get(resolvedSessionId) : null;
+      const jobId =
+        typeof result?.context?.jobId === "number" && Number.isFinite(result.context.jobId)
+          ? result.context.jobId
+          : job?.jobId ?? null;
+
+      if (resolvedSessionId) {
+        sessionsByIdRef.current.delete(resolvedSessionId);
+      }
+      if (activeSessionRef.current?.sessionId === resolvedSessionId) {
+        activeSessionRef.current = null;
+      }
+
       if (!result.success) {
-        updateStage("error", { message: "Transcription did not complete." });
+        if (!recordingSessionIdRef.current) {
+          updateStage("error", { message: "Transcription did not complete." });
+        }
+        if (resolvedSessionId) {
+          upsertJob(resolvedSessionId, { status: "error" });
+          setTimeout(() => removeJob(resolvedSessionId), 1500);
+        }
         return;
       }
 
       setTranscript(result.text);
-      const session = activeSessionRef.current || normalizeTriggerPayload();
-      activeSessionRef.current = null;
 
       let pasteSucceeded = false;
       let pasteMs = null;
+      const isForegroundAvailable = !recordingSessionIdRef.current;
 
       if (session.outputMode === "insert") {
-        updateStage("inserting", {
-          outputMode: session.outputMode,
-          sessionId: session.sessionId,
-        });
+        if (isForegroundAvailable) {
+          updateStage("inserting", {
+            outputMode: session.outputMode,
+            sessionId: session.sessionId,
+            ...(jobId !== null ? { jobId } : {}),
+          });
+        }
 
         const isResultStreaming = result.source?.includes("streaming");
         const pasteStart = performance.now();
@@ -310,30 +432,30 @@ export const useAudioRecording = (toast, options = {}) => {
         }
 
         toast({
-          title: "Copied to Clipboard",
+          title: jobId !== null ? `Copied Job #${jobId}` : "Copied to Clipboard",
           description: "Dictation finished. Paste where you want the text.",
           duration: 2500,
         });
       }
 
-      updateStage("saving", {
-        outputMode: session.outputMode,
-        sessionId: session.sessionId,
-      });
+      if (isForegroundAvailable) {
+        updateStage("saving", {
+          outputMode: session.outputMode,
+          sessionId: session.sessionId,
+          ...(jobId !== null ? { jobId } : {}),
+        });
+      }
 
       const saveStart = performance.now();
-      const latestProgress = latestProgressRef.current || {};
       const recordDurationMs =
-        typeof latestProgress.recordedMs === "number" && latestProgress.recordedMs > 0
-          ? Math.round(latestProgress.recordedMs)
-          : null;
+        typeof job?.recordedMs === "number" && job.recordedMs > 0 ? Math.round(job.recordedMs) : null;
       const baseTimings = {
         ...(result.timings || {}),
         ...(recordDurationMs !== null ? { recordDurationMs } : {}),
         pasteDurationMs: pasteMs,
       };
-      const provider = latestProgress.provider || result.source || "";
-      const model = latestProgress.model || "";
+      const provider = job?.provider || result.source || "";
+      const model = job?.model || "";
 
       const saveResult = await audioManagerRef.current.saveTranscription({
         text: result.text,
@@ -353,9 +475,10 @@ export const useAudioRecording = (toast, options = {}) => {
       const saveSucceeded = Boolean(saveResult?.success);
       const savedId = saveResult?.id || saveResult?.transcription?.id;
       const saveMs = Math.round(performance.now() - saveStart);
-      const totalDurationMs = sessionStartedAtRef.current
-        ? Math.max(0, Date.now() - sessionStartedAtRef.current)
-        : null;
+      const totalDurationMs =
+        typeof job?.startedAt === "number" && job.startedAt > 0
+          ? Math.max(0, Date.now() - job.startedAt)
+          : null;
 
       if (saveSucceeded && savedId && window.electronAPI?.patchTranscriptionMeta) {
         try {
@@ -406,30 +529,39 @@ export const useAudioRecording = (toast, options = {}) => {
         });
       }
 
-      updateStage("done", {
-        outputMode: session.outputMode,
-        sessionId: session.sessionId,
-        stageProgress: 1,
-        overallProgress: 1,
-        message: saveSucceeded
-          ? null
-          : session.outputMode === "insert" && pasteSucceeded
-            ? "Inserted, but history save failed."
-            : "Saved to clipboard, but history save failed.",
-        provider,
-        model,
-        generatedChars: result.text.length,
-        generatedWords: countWords(result.text),
-      });
+      if (isForegroundAvailable) {
+        updateStage("done", {
+          outputMode: session.outputMode,
+          sessionId: session.sessionId,
+          ...(jobId !== null ? { jobId } : {}),
+          stageProgress: 1,
+          overallProgress: 1,
+          message: saveSucceeded
+            ? null
+            : session.outputMode === "insert" && pasteSucceeded
+              ? "Inserted, but history save failed."
+              : "Saved to clipboard, but history save failed.",
+          provider,
+          model,
+          generatedChars: result.text.length,
+          generatedWords: countWords(result.text),
+        });
 
-      setProgress((prev) => ({
-        ...prev,
-        elapsedMs: sessionStartedAtRef.current
-          ? Math.max(0, Date.now() - sessionStartedAtRef.current)
-          : prev.elapsedMs,
-        recordedMs: prev.recordedMs,
-        message: saveSucceeded && saveMs > 0 ? `Saved in ${saveMs}ms` : prev.message,
-      }));
+        setProgress((prev) => ({
+          ...prev,
+          message: saveSucceeded && saveMs > 0 ? `Saved in ${saveMs}ms` : prev.message,
+        }));
+      }
+
+      if (resolvedSessionId) {
+        upsertJob(resolvedSessionId, {
+          status: "done",
+          provider,
+          model,
+          outputMode: session.outputMode,
+        });
+        setTimeout(() => removeJob(resolvedSessionId), 1500);
+      }
 
       audioManagerRef.current.warmupStreamingConnection();
     };
@@ -443,27 +575,16 @@ export const useAudioRecording = (toast, options = {}) => {
         if (!isStreaming) {
           setPartialTranscript("");
         }
-
-        if (!isRecording && isProcessing) {
-          setProgress((prev) => {
-            if (prev.stage === "listening") {
-              return {
-                ...prev,
-                stage: "transcribing",
-                stageLabel: STAGE_META.transcribing.label,
-                stageProgress: null,
-                overallProgress: STAGE_META.transcribing.overallProgress,
-              };
-            }
-            return prev;
-          });
-        }
       },
       onError: (error) => {
         activeSessionRef.current = null;
-        updateStage("error", {
-          message: error.description || error.message || "An unknown error occurred",
-        });
+        const wasRecording = Boolean(recordingSessionIdRef.current);
+        recordingSessionIdRef.current = null;
+        if (!wasRecording) {
+          updateStage("error", {
+            message: error.description || error.message || "An unknown error occurred",
+          });
+        }
 
         const title =
           error.code === "AUTH_EXPIRED"
@@ -486,17 +607,67 @@ export const useAudioRecording = (toast, options = {}) => {
           return;
         }
 
+        const contextSessionId =
+          typeof event?.context?.sessionId === "string" ? event.context.sessionId : null;
+        const jobIdFromEvent =
+          typeof event?.jobId === "number" && Number.isFinite(event.jobId) ? event.jobId : null;
+        if (contextSessionId) {
+          const nextStatus =
+            event.stage === "listening"
+              ? "recording"
+              : event.stage === "cancelled"
+                ? "cancelled"
+                : event.stage === "error"
+                  ? "error"
+                  : "processing";
+          const jobPatch = {
+            status: nextStatus,
+          };
+          if (jobIdFromEvent !== null) {
+            jobPatch.jobId = jobIdFromEvent;
+          }
+          if (event?.context?.outputMode) {
+            jobPatch.outputMode = event.context.outputMode;
+          }
+          if (event.provider) {
+            jobPatch.provider = event.provider;
+          }
+          if (event.model) {
+            jobPatch.model = event.model;
+          }
+          upsertJob(contextSessionId, jobPatch);
+        }
+
         if (event.stage) {
-          updateStage(event.stage, {
-            stageLabel: event.stageLabel,
-            stageProgress: event.stageProgress,
-            overallProgress: event.overallProgress,
-            generatedChars: event.generatedChars,
-            generatedWords: event.generatedWords,
-            provider: event.provider,
-            model: event.model,
-            message: event.message,
-          });
+          const shouldUpdateForeground =
+            !recordingSessionIdRef.current ||
+            (contextSessionId && contextSessionId === recordingSessionIdRef.current);
+
+          if (shouldUpdateForeground) {
+            updateStage(event.stage, {
+              stageLabel: event.stageLabel,
+              stageProgress: event.stageProgress,
+              overallProgress: event.overallProgress,
+              generatedChars: event.generatedChars,
+              generatedWords: event.generatedWords,
+              provider: event.provider,
+              model: event.model,
+              message: event.message,
+              ...(contextSessionId ? { sessionId: contextSessionId } : {}),
+              ...(jobIdFromEvent !== null ? { jobId: jobIdFromEvent } : {}),
+              ...(event?.context?.outputMode ? { outputMode: event.context.outputMode } : {}),
+            });
+          }
+
+          if (contextSessionId && (event.stage === "error" || event.stage === "cancelled")) {
+            setTimeout(() => removeJob(contextSessionId), 3000);
+          }
+          return;
+        }
+
+        const shouldUpdateProgressCounters =
+          !recordingSessionIdRef.current || audioManagerRef.current?.getState?.()?.isStreaming;
+        if (!shouldUpdateProgressCounters) {
           return;
         }
 
@@ -575,9 +746,9 @@ export const useAudioRecording = (toast, options = {}) => {
       if (!audioManagerRef.current) return;
       const currentState = audioManagerRef.current.getState();
 
-      if (!currentState.isRecording && !currentState.isProcessing) {
+      if (!currentState.isRecording) {
         await performStartRecording(payload);
-      } else if (currentState.isRecording) {
+      } else {
         await performStopRecording(payload);
       }
     };
@@ -635,7 +806,9 @@ export const useAudioRecording = (toast, options = {}) => {
     onToggle,
     performStartRecording,
     performStopRecording,
+    removeJob,
     toast,
+    upsertJob,
     updateStage,
   ]);
 
@@ -677,7 +850,13 @@ export const useAudioRecording = (toast, options = {}) => {
   };
 
   const cancelRecording = async () => {
+    const sessionId = recordingSessionIdRef.current || activeSessionRef.current?.sessionId || null;
     activeSessionRef.current = null;
+    recordingSessionIdRef.current = null;
+    if (sessionId) {
+      sessionsByIdRef.current.delete(sessionId);
+      removeJob(sessionId);
+    }
     updateStage("cancelled", { message: "Recording cancelled" });
     if (audioManagerRef.current) {
       const state = audioManagerRef.current.getState();
@@ -691,6 +870,9 @@ export const useAudioRecording = (toast, options = {}) => {
 
   const cancelProcessing = () => {
     activeSessionRef.current = null;
+    sessionsByIdRef.current.clear();
+    jobsBySessionIdRef.current.clear();
+    setJobs([]);
     updateStage("cancelled", { message: "Processing cancelled" });
     if (audioManagerRef.current) {
       return audioManagerRef.current.cancelProcessing();
@@ -699,7 +881,8 @@ export const useAudioRecording = (toast, options = {}) => {
   };
 
   const toggleListening = async (payload = {}) => {
-    if (!isRecording && !isProcessing) {
+    const outputMode = payload?.outputMode === "clipboard" ? "clipboard" : "insert";
+    if (!isRecording && (!isProcessing || outputMode === "clipboard")) {
       await startRecording(payload);
     } else if (isRecording) {
       await stopRecording(payload);
@@ -717,6 +900,7 @@ export const useAudioRecording = (toast, options = {}) => {
     transcript,
     partialTranscript,
     progress,
+    jobs,
     startRecording,
     stopRecording,
     cancelRecording,

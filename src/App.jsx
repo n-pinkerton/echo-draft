@@ -161,6 +161,7 @@ export default function App() {
     isRecording,
     isProcessing,
     progress,
+    jobs,
     toggleListening,
     cancelRecording,
     cancelProcessing,
@@ -243,8 +244,8 @@ export default function App() {
         };
       case "processing":
         return {
-          className: `${baseClasses} bg-accent cursor-not-allowed`,
-          tooltip: "Processing...",
+          className: `${baseClasses} bg-accent cursor-pointer`,
+          tooltip: "Processing… (click to queue)",
         };
       default:
         return {
@@ -256,6 +257,10 @@ export default function App() {
   };
 
   const micProps = getMicButtonProps();
+  const visibleJobs = Array.isArray(jobs)
+    ? jobs.filter((job) => job && typeof job === "object" && job.status !== "done")
+    : [];
+  const stackedJobs = visibleJobs.slice(-3).reverse();
 
   return (
     <div className="dictation-window">
@@ -293,6 +298,36 @@ export default function App() {
                 />
               </button>
             )}
+            {visibleJobs.length > 1 ? (
+              <div className="flex flex-col items-end gap-1 pr-0.5" aria-label="Dictation jobs">
+                {stackedJobs.map((job) => {
+                  const status = String(job.status || "");
+                  const baseClass =
+                    "h-4 w-4 rounded-full border text-[9px] font-semibold tabular-nums flex items-center justify-center";
+                  const className =
+                    status === "recording"
+                      ? `${baseClass} bg-primary text-primary-foreground border-primary/70`
+                      : status === "processing"
+                        ? `${baseClass} bg-accent text-accent-foreground border-accent/70 animate-pulse`
+                        : status === "queued"
+                          ? `${baseClass} bg-muted text-muted-foreground border-border/70`
+                          : status === "error"
+                            ? `${baseClass} bg-destructive text-destructive-foreground border-destructive/70`
+                            : `${baseClass} bg-muted text-muted-foreground border-border/70`;
+
+                  return (
+                    <div key={String(job.sessionId)} className={className}>
+                      {job.jobId}
+                    </div>
+                  );
+                })}
+                {visibleJobs.length > 3 ? (
+                  <div className="h-4 w-4 rounded-full border border-border/70 bg-muted text-[8px] font-semibold tabular-nums flex items-center justify-center text-muted-foreground">
+                    +{visibleJobs.length - 3}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <Tooltip content={micProps.tooltip}>
               <button
                 ref={buttonRef}
@@ -337,11 +372,7 @@ export default function App() {
                 style={{
                   ...micProps.style,
                   cursor:
-                    micState === "processing"
-                      ? "not-allowed !important"
-                      : isDragging
-                        ? "grabbing !important"
-                        : "pointer !important",
+                    isDragging ? "grabbing !important" : "pointer !important",
                   transition:
                     "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.25s ease-out",
                 }}

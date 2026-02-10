@@ -27,6 +27,9 @@ class AudioManager {
     this.audioChunks = [];
     this.isRecording = false;
     this.isProcessing = false;
+    this.processingQueue = [];
+    this.processingQueueRunner = null;
+    this.activeProcessingContext = null;
     this.onStateChange = null;
     this.onError = null;
     this.onTranscriptionComplete = null;
@@ -47,6 +50,7 @@ class AudioManager {
     this.reasoningAvailabilityCache = { value: false, expiresAt: 0 };
     this.cachedReasoningPreference = null;
     this.isStreaming = false;
+    this.streamingContext = null;
     this.streamingAudioContext = null;
     this.streamingSource = null;
     this.streamingProcessor = null;
@@ -133,10 +137,22 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   emitProgress(event = {}) {
-    this.onProgress?.({
+    const payload = {
       timestamp: Date.now(),
       ...event,
-    });
+    };
+
+    const stage = typeof payload.stage === "string" ? payload.stage : null;
+    if (this.activeProcessingContext && stage && stage !== "listening") {
+      if (!payload.context) {
+        payload.context = this.activeProcessingContext;
+      }
+      if (payload.jobId === undefined && this.activeProcessingContext.jobId !== undefined) {
+        payload.jobId = this.activeProcessingContext.jobId;
+      }
+    }
+
+    this.onProgress?.(payload);
   }
 
   countWords(text) {
@@ -230,9 +246,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
   }
 
-  async startRecording() {
+  async startRecording(context = null) {
     try {
-      if (this.isRecording || this.isProcessing || this.mediaRecorder?.state === "recording") {
+      if (this.isRecording || this.mediaRecorder?.state === "recording") {
         return false;
       }
 
@@ -254,54 +270,62 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         );
       }
 
-      this.mediaRecorder = new MediaRecorder(stream);
-      this.audioChunks = [];
-      this.recordingStartTime = Date.now();
-      this.recordingMimeType = this.mediaRecorder.mimeType || "audio/webm";
+      const mediaRecorder = new MediaRecorder(stream);
+      const audioChunks = [];
+      const recordingStartedAt = Date.now();
+      const recordingMimeType = mediaRecorder.mimeType || "audio/webm";
+      const recordingContext = context && typeof context === "object" ? context : null;
+
+      this.mediaRecorder = mediaRecorder;
+      this.audioChunks = audioChunks;
+      this.recordingMimeType = recordingMimeType;
       this.emitProgress({
         stage: "listening",
         stageLabel: "Listening",
         stageProgress: null,
+        context: recordingContext,
       });
 
-      this.mediaRecorder.ondataavailable = (event) => {
-        this.audioChunks.push(event.data);
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunks.push(event.data);
       };
 
-      this.mediaRecorder.onstop = async () => {
+      mediaRecorder.onstop = async () => {
         this.isRecording = false;
-        this.isProcessing = true;
-        this.onStateChange?.({ isRecording: false, isProcessing: true });
-        this.emitProgress({
-          stage: "transcribing",
-          stageLabel: "Transcribing",
-          stageProgress: null,
-        });
+        if (this.mediaRecorder === mediaRecorder) {
+          this.mediaRecorder = null;
+        }
 
-        const audioBlob = new Blob(this.audioChunks, { type: this.recordingMimeType });
+        const audioBlob = new Blob(audioChunks, { type: recordingMimeType });
 
         logger.info(
           "Recording stopped",
           {
             blobSize: audioBlob.size,
             blobType: audioBlob.type,
-            chunksCount: this.audioChunks.length,
+            chunksCount: audioChunks.length,
           },
           "audio"
         );
 
-        const durationSeconds = this.recordingStartTime
-          ? (Date.now() - this.recordingStartTime) / 1000
-          : null;
-        this.recordingStartTime = null;
-        await this.processAudio(audioBlob, { durationSeconds });
+        const durationSeconds = recordingStartedAt ? (Date.now() - recordingStartedAt) / 1000 : null;
+        this.enqueueProcessingJob(audioBlob, { durationSeconds }, recordingContext);
+        this.onStateChange?.({
+          isRecording: false,
+          isProcessing: this.isProcessing,
+          isStreaming: this.isStreaming,
+        });
 
         stream.getTracks().forEach((track) => track.stop());
       };
 
-      this.mediaRecorder.start();
+      mediaRecorder.start();
       this.isRecording = true;
-      this.onStateChange?.({ isRecording: true, isProcessing: false });
+      this.onStateChange?.({
+        isRecording: true,
+        isProcessing: this.isProcessing,
+        isStreaming: false,
+      });
 
       return true;
     } catch (error) {
@@ -341,10 +365,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     if (this.mediaRecorder && this.mediaRecorder.state === "recording") {
       this.mediaRecorder.onstop = () => {
         this.isRecording = false;
-        this.isProcessing = false;
         this.audioChunks = [];
-        this.recordingStartTime = null;
-        this.onStateChange?.({ isRecording: false, isProcessing: false });
+        this.onStateChange?.({
+          isRecording: false,
+          isProcessing: this.isProcessing,
+          isStreaming: false,
+        });
         this.emitProgress({
           stage: "cancelled",
           stageLabel: "Cancelled",
@@ -363,9 +389,15 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   cancelProcessing() {
-    if (this.isProcessing) {
+    if (this.isProcessing || this.processingQueue.length > 0) {
       this.isProcessing = false;
-      this.onStateChange?.({ isRecording: false, isProcessing: false });
+      this.processingQueue = [];
+      this.activeProcessingContext = null;
+      this.onStateChange?.({
+        isRecording: this.isRecording,
+        isProcessing: false,
+        isStreaming: this.isStreaming,
+      });
       this.emitProgress({
         stage: "cancelled",
         stageLabel: "Cancelled",
@@ -373,6 +405,57 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       return true;
     }
     return false;
+  }
+
+  enqueueProcessingJob(audioBlob, metadata = {}, context = null) {
+    this.processingQueue.push({ audioBlob, metadata, context });
+    this.startQueuedProcessingIfPossible();
+  }
+
+  startQueuedProcessingIfPossible() {
+    if (this.processingQueueRunner || this.processingQueue.length === 0) {
+      return;
+    }
+
+    // Another processing pipeline (e.g., streaming finalize) is active.
+    // We'll start as soon as that processing ends.
+    if (this.isProcessing) {
+      return;
+    }
+
+    this.isProcessing = true;
+    this.onStateChange?.({
+      isRecording: this.isRecording,
+      isProcessing: true,
+      isStreaming: this.isStreaming,
+    });
+
+    this.processingQueueRunner = (async () => {
+      while (this.isProcessing && this.processingQueue.length > 0) {
+        const job = this.processingQueue.shift();
+        if (!job) {
+          continue;
+        }
+        this.activeProcessingContext = job.context || null;
+        await this.processAudio(job.audioBlob, job.metadata);
+        this.activeProcessingContext = null;
+      }
+    })()
+      .catch((error) => {
+        logger.error("Processing queue runner failed", { error: error?.message }, "audio");
+      })
+      .finally(() => {
+        this.processingQueueRunner = null;
+        this.activeProcessingContext = null;
+        if (this.isProcessing) {
+          this.isProcessing = false;
+        }
+        this.onStateChange?.({
+          isRecording: this.isRecording,
+          isProcessing: this.isProcessing,
+          isStreaming: this.isStreaming,
+        });
+      });
   }
 
   async processAudio(audioBlob, metadata = {}) {
@@ -448,7 +531,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         return;
       }
 
-      this.onTranscriptionComplete?.(result);
+      await Promise.resolve(
+        this.onTranscriptionComplete?.({
+          ...result,
+          context: this.activeProcessingContext,
+        })
+      );
 
       const roundTripDurationMs = Math.round(performance.now() - pipelineStart);
 
@@ -497,10 +585,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         });
       }
     } finally {
-      if (this.isProcessing) {
-        this.isProcessing = false;
-        this.onStateChange?.({ isRecording: false, isProcessing: false });
-      }
+      // Processing state is managed by the queue runner (or streaming pipeline).
     }
   }
 
@@ -1944,11 +2029,13 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return this.persistentAudioContext;
   }
 
-  async startStreamingRecording() {
+  async startStreamingRecording(context = null) {
     try {
       if (this.isRecording || this.isStreaming || this.isProcessing) {
         return false;
       }
+
+      const recordingContext = context && typeof context === "object" ? context : null;
 
       const t0 = performance.now();
       const constraints = await this.getAudioConstraints();
@@ -1999,7 +2086,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           {},
           "streaming"
         );
-        return this.startRecording();
+        return this.startRecording(recordingContext);
       }
 
       const audioContext = await this.getOrCreateAudioContext();
@@ -2039,12 +2126,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       // This ensures no words are lost — the user sees "recording" exactly when audio flows.
       this.isStreaming = true;
       this.isRecording = true;
+      this.streamingContext = recordingContext;
       this.recordingStartTime = Date.now();
       this.onStateChange?.({ isRecording: true, isProcessing: false, isStreaming: true });
       this.emitProgress({
         stage: "listening",
         stageLabel: "Listening",
         stageProgress: null,
+        context: recordingContext,
       });
 
       this.streamingFinalText = "";
@@ -2102,6 +2191,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     } catch (error) {
       logger.error("Failed to start streaming recording", { error: error.message }, "streaming");
 
+      this.streamingContext = null;
       let errorTitle = "Streaming Error";
       let errorDescription = `Failed to start streaming: ${error.message}`;
 
@@ -2137,12 +2227,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
     // 1. Update UI immediately
     this.isRecording = false;
+    this.isProcessing = true;
     this.recordingStartTime = null;
     this.onStateChange?.({ isRecording: false, isProcessing: true, isStreaming: false });
     this.emitProgress({
       stage: "transcribing",
       stageLabel: "Transcribing",
       message: "Finalizing stream",
+      context: this.streamingContext,
     });
 
     // 2. Stop the processor — it flushes its remaining buffer on "stop".
@@ -2225,6 +2317,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         stage: "cleaning",
         stageLabel: "Cleaning up",
         provider: "openwhispr",
+        context: this.streamingContext,
       });
       const reasoningStart = performance.now();
       const agentName = localStorage.getItem("agentName") || "";
@@ -2287,11 +2380,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
     if (finalText) {
       const tBeforePaste = performance.now();
-      this.onTranscriptionComplete?.({
-        success: true,
-        text: finalText,
-        source: "assemblyai-streaming",
-      });
+      await Promise.resolve(
+        this.onTranscriptionComplete?.({
+          success: true,
+          text: finalText,
+          source: "assemblyai-streaming",
+          context: this.streamingContext,
+        })
+      );
 
       logger.info(
         "Streaming total processing",
@@ -2304,7 +2400,16 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
 
     this.isProcessing = false;
-    this.onStateChange?.({ isRecording: false, isProcessing: false, isStreaming: false });
+    this.streamingContext = null;
+    if (this.processingQueue.length > 0) {
+      this.startQueuedProcessingIfPossible();
+    } else {
+      this.onStateChange?.({
+        isRecording: this.isRecording,
+        isProcessing: false,
+        isStreaming: this.isStreaming,
+      });
+    }
 
     if (this.shouldUseStreaming()) {
       this.warmupStreamingConnection().catch((e) => {
