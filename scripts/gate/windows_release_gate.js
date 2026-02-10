@@ -178,6 +178,7 @@ class CdpClient {
 
 async function runPowerShell(script, args = [], options = {}) {
   const { sta = false, timeoutMs = 15000 } = options;
+  const wrappedScript = `& {\n${script}\n}`;
   const psArgs = [
     "-NoProfile",
     "-NonInteractive",
@@ -187,7 +188,7 @@ async function runPowerShell(script, args = [], options = {}) {
     "-ExecutionPolicy",
     "Bypass",
     "-Command",
-    script,
+    wrappedScript,
     ...args.map((arg) => String(arg)),
   ];
 
