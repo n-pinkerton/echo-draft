@@ -250,7 +250,8 @@ export const useAudioRecording = (toast, options = {}) => {
         }
       }
 
-      const shouldForceNonStreaming = currentState.isProcessing && session.outputMode === "clipboard";
+      const shouldForceNonStreaming =
+        currentState.isProcessing && session.outputMode === "clipboard";
       const recordingContext = {
         sessionId: session.sessionId,
         jobId: job.jobId,
@@ -310,7 +311,9 @@ export const useAudioRecording = (toast, options = {}) => {
             : null;
         upsertJob(session.sessionId, {
           status:
-            currentState.isProcessing && session.outputMode === "clipboard" ? "queued" : "processing",
+            currentState.isProcessing && session.outputMode === "clipboard"
+              ? "queued"
+              : "processing",
           ...(recordedMsSnapshot !== null ? { recordedMs: recordedMsSnapshot } : {}),
           stoppedAt: Date.now(),
         });
@@ -366,7 +369,7 @@ export const useAudioRecording = (toast, options = {}) => {
       const jobId =
         typeof result?.context?.jobId === "number" && Number.isFinite(result.context.jobId)
           ? result.context.jobId
-          : job?.jobId ?? null;
+          : (job?.jobId ?? null);
 
       if (resolvedSessionId) {
         sessionsByIdRef.current.delete(resolvedSessionId);
@@ -448,7 +451,9 @@ export const useAudioRecording = (toast, options = {}) => {
 
       const saveStart = performance.now();
       const recordDurationMs =
-        typeof job?.recordedMs === "number" && job.recordedMs > 0 ? Math.round(job.recordedMs) : null;
+        typeof job?.recordedMs === "number" && job.recordedMs > 0
+          ? Math.round(job.recordedMs)
+          : null;
       const baseTimings = {
         ...(result.timings || {}),
         ...(recordDurationMs !== null ? { recordDurationMs } : {}),

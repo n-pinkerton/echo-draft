@@ -24,7 +24,9 @@ const formatDuration = (value?: unknown) => {
   const totalSeconds = Math.max(0, value / 1000);
   if (totalSeconds < 60) {
     const secondsLabel =
-      totalSeconds < 10 ? totalSeconds.toFixed(1).replace(/\.0$/, "") : String(Math.round(totalSeconds));
+      totalSeconds < 10
+        ? totalSeconds.toFixed(1).replace(/\.0$/, "")
+        : String(Math.round(totalSeconds));
     return `${secondsLabel}s`;
   }
 
@@ -89,7 +91,9 @@ export default function TranscriptionItem({
     },
     {
       label: "Transcribe",
-      value: formatDuration(timings.transcriptionProcessingDurationMs ?? timings.transcribeDurationMs),
+      value: formatDuration(
+        timings.transcriptionProcessingDurationMs ?? timings.transcribeDurationMs
+      ),
     },
     {
       label: "Cleanup",

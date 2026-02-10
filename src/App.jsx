@@ -4,7 +4,6 @@ import { X } from "lucide-react";
 import { useToast } from "./components/ui/Toast";
 import { LoadingDots } from "./components/ui/LoadingDots";
 import DictationStatusBar from "./components/ui/DictationStatusBar";
-import { useHotkey } from "./hooks/useHotkey";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useAuth } from "./hooks/useAuth";
@@ -75,7 +74,6 @@ export default function App() {
   const commandMenuRef = useRef(null);
   const buttonRef = useRef(null);
   const { toast, toastCount } = useToast();
-  const { hotkey } = useHotkey();
   const { isDragging, handleMouseDown, handleMouseUp } = useWindowDrag();
   const { isSignedIn } = useAuth();
 
@@ -371,8 +369,7 @@ export default function App() {
                 className={micProps.className}
                 style={{
                   ...micProps.style,
-                  cursor:
-                    isDragging ? "grabbing !important" : "pointer !important",
+                  cursor: isDragging ? "grabbing !important" : "pointer !important",
                   transition:
                     "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.25s ease-out",
                 }}

@@ -308,7 +308,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           "audio"
         );
 
-        const durationSeconds = recordingStartedAt ? (Date.now() - recordingStartedAt) / 1000 : null;
+        const durationSeconds = recordingStartedAt
+          ? (Date.now() - recordingStartedAt) / 1000
+          : null;
         this.enqueueProcessingJob(audioBlob, { durationSeconds }, recordingContext);
         this.onStateChange?.({
           isRecording: false,
