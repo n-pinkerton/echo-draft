@@ -280,6 +280,7 @@ class ClipboardManager {
 
   runWindowsPowerShellScript(script, args = []) {
     return new Promise((resolve, reject) => {
+      const wrappedScript = `& {\n${script}\n}`;
       const psArgs = [
         "-NoProfile",
         "-NonInteractive",
@@ -288,7 +289,7 @@ class ClipboardManager {
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        script,
+        wrappedScript,
         ...args.map((arg) => String(arg)),
       ];
 
