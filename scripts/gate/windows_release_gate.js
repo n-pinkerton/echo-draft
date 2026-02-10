@@ -272,17 +272,18 @@ $textBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
 $textBox.Font = New-Object System.Drawing.Font("Consolas", 11)
 $form.Controls.Add($textBox)
 
-$form.Add_Shown({
-  try { $form.Activate() } catch {}
-  try { $textBox.Focus() } catch {}
-  [pscustomobject]@{
-    success = $true
-    pid = [Int32]$PID
-    hwnd = [Int64]$form.Handle
-    editHwnd = [Int64]$textBox.Handle
-  } | ConvertTo-Json -Compress
-  try { [Console]::Out.Flush() } catch {}
-})
+try { $form.Show() } catch {}
+try { [System.Windows.Forms.Application]::DoEvents() } catch {}
+Start-Sleep -Milliseconds 180
+try { $form.Activate() } catch {}
+try { $textBox.Focus() } catch {}
+[pscustomobject]@{
+  success = $true
+  pid = [Int32]$PID
+  hwnd = [Int64]$form.Handle
+  editHwnd = [Int64]$textBox.Handle
+} | ConvertTo-Json -Compress
+try { [Console]::Out.Flush() } catch {}
 
 [System.Windows.Forms.Application]::Run($form)
 `.trim();
@@ -316,7 +317,7 @@ $form.Add_Shown({
         child.kill("SIGKILL");
       } catch {}
       reject(new Error("Gate text window timed out while starting"));
-    }, 15000);
+    }, 25000);
 
     child.on("error", (error) => {
       if (resolved) return;
