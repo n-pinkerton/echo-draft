@@ -17,6 +17,7 @@ class WindowsKeyManager extends EventEmitter {
     this.listenerProcesses = new Map();
     this.isSupported = process.platform === "win32";
     this.hasReportedError = false;
+    this.stoppingPids = new Set();
   }
 
   /**
@@ -108,11 +109,24 @@ class WindowsKeyManager extends EventEmitter {
 
     listenerProcess.on("error", (error) => {
       this.reportError(error);
-      this.listenerProcesses.delete(hotkeyId);
+      const currentListener = this.listenerProcesses.get(hotkeyId);
+      if (currentListener?.process === listenerProcess) {
+        this.listenerProcesses.delete(hotkeyId);
+      }
     });
 
     listenerProcess.on("exit", (code, signal) => {
-      this.listenerProcesses.delete(hotkeyId);
+      const currentListener = this.listenerProcesses.get(hotkeyId);
+      if (currentListener?.process === listenerProcess) {
+        this.listenerProcesses.delete(hotkeyId);
+      }
+
+      const pid = listenerProcess.pid;
+      if (pid && this.stoppingPids.has(pid)) {
+        this.stoppingPids.delete(pid);
+        return;
+      }
+
       if (code !== 0) {
         const error = new Error(
           `Windows key listener "${hotkeyId}" exited with code ${code ?? "null"} signal ${signal ?? "null"}`
@@ -130,6 +144,9 @@ class WindowsKeyManager extends EventEmitter {
       const listener = this.listenerProcesses.get(hotkeyId);
       if (listener?.process) {
         debugLogger.debug("[WindowsKeyManager] Stopping key listener", { hotkeyId });
+        if (listener.process.pid) {
+          this.stoppingPids.add(listener.process.pid);
+        }
         try {
           listener.process.kill();
         } catch {
@@ -143,6 +160,9 @@ class WindowsKeyManager extends EventEmitter {
     for (const [id, listener] of this.listenerProcesses.entries()) {
       if (listener?.process) {
         debugLogger.debug("[WindowsKeyManager] Stopping key listener", { hotkeyId: id });
+        if (listener.process.pid) {
+          this.stoppingPids.add(listener.process.pid);
+        }
         try {
           listener.process.kill();
         } catch {
