@@ -26,6 +26,12 @@ function assert(condition, message) {
   }
 }
 
+function isTruthyFlag(value) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
 function safeString(value) {
   return typeof value === "string" ? value : value == null ? "" : String(value);
 }
@@ -520,22 +526,31 @@ catch { [pscustomobject]@{ success = $false; error = $_.Exception.Message } }
 }
 
 async function startTextTarget() {
+  const allowNotepad = isTruthyFlag(process.env.OPENWHISPR_GATE_USE_NOTEPAD);
+  if (!allowNotepad) {
+    console.warn(
+      "[gate] Using GatePad text window by default (avoids touching user Notepad tabs/files). Set OPENWHISPR_GATE_USE_NOTEPAD=1 to opt in."
+    );
+    return await startGateTextWindow();
+  }
+
   try {
-    const notepadCheck = await psJson(
+    const existingNotepad = await psJson(
       `
 try {
-  $count = @(Get-Process -Name Notepad -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }).Count
+  $count = @(Get-Process -Name Notepad -ErrorAction SilentlyContinue).Count
 } catch { $count = 0 }
 [pscustomobject]@{ success = $true; count = [Int32]$count } | ConvertTo-Json -Compress
       `.trim()
     );
 
-    if (Number(notepadCheck.parsed?.count || 0) > 0) {
-      console.warn("[gate] Detected existing Notepad windows; using GatePad text window instead.");
+    if (Number(existingNotepad.parsed?.count || 0) > 0) {
+      console.warn("[gate] Detected existing Notepad processes; using GatePad text window instead.");
       return await startGateTextWindow();
     }
   } catch {
-    // Ignore detection failures and try Notepad; fallback will cover failures.
+    console.warn("[gate] Could not check for existing Notepad processes; using GatePad text window instead.");
+    return await startGateTextWindow();
   }
 
   try {
@@ -1578,13 +1593,18 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     record("E2E import dictionary (TXT)", Boolean(importDictResult?.success), JSON.stringify(importDictResult));
 
     if (notepad.kind === "notepad") {
-      await closeProcess(notepad.pid);
-      if (
-        Number.isInteger(notepad.launcherPid) &&
-        notepad.launcherPid &&
-        notepad.launcherPid !== notepad.pid
-      ) {
-        await closeProcess(notepad.launcherPid);
+      const allowKillNotepad = isTruthyFlag(process.env.OPENWHISPR_GATE_KILL_NOTEPAD);
+      if (allowKillNotepad) {
+        await closeProcess(notepad.pid);
+        if (
+          Number.isInteger(notepad.launcherPid) &&
+          notepad.launcherPid &&
+          notepad.launcherPid !== notepad.pid
+        ) {
+          await closeProcess(notepad.launcherPid);
+        }
+      } else {
+        console.warn("[gate] Leaving Notepad open (set OPENWHISPR_GATE_KILL_NOTEPAD=1 to force close).");
       }
     } else if (Number.isFinite(notepad.pid) && notepad.pid > 0) {
       await closeProcess(notepad.pid);
