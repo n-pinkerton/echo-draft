@@ -254,6 +254,107 @@ async function psJson(script, args = [], options = {}) {
   return { ...result, parsed };
 }
 
+async function startGateTextWindow() {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "OpenWhispr Gate Target"
+$form.Width = 720
+$form.Height = 420
+$form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+
+$textBox = New-Object System.Windows.Forms.TextBox
+$textBox.Multiline = $true
+$textBox.Dock = [System.Windows.Forms.DockStyle]::Fill
+$textBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+$textBox.Font = New-Object System.Drawing.Font("Consolas", 11)
+$form.Controls.Add($textBox)
+
+$form.Add_Shown({
+  try { $form.Activate() } catch {}
+  try { $textBox.Focus() } catch {}
+  [pscustomobject]@{
+    success = $true
+    pid = [Int32]$PID
+    hwnd = [Int64]$form.Handle
+    editHwnd = [Int64]$textBox.Handle
+  } | ConvertTo-Json -Compress
+  try { [Console]::Out.Flush() } catch {}
+})
+
+[System.Windows.Forms.Application]::Run($form)
+`.trim();
+
+  const psArgs = [
+    "-NoProfile",
+    "-NonInteractive",
+    "-WindowStyle",
+    "Hidden",
+    "-STA",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script,
+  ];
+
+  const child = spawn("powershell.exe", psArgs, { windowsHide: true });
+  let stdout = "";
+  let stderr = "";
+
+  child.stderr?.on("data", (data) => {
+    stderr += data.toString();
+  });
+
+  const parsed = await new Promise((resolve, reject) => {
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+      reject(new Error("Gate text window timed out while starting"));
+    }, 15000);
+
+    child.on("error", (error) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on("exit", (code) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      reject(new Error(`Gate text window exited unexpectedly (code ${code ?? "null"})`));
+    });
+
+    child.stdout?.on("data", (data) => {
+      stdout += data.toString();
+      const maybe = parseJsonFromStdout(stdout);
+      if (maybe?.success && maybe?.hwnd && maybe?.editHwnd) {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve(maybe);
+      }
+    });
+  });
+
+  return {
+    kind: "gatepad",
+    pid: Number(parsed.pid),
+    hwnd: Number(parsed.hwnd),
+    editHwnd: Number(parsed.editHwnd),
+    launcherPid: null,
+    _child: child,
+    _stderr: stderr,
+  };
+}
+
 async function startNotepad() {
   const script = `
 param()
@@ -328,7 +429,7 @@ try { $launcherProc.WaitForInputIdle(1500) | Out-Null } catch {}
 
 $uiProc = $null
 $hwnd = [Int64]0
-for ($i = 0; $i -lt 250 -and $hwnd -eq 0; $i++) {
+for ($i = 0; $i -lt 120 -and $hwnd -eq 0; $i++) {
   Start-Sleep -Milliseconds 100
   try {
     $candidates = @(Get-Process -Name Notepad -ErrorAction SilentlyContinue) | Where-Object { $_.MainWindowHandle -ne 0 }
@@ -375,6 +476,17 @@ catch { [pscustomobject]@{ success = $false; error = $_.Exception.Message } }
 `.trim();
   const result = await psJson(script, [pid]);
   return Boolean(result.parsed?.success);
+}
+
+async function startTextTarget() {
+  try {
+    const notepad = await startNotepad();
+    return { ...notepad, kind: "notepad" };
+  } catch (error) {
+    const message = safeString(error?.message || error);
+    console.warn(`[gate] startNotepad failed (${message}); using GatePad text window instead.`);
+    return await startGateTextWindow();
+  }
 }
 
 async function getForegroundWindowInfo() {
@@ -676,7 +788,7 @@ async function main() {
     record("Stage label updates (Transcribing)", stageTranscribing.trim() === "Transcribing", stageTranscribing);
 
     // A) Dual output modes + insertion
-    const notepad = await startNotepad();
+    const notepad = await startTextTarget();
     await setForegroundWindow(notepad.hwnd);
 
     const fgBeforeShow = await getForegroundWindowInfo();
@@ -690,7 +802,11 @@ async function main() {
     );
 
     const capture = await dictation.eval(`window.electronAPI.captureInsertionTarget()`);
-    record("Capture insertion target (Notepad foreground)", Boolean(capture?.success), JSON.stringify(capture));
+    record(
+      `Capture insertion target (${notepad.kind === "notepad" ? "Notepad" : "GatePad"} foreground)`,
+      Boolean(capture?.success),
+      JSON.stringify(capture)
+    );
 
     const insertText = `E2E Insert ${runId}`;
     const beforeText = await readEditText(notepad.editHwnd);
@@ -707,7 +823,7 @@ async function main() {
     await sleep(1200);
     const afterInsertText = await readEditText(notepad.editHwnd);
     record(
-      "Insert mode writes into Notepad",
+      `Insert mode writes into ${notepad.kind === "notepad" ? "Notepad" : "GatePad"}`,
       afterInsertText.includes(insertText) && afterInsertText.length > beforeText.length,
       `len ${beforeText.length} -> ${afterInsertText.length}`
     );
@@ -854,13 +970,17 @@ async function main() {
     );
     record("E2E import dictionary (TXT)", Boolean(importDictResult?.success), JSON.stringify(importDictResult));
 
-    await closeProcess(notepad.pid);
-    if (
-      Number.isInteger(notepad.launcherPid) &&
-      notepad.launcherPid &&
-      notepad.launcherPid !== notepad.pid
-    ) {
-      await closeProcess(notepad.launcherPid);
+    if (notepad.kind === "notepad") {
+      await closeProcess(notepad.pid);
+      if (
+        Number.isInteger(notepad.launcherPid) &&
+        notepad.launcherPid &&
+        notepad.launcherPid !== notepad.pid
+      ) {
+        await closeProcess(notepad.launcherPid);
+      }
+    } else if (Number.isFinite(notepad.pid) && notepad.pid > 0) {
+      await closeProcess(notepad.pid);
     }
 
     await panel.close();
