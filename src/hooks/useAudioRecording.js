@@ -353,12 +353,6 @@ export const useAudioRecording = (toast, options = {}) => {
         const session = activeSessionRef.current || normalizeTriggerPayload();
         activeSessionRef.current = null;
 
-        try {
-          await window.electronAPI?.writeClipboard?.(result.text);
-        } catch (error) {
-          logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
-        }
-
         let pasteSucceeded = false;
         let pasteMs = null;
 
@@ -392,6 +386,12 @@ export const useAudioRecording = (toast, options = {}) => {
             "streaming"
           );
         } else {
+          try {
+            await window.electronAPI?.writeClipboard?.(result.text);
+          } catch (error) {
+            logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
+          }
+
           toast({
             title: "Copied to Clipboard",
             description: "Dictation finished. Paste where you want the text.",
@@ -456,9 +456,13 @@ export const useAudioRecording = (toast, options = {}) => {
         }
 
         if (!saveSucceeded) {
+          const fallbackDescription =
+            session.outputMode === "insert" && pasteSucceeded
+              ? "Text was inserted, but saving to history failed."
+              : "Text is copied to clipboard, but saving to history failed.";
           toast({
             title: "History Save Failed",
-            description: "Text is still available in clipboard and on screen.",
+            description: fallbackDescription,
             variant: "destructive",
             duration: 4000,
           });
@@ -485,7 +489,11 @@ export const useAudioRecording = (toast, options = {}) => {
           sessionId: session.sessionId,
           stageProgress: 1,
           overallProgress: 1,
-          message: saveSucceeded ? null : "Saved to clipboard, but history save failed.",
+          message: saveSucceeded
+            ? null
+            : session.outputMode === "insert" && pasteSucceeded
+              ? "Inserted, but history save failed."
+              : "Saved to clipboard, but history save failed.",
           provider,
           model,
           generatedChars: result.text.length,
