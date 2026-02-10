@@ -252,21 +252,68 @@ async function startNotepad() {
 param()
 Add-Type @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class WinApiNp {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hwndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string className, string windowTitle);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll", CharSet=CharSet.Auto, SetLastError=true)] public static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
+  public static IntPtr FindTopWindowForPid(int pid) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((hWnd, lParam) => {
+      if (!IsWindowVisible(hWnd)) return true;
+      uint windowPid;
+      GetWindowThreadProcessId(hWnd, out windowPid);
+      if (windowPid == (uint)pid) {
+        found = hWnd;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+
+  public static IntPtr FindDescendantByClassList(IntPtr parent, string[] classNames) {
+    if (parent == IntPtr.Zero || classNames == null || classNames.Length == 0) return IntPtr.Zero;
+    var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var name in classNames) {
+      if (!string.IsNullOrWhiteSpace(name)) wanted.Add(name.Trim());
+    }
+    IntPtr found = IntPtr.Zero;
+    EnumChildWindows(parent, (hWnd, lParam) => {
+      var sb = new StringBuilder(256);
+      GetClassName(hWnd, sb, sb.Capacity);
+      var cls = sb.ToString();
+      if (wanted.Contains(cls)) {
+        found = hWnd;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 }
 "@
 
 $proc = Start-Process notepad -PassThru
-try { $proc.WaitForInputIdle() | Out-Null } catch {}
-for ($i = 0; $i -lt 80 -and $proc.MainWindowHandle -eq 0; $i++) {
+try { $proc.WaitForInputIdle(2000) | Out-Null } catch {}
+for ($i = 0; $i -lt 200 -and -not $proc.HasExited -and $proc.MainWindowHandle -eq 0; $i++) {
   Start-Sleep -Milliseconds 100
   $proc.Refresh()
 }
 $hwnd = [Int64]$proc.MainWindowHandle
+if ($hwnd -eq 0 -and -not $proc.HasExited) {
+  $found = [WinApiNp]::FindTopWindowForPid([Int32]$proc.Id)
+  if ($found -ne [IntPtr]::Zero) { $hwnd = [Int64]$found }
+}
 if ($hwnd -eq 0) {
   [pscustomobject]@{ success = $false; error = "notepad_no_window" } | ConvertTo-Json -Compress
   exit 0
@@ -274,10 +321,12 @@ if ($hwnd -eq 0) {
 [void][WinApiNp]::ShowWindowAsync([IntPtr]$hwnd, 9)
 [void][WinApiNp]::SetForegroundWindow([IntPtr]$hwnd)
 Start-Sleep -Milliseconds 120
-$edit = [WinApiNp]::FindWindowEx([IntPtr]$hwnd, [IntPtr]::Zero, "Edit", $null)
+$edit = [WinApiNp]::FindDescendantByClassList([IntPtr]$hwnd, @("Edit", "RichEditD2DPT", "RICHEDIT50W", "RichEdit50W"))
+$pid = 0
+[void][WinApiNp]::GetWindowThreadProcessId([IntPtr]$hwnd, [ref]$pid)
 [pscustomobject]@{
   success = $true
-  pid = [Int32]$proc.Id
+  pid = [Int32]$pid
   hwnd = [Int64]$hwnd
   editHwnd = [Int64]$edit
 } | ConvertTo-Json -Compress
