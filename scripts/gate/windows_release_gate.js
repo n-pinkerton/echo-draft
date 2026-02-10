@@ -696,13 +696,20 @@ for ($x = 0; $x -lt 24; $x++) {
 }
 [System.Windows.Forms.Clipboard]::SetImage($bmp)
 $img = [System.Windows.Forms.Clipboard]::GetImage()
+$bmp2 = New-Object System.Drawing.Bitmap $img
 $ms = New-Object System.IO.MemoryStream
-$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-$bytes = $ms.ToArray()
+for ($y = 0; $y -lt $bmp2.Height; $y++) {
+  for ($x = 0; $x -lt $bmp2.Width; $x++) {
+    $argb = [Int32]$bmp2.GetPixel($x, $y).ToArgb()
+    $b = [System.BitConverter]::GetBytes($argb)
+    $ms.Write($b, 0, $b.Length) | Out-Null
+  }
+}
+$pixelBytes = $ms.ToArray()
 $sha = [System.Security.Cryptography.SHA256]::Create()
-$hashBytes = $sha.ComputeHash($bytes)
+$hashBytes = $sha.ComputeHash($pixelBytes)
 $hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
-[pscustomobject]@{ success = $true; hasImage = $true; width = $img.Width; height = $img.Height; len = [Int32]$bytes.Length; hash = $hash } | ConvertTo-Json -Compress
+[pscustomobject]@{ success = $true; hasImage = $true; width = $bmp2.Width; height = $bmp2.Height; len = [Int32]$pixelBytes.Length; hash = $hash } | ConvertTo-Json -Compress
 `.trim();
 
   const result = await psJson(script, [], { sta: true, timeoutMs: 20000 });
@@ -720,13 +727,20 @@ if (-not [System.Windows.Forms.Clipboard]::ContainsImage()) {
   exit 0
 }
 $img = [System.Windows.Forms.Clipboard]::GetImage()
+$bmp2 = New-Object System.Drawing.Bitmap $img
 $ms = New-Object System.IO.MemoryStream
-$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-$bytes = $ms.ToArray()
+for ($y = 0; $y -lt $bmp2.Height; $y++) {
+  for ($x = 0; $x -lt $bmp2.Width; $x++) {
+    $argb = [Int32]$bmp2.GetPixel($x, $y).ToArgb()
+    $b = [System.BitConverter]::GetBytes($argb)
+    $ms.Write($b, 0, $b.Length) | Out-Null
+  }
+}
+$pixelBytes = $ms.ToArray()
 $sha = [System.Security.Cryptography.SHA256]::Create()
-$hashBytes = $sha.ComputeHash($bytes)
+$hashBytes = $sha.ComputeHash($pixelBytes)
 $hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
-[pscustomobject]@{ success = $true; hasImage = $true; width = $img.Width; height = $img.Height; len = [Int32]$bytes.Length; hash = $hash } | ConvertTo-Json -Compress
+[pscustomobject]@{ success = $true; hasImage = $true; width = $bmp2.Width; height = $bmp2.Height; len = [Int32]$pixelBytes.Length; hash = $hash } | ConvertTo-Json -Compress
 `.trim();
 
   const result = await psJson(script, [], { sta: true, timeoutMs: 20000 });
