@@ -6,6 +6,22 @@ function isTruthyFlag(value) {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+function getErrorMessage(err) {
+  if (!err) return "";
+  if (typeof err === "string") return err;
+  if (typeof err?.message === "string") return err.message;
+  try {
+    return String(err);
+  } catch {
+    return "";
+  }
+}
+
+function isNoPublishedVersionsError(err) {
+  const message = getErrorMessage(err).toLowerCase();
+  return message.includes("no published versions on github");
+}
+
 function getGithubUpdateConfig() {
   // Fork-safe defaults: this should NOT point at upstream unless explicitly overridden.
   const owner = process.env.OPENWHISPR_UPDATE_OWNER?.trim() || "n-pinkerton";
@@ -85,6 +101,18 @@ class UpdateManager {
       error: (err) => {
         console.error("❌ Auto-updater error:", err);
         this.isDownloading = false;
+        if (isNoPublishedVersionsError(err)) {
+          // Common in forks: electron-updater throws when the repo has no releases yet.
+          // Treat as "no updates available" instead of surfacing a disruptive error toast.
+          this.updateAvailable = false;
+          this.updateDownloaded = false;
+          this.lastUpdateInfo = null;
+          this.notifyRenderers("update-not-available", {
+            message: "No published versions available for updates",
+          });
+          return;
+        }
+
         this.notifyRenderers("update-error", err);
       },
       "download-progress": (progressObj) => {
@@ -162,6 +190,13 @@ class UpdateManager {
         };
       }
     } catch (error) {
+      if (isNoPublishedVersionsError(error)) {
+        return {
+          updateAvailable: false,
+          message: "No published versions available for updates",
+        };
+      }
+
       console.error("❌ Update check error:", error);
       throw error;
     }
