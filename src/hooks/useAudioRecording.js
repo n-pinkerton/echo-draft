@@ -3,15 +3,68 @@ import AudioManager from "../helpers/audioManager";
 import logger from "../utils/logger";
 import { playStartCue, playStopCue } from "../utils/dictationCues";
 
+const STAGE_META = {
+  idle: { label: "Ready", overallProgress: 0 },
+  listening: { label: "Listening", overallProgress: 0.1 },
+  transcribing: { label: "Transcribing", overallProgress: 0.45 },
+  cleaning: { label: "Cleaning up", overallProgress: 0.7 },
+  inserting: { label: "Inserting", overallProgress: 0.85 },
+  saving: { label: "Saving", overallProgress: 0.93 },
+  done: { label: "Done", overallProgress: 1 },
+  error: { label: "Error", overallProgress: 1 },
+  cancelled: { label: "Cancelled", overallProgress: 1 },
+};
+
+const TERMINAL_STAGES = new Set(["done", "error", "cancelled"]);
+
+const INITIAL_PROGRESS = {
+  stage: "idle",
+  stageLabel: STAGE_META.idle.label,
+  stageProgress: null,
+  overallProgress: STAGE_META.idle.overallProgress,
+  elapsedMs: 0,
+  recordedMs: 0,
+  generatedChars: 0,
+  generatedWords: 0,
+  outputMode: "insert",
+  sessionId: null,
+  provider: null,
+  model: null,
+  message: null,
+};
+
+const countWords = (text) => {
+  if (!text || typeof text !== "string") return 0;
+  return text.trim().split(/\s+/).filter(Boolean).length;
+};
+
 export const useAudioRecording = (toast, options = {}) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [partialTranscript, setPartialTranscript] = useState("");
+  const [progress, setProgress] = useState(INITIAL_PROGRESS);
   const audioManagerRef = useRef(null);
   const activeSessionRef = useRef(null);
+  const sessionStartedAtRef = useRef(null);
+  const recordingStartedAtRef = useRef(null);
+  const progressResetTimerRef = useRef(null);
   const { onToggle } = options;
+
+  const clearProgressResetTimer = useCallback(() => {
+    if (progressResetTimerRef.current) {
+      clearTimeout(progressResetTimerRef.current);
+      progressResetTimerRef.current = null;
+    }
+  }, []);
+
+  const resetProgress = useCallback(() => {
+    clearProgressResetTimer();
+    sessionStartedAtRef.current = null;
+    recordingStartedAtRef.current = null;
+    setProgress(INITIAL_PROGRESS);
+  }, [clearProgressResetTimer]);
 
   const createSessionId = useCallback(() => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -32,6 +85,78 @@ export const useAudioRecording = (toast, options = {}) => {
     [createSessionId]
   );
 
+  const updateStage = useCallback(
+    (stage, patch = {}) => {
+      const normalizedStage = STAGE_META[stage] ? stage : "idle";
+      const now = Date.now();
+
+      if (!sessionStartedAtRef.current) {
+        sessionStartedAtRef.current = now;
+      }
+
+      if (normalizedStage === "listening" && !recordingStartedAtRef.current) {
+        recordingStartedAtRef.current = now;
+      } else if (normalizedStage !== "listening") {
+        recordingStartedAtRef.current = null;
+      }
+
+      clearProgressResetTimer();
+
+      setProgress((prev) => {
+        const defaultMeta = STAGE_META[normalizedStage] || STAGE_META.idle;
+        const elapsedMs = Math.max(0, now - (sessionStartedAtRef.current || now));
+        const nextStageProgress =
+          patch.stageProgress !== undefined
+            ? patch.stageProgress
+            : TERMINAL_STAGES.has(normalizedStage)
+              ? 1
+              : null;
+
+        return {
+          ...prev,
+          stage: normalizedStage,
+          stageLabel: patch.stageLabel || defaultMeta.label,
+          stageProgress: nextStageProgress,
+          overallProgress:
+            patch.overallProgress !== undefined
+              ? patch.overallProgress
+              : defaultMeta.overallProgress,
+          elapsedMs,
+          recordedMs:
+            patch.recordedMs !== undefined
+              ? patch.recordedMs
+              : normalizedStage === "listening" && recordingStartedAtRef.current
+                ? Math.max(0, now - recordingStartedAtRef.current)
+                : prev.recordedMs,
+          generatedChars:
+            patch.generatedChars !== undefined
+              ? patch.generatedChars
+              : normalizedStage === "transcribing"
+                ? prev.generatedChars
+                : 0,
+          generatedWords:
+            patch.generatedWords !== undefined
+              ? patch.generatedWords
+              : normalizedStage === "transcribing"
+                ? prev.generatedWords
+                : 0,
+          provider: patch.provider !== undefined ? patch.provider : prev.provider,
+          model: patch.model !== undefined ? patch.model : prev.model,
+          message: patch.message !== undefined ? patch.message : null,
+          outputMode: patch.outputMode || prev.outputMode,
+          sessionId: patch.sessionId || prev.sessionId,
+        };
+      });
+
+      if (TERMINAL_STAGES.has(normalizedStage)) {
+        progressResetTimerRef.current = setTimeout(() => {
+          resetProgress();
+        }, 3000);
+      }
+    },
+    [clearProgressResetTimer, resetProgress]
+  );
+
   const performStartRecording = useCallback(
     async (payload = {}) => {
       if (!audioManagerRef.current) {
@@ -50,12 +175,21 @@ export const useAudioRecording = (toast, options = {}) => {
 
       if (didStart) {
         activeSessionRef.current = session;
+        sessionStartedAtRef.current = Date.now();
+        recordingStartedAtRef.current = sessionStartedAtRef.current;
+        updateStage("listening", {
+          outputMode: session.outputMode,
+          sessionId: session.sessionId,
+          generatedChars: 0,
+          generatedWords: 0,
+          message: session.outputMode === "clipboard" ? "Clipboard mode" : null,
+        });
         void playStartCue();
       }
 
       return didStart;
     },
-    [normalizeTriggerPayload]
+    [normalizeTriggerPayload, updateStage]
   );
 
   const performStopRecording = useCallback(
@@ -73,20 +207,23 @@ export const useAudioRecording = (toast, options = {}) => {
         activeSessionRef.current = normalizeTriggerPayload(payload);
       }
 
+      updateStage("transcribing", {
+        stageProgress: null,
+      });
+
       if (currentState.isStreaming) {
-        void playStopCue(); // streaming stop finalization is async, play cue immediately on stop action
+        void playStopCue();
         return await audioManagerRef.current.stopStreamingRecording();
       }
 
       const didStop = audioManagerRef.current.stopRecording();
-
       if (didStop) {
         void playStopCue();
       }
 
       return didStop;
     },
-    [normalizeTriggerPayload]
+    [normalizeTriggerPayload, updateStage]
   );
 
   useEffect(() => {
@@ -97,13 +234,32 @@ export const useAudioRecording = (toast, options = {}) => {
         setIsRecording(isRecording);
         setIsProcessing(isProcessing);
         setIsStreaming(isStreaming ?? false);
+
         if (!isStreaming) {
           setPartialTranscript("");
+        }
+
+        if (!isRecording && isProcessing) {
+          setProgress((prev) => {
+            if (prev.stage === "listening") {
+              return {
+                ...prev,
+                stage: "transcribing",
+                stageLabel: STAGE_META.transcribing.label,
+                stageProgress: null,
+                overallProgress: STAGE_META.transcribing.overallProgress,
+              };
+            }
+            return prev;
+          });
         }
       },
       onError: (error) => {
         activeSessionRef.current = null;
-        // Provide specific titles for cloud error codes
+        updateStage("error", {
+          message: error.description || error.message || "An unknown error occurred",
+        });
+
         const title =
           error.code === "AUTH_EXPIRED"
             ? "Session Expired"
@@ -120,83 +276,177 @@ export const useAudioRecording = (toast, options = {}) => {
           duration: error.code === "AUTH_EXPIRED" ? 8000 : undefined,
         });
       },
+      onProgress: (event = {}) => {
+        if (!event || typeof event !== "object") {
+          return;
+        }
+
+        if (event.stage) {
+          updateStage(event.stage, {
+            stageLabel: event.stageLabel,
+            stageProgress: event.stageProgress,
+            overallProgress: event.overallProgress,
+            generatedChars: event.generatedChars,
+            generatedWords: event.generatedWords,
+            provider: event.provider,
+            model: event.model,
+            message: event.message,
+          });
+          return;
+        }
+
+        setProgress((prev) => ({
+          ...prev,
+          generatedChars:
+            event.generatedChars !== undefined ? event.generatedChars : prev.generatedChars,
+          generatedWords:
+            event.generatedWords !== undefined ? event.generatedWords : prev.generatedWords,
+          provider: event.provider !== undefined ? event.provider : prev.provider,
+          model: event.model !== undefined ? event.model : prev.model,
+          message: event.message !== undefined ? event.message : prev.message,
+        }));
+      },
       onPartialTranscript: (text) => {
         setPartialTranscript(text);
+        setProgress((prev) => {
+          if (prev.stage !== "listening" && prev.stage !== "transcribing") {
+            return prev;
+          }
+          const stage = prev.stage === "listening" ? "listening" : "transcribing";
+          return {
+            ...prev,
+            stage,
+            stageLabel: STAGE_META[stage].label,
+            generatedChars: text.length,
+            generatedWords: countWords(text),
+          };
+        });
       },
       onTranscriptionComplete: async (result) => {
-        if (result.success) {
-          setTranscript(result.text);
-          const session = activeSessionRef.current || normalizeTriggerPayload();
-          activeSessionRef.current = null;
+        if (!result.success) {
+          updateStage("error", { message: "Transcription did not complete." });
+          return;
+        }
 
-          try {
-            await window.electronAPI?.writeClipboard?.(result.text);
-          } catch (error) {
-            logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
-          }
+        setTranscript(result.text);
+        const session = activeSessionRef.current || normalizeTriggerPayload();
+        activeSessionRef.current = null;
 
-          let pasteSucceeded = false;
-          if (session.outputMode === "insert") {
-            const isStreaming = result.source?.includes("streaming");
-            const pasteStart = performance.now();
-            pasteSucceeded = await audioManagerRef.current.safePaste(
-              result.text,
-              isStreaming ? { fromStreaming: true } : {}
-            );
-            logger.info(
-              "Paste timing",
-              {
-                pasteMs: Math.round(performance.now() - pasteStart),
-                source: result.source,
-                textLength: result.text.length,
-                outputMode: session.outputMode,
-                pasteSucceeded,
-              },
-              "streaming"
-            );
-          } else {
-            toast({
-              title: "Copied to Clipboard",
-              description: "Dictation finished. Paste where you want the text.",
-              duration: 2500,
-            });
-          }
+        try {
+          await window.electronAPI?.writeClipboard?.(result.text);
+        } catch (error) {
+          logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
+        }
 
-          audioManagerRef.current.saveTranscription({
-            text: result.text,
-            rawText: result.rawText || result.text,
-            meta: {
-              sessionId: session.sessionId,
-              outputMode: session.outputMode,
-              status: "success",
-              source: result.source,
-              pasteSucceeded,
-              timings: result.timings || {},
-            },
+        let pasteSucceeded = false;
+        let pasteMs = null;
+
+        if (session.outputMode === "insert") {
+          updateStage("inserting", {
+            outputMode: session.outputMode,
+            sessionId: session.sessionId,
           });
 
-          if (result.source === "openai" && localStorage.getItem("useLocalWhisper") === "true") {
-            toast({
-              title: "Fallback Mode",
-              description: "Local Whisper failed. Used OpenAI API instead.",
-              variant: "default",
-            });
-          }
+          const isResultStreaming = result.source?.includes("streaming");
+          const pasteStart = performance.now();
+          pasteSucceeded = await audioManagerRef.current.safePaste(
+            result.text,
+            isResultStreaming ? { fromStreaming: true } : {}
+          );
+          pasteMs = Math.round(performance.now() - pasteStart);
 
-          // Cloud usage: limit reached after this transcription
-          if (result.source === "openwhispr" && result.limitReached) {
-            // Notify control panel to show UpgradePrompt dialog
-            window.electronAPI?.notifyLimitReached?.({
-              wordsUsed: result.wordsUsed,
-              limit:
-                result.wordsRemaining !== undefined
-                  ? result.wordsUsed + result.wordsRemaining
-                  : 2000,
-            });
-          }
-
-          audioManagerRef.current.warmupStreamingConnection();
+          logger.info(
+            "Paste timing",
+            {
+              pasteMs,
+              source: result.source,
+              textLength: result.text.length,
+              outputMode: session.outputMode,
+              pasteSucceeded,
+            },
+            "streaming"
+          );
+        } else {
+          toast({
+            title: "Copied to Clipboard",
+            description: "Dictation finished. Paste where you want the text.",
+            duration: 2500,
+          });
         }
+
+        updateStage("saving", {
+          outputMode: session.outputMode,
+          sessionId: session.sessionId,
+        });
+
+        const saveStart = performance.now();
+        const timings = {
+          ...(result.timings || {}),
+          pasteDurationMs: pasteMs,
+          totalDurationMs: sessionStartedAtRef.current
+            ? Math.max(0, Date.now() - sessionStartedAtRef.current)
+            : null,
+        };
+
+        const saveSucceeded = await audioManagerRef.current.saveTranscription({
+          text: result.text,
+          rawText: result.rawText || result.text,
+          meta: {
+            sessionId: session.sessionId,
+            outputMode: session.outputMode,
+            status: "success",
+            source: result.source,
+            pasteSucceeded,
+            timings,
+          },
+        });
+        const saveMs = Math.round(performance.now() - saveStart);
+
+        if (!saveSucceeded) {
+          toast({
+            title: "History Save Failed",
+            description: "Text is still available in clipboard and on screen.",
+            variant: "destructive",
+            duration: 4000,
+          });
+        }
+
+        if (result.source === "openai" && localStorage.getItem("useLocalWhisper") === "true") {
+          toast({
+            title: "Fallback Mode",
+            description: "Local Whisper failed. Used OpenAI API instead.",
+            variant: "default",
+          });
+        }
+
+        if (result.source === "openwhispr" && result.limitReached) {
+          window.electronAPI?.notifyLimitReached?.({
+            wordsUsed: result.wordsUsed,
+            limit:
+              result.wordsRemaining !== undefined ? result.wordsUsed + result.wordsRemaining : 2000,
+          });
+        }
+
+        updateStage("done", {
+          outputMode: session.outputMode,
+          sessionId: session.sessionId,
+          stageProgress: 1,
+          overallProgress: 1,
+          message: saveSucceeded ? null : "Saved to clipboard, but history save failed.",
+          generatedChars: result.text.length,
+          generatedWords: countWords(result.text),
+        });
+
+        setProgress((prev) => ({
+          ...prev,
+          elapsedMs: sessionStartedAtRef.current
+            ? Math.max(0, Date.now() - sessionStartedAtRef.current)
+            : prev.elapsedMs,
+          recordedMs: prev.recordedMs,
+          message: saveSucceeded && saveMs > 0 ? `Saved in ${saveMs}ms` : prev.message,
+        }));
+
+        audioManagerRef.current.warmupStreamingConnection();
       },
     });
 
@@ -237,6 +487,7 @@ export const useAudioRecording = (toast, options = {}) => {
     });
 
     const handleNoAudioDetected = () => {
+      updateStage("error", { message: "No audio detected" });
       toast({
         title: "No Audio Detected",
         description: "The recording contained no detectable audio. Please try again.",
@@ -246,17 +497,54 @@ export const useAudioRecording = (toast, options = {}) => {
 
     const disposeNoAudio = window.electronAPI.onNoAudioDetected?.(handleNoAudioDetected);
 
-    // Cleanup
     return () => {
       disposeToggle?.();
       disposeStart?.();
       disposeStop?.();
       disposeNoAudio?.();
+      clearProgressResetTimer();
       if (audioManagerRef.current) {
         audioManagerRef.current.cleanup();
       }
     };
-  }, [normalizeTriggerPayload, onToggle, performStartRecording, performStopRecording, toast]);
+  }, [
+    clearProgressResetTimer,
+    normalizeTriggerPayload,
+    onToggle,
+    performStartRecording,
+    performStopRecording,
+    toast,
+    updateStage,
+  ]);
+
+  useEffect(() => {
+    if (progress.stage === "idle") {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setProgress((prev) => {
+        if (prev.stage === "idle") {
+          return prev;
+        }
+
+        const elapsedMs = Math.max(0, now - (sessionStartedAtRef.current || now));
+        const recordedMs =
+          prev.stage === "listening" && recordingStartedAtRef.current
+            ? Math.max(0, now - recordingStartedAtRef.current)
+            : prev.recordedMs;
+
+        return {
+          ...prev,
+          elapsedMs,
+          recordedMs,
+        };
+      });
+    }, 200);
+
+    return () => clearInterval(timer);
+  }, [progress.stage]);
 
   const startRecording = async () => {
     return performStartRecording();
@@ -268,6 +556,7 @@ export const useAudioRecording = (toast, options = {}) => {
 
   const cancelRecording = async () => {
     activeSessionRef.current = null;
+    updateStage("cancelled", { message: "Recording cancelled" });
     if (audioManagerRef.current) {
       const state = audioManagerRef.current.getState();
       if (state.isStreaming) {
@@ -280,6 +569,7 @@ export const useAudioRecording = (toast, options = {}) => {
 
   const cancelProcessing = () => {
     activeSessionRef.current = null;
+    updateStage("cancelled", { message: "Processing cancelled" });
     if (audioManagerRef.current) {
       return audioManagerRef.current.cancelProcessing();
     }
@@ -304,6 +594,7 @@ export const useAudioRecording = (toast, options = {}) => {
     isStreaming,
     transcript,
     partialTranscript,
+    progress,
     startRecording,
     stopRecording,
     cancelRecording,

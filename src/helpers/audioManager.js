@@ -31,6 +31,7 @@ class AudioManager {
     this.onError = null;
     this.onTranscriptionComplete = null;
     this.onPartialTranscript = null;
+    this.onProgress = null;
     this.cachedApiKey = null;
     this.cachedApiKeyProvider = null;
 
@@ -117,11 +118,30 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return null;
   }
 
-  setCallbacks({ onStateChange, onError, onTranscriptionComplete, onPartialTranscript }) {
+  setCallbacks({
+    onStateChange,
+    onError,
+    onTranscriptionComplete,
+    onPartialTranscript,
+    onProgress,
+  }) {
     this.onStateChange = onStateChange;
     this.onError = onError;
     this.onTranscriptionComplete = onTranscriptionComplete;
     this.onPartialTranscript = onPartialTranscript;
+    this.onProgress = onProgress;
+  }
+
+  emitProgress(event = {}) {
+    this.onProgress?.({
+      timestamp: Date.now(),
+      ...event,
+    });
+  }
+
+  countWords(text) {
+    if (!text || typeof text !== "string") return 0;
+    return text.trim().split(/\s+/).filter(Boolean).length;
   }
 
   async getAudioConstraints() {
@@ -224,6 +244,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       this.audioChunks = [];
       this.recordingStartTime = Date.now();
       this.recordingMimeType = this.mediaRecorder.mimeType || "audio/webm";
+      this.emitProgress({
+        stage: "listening",
+        stageLabel: "Listening",
+        stageProgress: null,
+      });
 
       this.mediaRecorder.ondataavailable = (event) => {
         this.audioChunks.push(event.data);
@@ -233,6 +258,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         this.isRecording = false;
         this.isProcessing = true;
         this.onStateChange?.({ isRecording: false, isProcessing: true });
+        this.emitProgress({
+          stage: "transcribing",
+          stageLabel: "Transcribing",
+          stageProgress: null,
+        });
 
         const audioBlob = new Blob(this.audioChunks, { type: this.recordingMimeType });
 
@@ -301,6 +331,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         this.audioChunks = [];
         this.recordingStartTime = null;
         this.onStateChange?.({ isRecording: false, isProcessing: false });
+        this.emitProgress({
+          stage: "cancelled",
+          stageLabel: "Cancelled",
+        });
       };
 
       this.mediaRecorder.stop();
@@ -318,6 +352,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     if (this.isProcessing) {
       this.isProcessing = false;
       this.onStateChange?.({ isRecording: false, isProcessing: false });
+      this.emitProgress({
+        stage: "cancelled",
+        stageLabel: "Cancelled",
+      });
       return true;
     }
     return false;
@@ -347,9 +385,21 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       let activeModel;
       if (useLocalWhisper) {
         if (localProvider === "nvidia") {
+          this.emitProgress({
+            stage: "transcribing",
+            stageLabel: "Transcribing",
+            provider: "local-parakeet",
+            model: parakeetModel,
+          });
           activeModel = parakeetModel;
           result = await this.processWithLocalParakeet(audioBlob, parakeetModel, metadata);
         } else {
+          this.emitProgress({
+            stage: "transcribing",
+            stageLabel: "Transcribing",
+            provider: "local-whisper",
+            model: whisperModel,
+          });
           activeModel = whisperModel;
           result = await this.processWithLocalWhisper(audioBlob, whisperModel, metadata);
         }
@@ -361,10 +411,22 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           err.code = "AUTH_REQUIRED";
           throw err;
         }
+        this.emitProgress({
+          stage: "transcribing",
+          stageLabel: "Transcribing",
+          provider: "openwhispr",
+          model: "openwhispr-cloud",
+        });
         activeModel = "openwhispr-cloud";
         result = await this.processWithOpenWhisprCloud(audioBlob, metadata);
       } else {
         activeModel = this.getTranscriptionModel();
+        this.emitProgress({
+          stage: "transcribing",
+          stageLabel: "Transcribing",
+          provider: localStorage.getItem("cloudTranscriptionProvider") || "openai",
+          model: activeModel,
+        });
         result = await this.processWithOpenAIAPI(audioBlob, metadata);
       }
 
@@ -409,6 +471,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       );
 
       if (error.message !== "No audio detected") {
+        this.emitProgress({
+          stage: "error",
+          stageLabel: "Error",
+          message: error.message,
+        });
         this.onError?.({
           title: "Transcription Error",
           description: `Transcription failed: ${error.message}`,
@@ -467,6 +534,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       );
 
       if (result.success && result.text) {
+        this.emitProgress({
+          stage: "cleaning",
+          stageLabel: "Cleaning up",
+          provider: "local-whisper",
+          model,
+        });
         const reasoningStart = performance.now();
         const text = await this.processTranscription(result.text, "local");
         timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
@@ -541,6 +614,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       );
 
       if (result.success && result.text) {
+        this.emitProgress({
+          stage: "cleaning",
+          stageLabel: "Cleaning up",
+          provider: "local-parakeet",
+          model,
+        });
         const reasoningStart = performance.now();
         const text = await this.processTranscription(result.text, "local-parakeet");
         timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
@@ -954,10 +1033,22 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
       if (payload.type === "transcript.text.delta" && typeof payload.delta === "string") {
         collectedText += payload.delta;
+        this.emitProgress({
+          stage: "transcribing",
+          stageLabel: "Transcribing",
+          generatedChars: collectedText.length,
+          generatedWords: this.countWords(collectedText),
+        });
         return;
       }
       if (payload.type === "transcript.text.segment" && typeof payload.text === "string") {
         collectedText += payload.text;
+        this.emitProgress({
+          stage: "transcribing",
+          stageLabel: "Transcribing",
+          generatedChars: collectedText.length,
+          generatedWords: this.countWords(collectedText),
+        });
         return;
       }
       if (payload.type === "transcript.text.done" && typeof payload.text === "string") {
@@ -1095,6 +1186,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     let processedText = result.text;
     const useReasoningModel = localStorage.getItem("useReasoningModel") === "true";
     if (useReasoningModel && processedText) {
+      this.emitProgress({
+        stage: "cleaning",
+        stageLabel: "Cleaning up",
+        provider: "openwhispr",
+      });
       const reasoningStart = performance.now();
       const agentName = localStorage.getItem("agentName") || "";
       const cloudReasoningMode = localStorage.getItem("cloudReasoningMode") || "openwhispr";
@@ -1279,6 +1375,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
         if (proxyText && proxyText.trim().length > 0) {
           timings.transcriptionProcessingDurationMs = Math.round(performance.now() - apiCallStart);
+          this.emitProgress({
+            stage: "cleaning",
+            stageLabel: "Cleaning up",
+            provider,
+            model,
+          });
           const reasoningStart = performance.now();
           const text = await this.processTranscription(proxyText, "mistral");
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
@@ -1414,6 +1516,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       if (result.text && result.text.trim().length > 0) {
         timings.transcriptionProcessingDurationMs = Math.round(performance.now() - apiCallStart);
 
+        this.emitProgress({
+          stage: "cleaning",
+          stageLabel: "Cleaning up",
+          provider,
+          model,
+        });
         const reasoningStart = performance.now();
         const text = await this.processTranscription(result.text, "openai");
         timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
@@ -1902,6 +2010,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       this.isRecording = true;
       this.recordingStartTime = Date.now();
       this.onStateChange?.({ isRecording: true, isProcessing: false, isStreaming: true });
+      this.emitProgress({
+        stage: "listening",
+        stageLabel: "Listening",
+        stageProgress: null,
+      });
 
       this.streamingFinalText = "";
       this.streamingPartialText = "";
@@ -1911,12 +2024,20 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const partialCleanup = window.electronAPI.onAssemblyAiPartialTranscript((text) => {
         this.streamingPartialText = text;
         this.onPartialTranscript?.(text);
+        this.emitProgress({
+          generatedChars: text.length,
+          generatedWords: this.countWords(text),
+        });
       });
 
       const finalCleanup = window.electronAPI.onAssemblyAiFinalTranscript((text) => {
         this.streamingFinalText = text;
         this.streamingPartialText = "";
         this.onPartialTranscript?.(text);
+        this.emitProgress({
+          generatedChars: text.length,
+          generatedWords: this.countWords(text),
+        });
       });
 
       const errorCleanup = window.electronAPI.onAssemblyAiError((error) => {
@@ -1987,6 +2108,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     this.isRecording = false;
     this.recordingStartTime = null;
     this.onStateChange?.({ isRecording: false, isProcessing: true, isStreaming: false });
+    this.emitProgress({
+      stage: "transcribing",
+      stageLabel: "Transcribing",
+      message: "Finalizing stream",
+    });
 
     // 2. Stop the processor — it flushes its remaining buffer on "stop".
     //    Keep isStreaming TRUE so the port.onmessage handler forwards the flush to WebSocket.
@@ -2064,6 +2190,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
     const useReasoningModel = localStorage.getItem("useReasoningModel") === "true";
     if (useReasoningModel && finalText) {
+      this.emitProgress({
+        stage: "cleaning",
+        stageLabel: "Cleaning up",
+        provider: "openwhispr",
+      });
       const reasoningStart = performance.now();
       const agentName = localStorage.getItem("agentName") || "";
       const cloudReasoningMode = localStorage.getItem("cloudReasoningMode") || "openwhispr";
@@ -2229,6 +2360,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     this.onError = null;
     this.onTranscriptionComplete = null;
     this.onPartialTranscript = null;
+    this.onProgress = null;
     if (this._onApiKeyChanged) {
       window.removeEventListener("api-key-changed", this._onApiKeyChanged);
     }
