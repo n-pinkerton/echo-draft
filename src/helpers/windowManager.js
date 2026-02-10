@@ -601,15 +601,18 @@ class WindowManager {
     this.controlPanelWindow = new BrowserWindow(CONTROL_PANEL_CONFIG);
 
     this.controlPanelWindow.webContents.on("will-navigate", (event, url) => {
-      const appUrl = DevServerManager.getAppUrl(true);
-      const controlPanelUrl = appUrl.startsWith("http") ? appUrl : `file://${appUrl}`;
-
-      if (
-        url.startsWith(controlPanelUrl) ||
-        url.startsWith("file://") ||
-        url.startsWith("devtools://")
-      ) {
+      if (url.startsWith("file://") || url.startsWith("devtools://") || url.startsWith("about:"))
         return;
+
+      const appUrl = DevServerManager.getAppUrl(true);
+      if (appUrl) {
+        try {
+          const allowedOrigin = new URL(appUrl).origin;
+          const targetOrigin = new URL(url).origin;
+          if (targetOrigin === allowedOrigin) return;
+        } catch {
+          // If URL parsing fails, treat it as external.
+        }
       }
 
       event.preventDefault();
