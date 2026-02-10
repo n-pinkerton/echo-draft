@@ -773,22 +773,30 @@ async function startApp() {
     windowsKeyManager.on("error", (error) => {
       debugLogger.warn("[Push-to-Talk] Windows key listener error", { error: error.message });
       windowManager.setWindowsPushToTalkAvailable(false);
+      const payload = {
+        reason: "error",
+        message: error.message,
+      };
       if (isLiveWindow(windowManager.mainWindow)) {
-        windowManager.mainWindow.webContents.send("windows-ptt-unavailable", {
-          reason: "error",
-          message: error.message,
-        });
+        windowManager.mainWindow.webContents.send("windows-ptt-unavailable", payload);
+      }
+      if (isLiveWindow(windowManager.controlPanelWindow)) {
+        windowManager.controlPanelWindow.webContents.send("windows-ptt-unavailable", payload);
       }
     });
 
     windowsKeyManager.on("unavailable", () => {
       debugLogger.debug("[Push-to-Talk] Windows key listener not available - falling back to toggle mode");
       windowManager.setWindowsPushToTalkAvailable(false);
+      const payload = {
+        reason: "binary_not_found",
+        message: "Push-to-Talk native listener not available",
+      };
       if (isLiveWindow(windowManager.mainWindow)) {
-        windowManager.mainWindow.webContents.send("windows-ptt-unavailable", {
-          reason: "binary_not_found",
-          message: "Push-to-Talk native listener not available",
-        });
+        windowManager.mainWindow.webContents.send("windows-ptt-unavailable", payload);
+      }
+      if (isLiveWindow(windowManager.controlPanelWindow)) {
+        windowManager.controlPanelWindow.webContents.send("windows-ptt-unavailable", payload);
       }
     });
 

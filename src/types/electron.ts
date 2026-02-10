@@ -434,6 +434,9 @@ declare global {
       onHotkeyRegistrationFailed?: (
         callback: (data: { hotkey: string; error: string; suggestions: string[] }) => void
       ) => () => void;
+      onWindowsPushToTalkUnavailable?: (
+        callback: (data: { reason: string; message: string }) => void
+      ) => () => void;
 
       // Gemini API key management
       getGeminiKey: () => Promise<string | null>;

@@ -108,9 +108,24 @@ export default function App() {
       });
     });
 
+    const unsubscribeWindowsPtt = window.electronAPI?.onWindowsPushToTalkUnavailable?.((data) => {
+      const reason = typeof data?.reason === "string" ? data.reason : "";
+      const message = typeof data?.message === "string" ? data.message : "";
+      toast({
+        title: "Windows Key Listener Unavailable",
+        description:
+          message ||
+          (reason === "binary_not_found"
+            ? "Push-to-Talk native listener is missing. Modifier-only hotkeys may not work. Choose a non-modifier hotkey (e.g., F9) or reinstall."
+            : "Push-to-Talk native listener is unavailable. Modifier-only hotkeys may not work. Choose a non-modifier hotkey (e.g., F9) or reinstall."),
+        duration: 12000,
+      });
+    });
+
     return () => {
       unsubscribeFallback?.();
       unsubscribeFailed?.();
+      unsubscribeWindowsPtt?.();
     };
   }, [toast]);
 

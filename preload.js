@@ -306,7 +306,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("hotkey-registration-failed", listener);
     return () => ipcRenderer.removeListener("hotkey-registration-failed", listener);
   },
-  onWindowsPushToTalkUnavailable: registerListener("windows-ptt-unavailable"),
+  onWindowsPushToTalkUnavailable: registerListener(
+    "windows-ptt-unavailable",
+    (callback) => (_event, data) => callback(data)
+  ),
 
   // Notify main process of activation mode changes (for Windows Push-to-Talk)
   notifyActivationModeChanged: (mode) => ipcRenderer.send("activation-mode-changed", mode),
