@@ -1683,9 +1683,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
   }
 
-  async saveTranscription(text) {
+  async saveTranscription(payload) {
     try {
-      await window.electronAPI.saveTranscription(text);
+      await window.electronAPI.saveTranscription(payload);
       return true;
     } catch (error) {
       return false;

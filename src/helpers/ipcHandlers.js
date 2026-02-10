@@ -125,8 +125,8 @@ class IPCHandlers {
       return this.environmentManager.createProductionEnvFile(apiKey);
     });
 
-    ipcMain.handle("db-save-transcription", async (event, text) => {
-      const result = this.databaseManager.saveTranscription(text);
+    ipcMain.handle("db-save-transcription", async (event, payload) => {
+      const result = this.databaseManager.saveTranscription(payload);
       if (result?.success && result?.transcription) {
         setImmediate(() => {
           this.broadcastToWindows("transcription-added", result.transcription);
@@ -445,7 +445,10 @@ class IPCHandlers {
 
       const { isModifierOnlyHotkey, isRightSideModifier } = require("./hotkeyManager");
       const usesNativeListener = (hotkey) =>
-        !hotkey || hotkey === "GLOBE" || isModifierOnlyHotkey(hotkey) || isRightSideModifier(hotkey);
+        !hotkey ||
+        hotkey === "GLOBE" ||
+        isModifierOnlyHotkey(hotkey) ||
+        isRightSideModifier(hotkey);
 
       if (enabled) {
         // Entering capture mode - unregister globalShortcut so it doesn't consume key events

@@ -3,6 +3,9 @@ export type LocalTranscriptionProvider = "whisper" | "nvidia";
 export interface TranscriptionItem {
   id: number;
   text: string;
+  raw_text?: string | null;
+  meta_json?: string;
+  meta?: Record<string, any>;
   timestamp: string;
   created_at: string;
 }
@@ -174,7 +177,15 @@ declare global {
       onStopDictation?: (callback: () => void) => () => void;
 
       // Database operations
-      saveTranscription: (text: string) => Promise<{ id: number; success: boolean }>;
+      saveTranscription: (
+        payload:
+          | string
+          | {
+              text: string;
+              rawText?: string | null;
+              meta?: Record<string, any>;
+            }
+      ) => Promise<{ id: number; success: boolean; transcription?: TranscriptionItem }>;
       getTranscriptions: (limit?: number) => Promise<TranscriptionItem[]>;
       clearTranscriptions: () => Promise<{ cleared: number; success: boolean }>;
       deleteTranscription: (id: number) => Promise<{ success: boolean }>;

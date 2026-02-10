@@ -23,10 +23,13 @@ class DatabaseManager {
         CREATE TABLE IF NOT EXISTS transcriptions (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           text TEXT NOT NULL,
+          raw_text TEXT,
+          meta_json TEXT NOT NULL DEFAULT '{}',
           timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
+      this.ensureTranscriptionsSchema();
 
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS custom_dictionary (
@@ -43,16 +46,80 @@ class DatabaseManager {
     }
   }
 
-  saveTranscription(text) {
+  ensureTranscriptionsSchema() {
+    if (!this.db) return;
+    const columns = this.db.prepare("PRAGMA table_info(transcriptions)").all();
+    const hasRawText = columns.some((column) => column.name === "raw_text");
+    const hasMetaJson = columns.some((column) => column.name === "meta_json");
+
+    if (!hasRawText) {
+      this.db.exec("ALTER TABLE transcriptions ADD COLUMN raw_text TEXT");
+    }
+
+    if (!hasMetaJson) {
+      this.db.exec("ALTER TABLE transcriptions ADD COLUMN meta_json TEXT DEFAULT '{}'");
+    }
+  }
+
+  normalizeSavePayload(payload) {
+    if (typeof payload === "string") {
+      return {
+        text: payload,
+        rawText: null,
+        metaJson: "{}",
+      };
+    }
+
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Invalid transcription payload");
+    }
+
+    const text = typeof payload.text === "string" ? payload.text : "";
+    if (!text.trim()) {
+      throw new Error("Transcription text is required");
+    }
+
+    const rawText =
+      typeof payload.rawText === "string" && payload.rawText.trim() ? payload.rawText : null;
+    let metaJson = "{}";
+    if (payload.meta && typeof payload.meta === "object") {
+      try {
+        metaJson = JSON.stringify(payload.meta);
+      } catch {
+        metaJson = "{}";
+      }
+    }
+
+    return { text, rawText, metaJson };
+  }
+
+  hydrateTranscriptionRow(row) {
+    if (!row) return row;
+    const hydrated = { ...row };
+    if (typeof hydrated.meta_json !== "string" || !hydrated.meta_json.trim()) {
+      hydrated.meta_json = "{}";
+    }
+    try {
+      hydrated.meta = JSON.parse(hydrated.meta_json);
+    } catch {
+      hydrated.meta = {};
+    }
+    return hydrated;
+  }
+
+  saveTranscription(payload) {
     try {
       if (!this.db) {
         throw new Error("Database not initialized");
       }
-      const stmt = this.db.prepare("INSERT INTO transcriptions (text) VALUES (?)");
-      const result = stmt.run(text);
+      const normalized = this.normalizeSavePayload(payload);
+      const stmt = this.db.prepare(
+        "INSERT INTO transcriptions (text, raw_text, meta_json) VALUES (?, ?, ?)"
+      );
+      const result = stmt.run(normalized.text, normalized.rawText, normalized.metaJson);
 
       const fetchStmt = this.db.prepare("SELECT * FROM transcriptions WHERE id = ?");
-      const transcription = fetchStmt.get(result.lastInsertRowid);
+      const transcription = this.hydrateTranscriptionRow(fetchStmt.get(result.lastInsertRowid));
 
       return { id: result.lastInsertRowid, success: true, transcription };
     } catch (error) {
@@ -67,7 +134,7 @@ class DatabaseManager {
         throw new Error("Database not initialized");
       }
       const stmt = this.db.prepare("SELECT * FROM transcriptions ORDER BY timestamp DESC LIMIT ?");
-      const transcriptions = stmt.all(limit);
+      const transcriptions = stmt.all(limit).map((row) => this.hydrateTranscriptionRow(row));
       return transcriptions;
     } catch (error) {
       console.error("Error getting transcriptions:", error.message);
