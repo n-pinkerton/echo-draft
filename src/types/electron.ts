@@ -1,6 +1,29 @@
 export type LocalTranscriptionProvider = "whisper" | "nvidia";
 export type DictationOutputMode = "insert" | "clipboard";
 
+export interface TranscriptionTimings {
+  recordDurationMs?: number;
+  transcriptionProcessingDurationMs?: number;
+  reasoningProcessingDurationMs?: number;
+  pasteDurationMs?: number | null;
+  saveDurationMs?: number | null;
+  totalDurationMs?: number | null;
+  [key: string]: unknown;
+}
+
+export interface TranscriptionMeta {
+  sessionId?: string;
+  outputMode?: DictationOutputMode;
+  status?: "success" | "error" | "cancelled" | string;
+  source?: string;
+  provider?: string;
+  model?: string;
+  pasteSucceeded?: boolean;
+  error?: string;
+  timings?: TranscriptionTimings;
+  [key: string]: unknown;
+}
+
 export interface DictationTriggerPayload {
   outputMode?: DictationOutputMode;
   sessionId?: string;
@@ -12,7 +35,7 @@ export interface TranscriptionItem {
   text: string;
   raw_text?: string | null;
   meta_json?: string;
-  meta?: Record<string, any>;
+  meta?: TranscriptionMeta;
   timestamp: string;
   created_at: string;
 }
@@ -194,6 +217,13 @@ declare global {
             }
       ) => Promise<{ id: number; success: boolean; transcription?: TranscriptionItem }>;
       getTranscriptions: (limit?: number) => Promise<TranscriptionItem[]>;
+      patchTranscriptionMeta?: (
+        id: number,
+        metaPatch: Partial<TranscriptionMeta>
+      ) => Promise<{ success: boolean; transcription?: TranscriptionItem; message?: string }>;
+      exportTranscriptions?: (
+        format?: "csv" | "json"
+      ) => Promise<{ success: boolean; canceled?: boolean; filePath?: string; count?: number }>;
       clearTranscriptions: () => Promise<{ cleared: number; success: boolean }>;
       deleteTranscription: (id: number) => Promise<{ success: boolean }>;
 
@@ -203,6 +233,7 @@ declare global {
 
       // Database event listeners
       onTranscriptionAdded?: (callback: (item: TranscriptionItem) => void) => () => void;
+      onTranscriptionUpdated?: (callback: (item: TranscriptionItem) => void) => () => void;
       onTranscriptionDeleted?: (callback: (payload: { id: number }) => void) => () => void;
       onTranscriptionsCleared?: (callback: (payload: { cleared: number }) => void) => () => void;
 

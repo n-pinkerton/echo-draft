@@ -107,6 +107,20 @@ class DatabaseManager {
     return hydrated;
   }
 
+  mergeMeta(existingMeta = {}, patchMeta = {}) {
+    const merged = {
+      ...existingMeta,
+      ...patchMeta,
+    };
+    if (existingMeta?.timings || patchMeta?.timings) {
+      merged.timings = {
+        ...(existingMeta?.timings || {}),
+        ...(patchMeta?.timings || {}),
+      };
+    }
+    return merged;
+  }
+
   saveTranscription(payload) {
     try {
       if (!this.db) {
@@ -138,6 +152,44 @@ class DatabaseManager {
       return transcriptions;
     } catch (error) {
       console.error("Error getting transcriptions:", error.message);
+      throw error;
+    }
+  }
+
+  getAllTranscriptions() {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+      const stmt = this.db.prepare("SELECT * FROM transcriptions ORDER BY timestamp DESC");
+      return stmt.all().map((row) => this.hydrateTranscriptionRow(row));
+    } catch (error) {
+      console.error("Error getting all transcriptions:", error.message);
+      throw error;
+    }
+  }
+
+  patchTranscriptionMeta(id, patchMeta = {}) {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+
+      const fetchStmt = this.db.prepare("SELECT * FROM transcriptions WHERE id = ?");
+      const current = this.hydrateTranscriptionRow(fetchStmt.get(id));
+      if (!current) {
+        return { success: false, message: "Transcription not found" };
+      }
+
+      const mergedMeta = this.mergeMeta(current.meta || {}, patchMeta);
+      const metaJson = JSON.stringify(mergedMeta);
+      const updateStmt = this.db.prepare("UPDATE transcriptions SET meta_json = ? WHERE id = ?");
+      updateStmt.run(metaJson, id);
+
+      const updated = this.hydrateTranscriptionRow(fetchStmt.get(id));
+      return { success: true, transcription: updated };
+    } catch (error) {
+      console.error("Error patching transcription metadata:", error.message);
       throw error;
     }
   }

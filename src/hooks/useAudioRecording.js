@@ -47,6 +47,7 @@ export const useAudioRecording = (toast, options = {}) => {
   const [progress, setProgress] = useState(INITIAL_PROGRESS);
   const audioManagerRef = useRef(null);
   const activeSessionRef = useRef(null);
+  const latestProgressRef = useRef(INITIAL_PROGRESS);
   const sessionStartedAtRef = useRef(null);
   const recordingStartedAtRef = useRef(null);
   const progressResetTimerRef = useRef(null);
@@ -58,6 +59,10 @@ export const useAudioRecording = (toast, options = {}) => {
       progressResetTimerRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    latestProgressRef.current = progress;
+  }, [progress]);
 
   const resetProgress = useCallback(() => {
     clearProgressResetTimer();
@@ -380,15 +385,15 @@ export const useAudioRecording = (toast, options = {}) => {
         });
 
         const saveStart = performance.now();
-        const timings = {
+        const baseTimings = {
           ...(result.timings || {}),
           pasteDurationMs: pasteMs,
-          totalDurationMs: sessionStartedAtRef.current
-            ? Math.max(0, Date.now() - sessionStartedAtRef.current)
-            : null,
         };
+        const latestProgress = latestProgressRef.current || {};
+        const provider = latestProgress.provider || result.source || "";
+        const model = latestProgress.model || "";
 
-        const saveSucceeded = await audioManagerRef.current.saveTranscription({
+        const saveResult = await audioManagerRef.current.saveTranscription({
           text: result.text,
           rawText: result.rawText || result.text,
           meta: {
@@ -396,11 +401,38 @@ export const useAudioRecording = (toast, options = {}) => {
             outputMode: session.outputMode,
             status: "success",
             source: result.source,
+            provider,
+            model,
             pasteSucceeded,
-            timings,
+            timings: baseTimings,
           },
         });
+        const saveSucceeded = Boolean(saveResult?.success);
+        const savedId = saveResult?.id || saveResult?.transcription?.id;
         const saveMs = Math.round(performance.now() - saveStart);
+        const totalDurationMs = sessionStartedAtRef.current
+          ? Math.max(0, Date.now() - sessionStartedAtRef.current)
+          : null;
+
+        if (saveSucceeded && savedId && window.electronAPI?.patchTranscriptionMeta) {
+          try {
+            await window.electronAPI.patchTranscriptionMeta(savedId, {
+              provider,
+              model,
+              timings: {
+                ...baseTimings,
+                saveDurationMs: saveMs,
+                totalDurationMs,
+              },
+            });
+          } catch (error) {
+            logger.warn(
+              "Failed to patch transcription metadata",
+              { error: error?.message, id: savedId },
+              "transcription"
+            );
+          }
+        }
 
         if (!saveSucceeded) {
           toast({
@@ -433,6 +465,8 @@ export const useAudioRecording = (toast, options = {}) => {
           stageProgress: 1,
           overallProgress: 1,
           message: saveSucceeded ? null : "Saved to clipboard, but history save failed.",
+          provider,
+          model,
           generatedChars: result.text.length,
           generatedWords: countWords(result.text),
         });

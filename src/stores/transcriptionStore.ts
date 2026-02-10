@@ -47,6 +47,17 @@ function ensureIpcListeners() {
     }
   }
 
+  if (window.electronAPI?.onTranscriptionUpdated) {
+    const dispose = window.electronAPI.onTranscriptionUpdated((item) => {
+      if (item) {
+        updateTranscription(item);
+      }
+    });
+    if (typeof dispose === "function") {
+      disposers.push(dispose);
+    }
+  }
+
   if (window.electronAPI?.onTranscriptionsCleared) {
     const dispose = window.electronAPI.onTranscriptionsCleared(() => {
       clearTranscriptions();
@@ -76,6 +87,18 @@ export function addTranscription(item: TranscriptionItem) {
   if (!item) return;
   const withoutDuplicate = transcriptions.filter((existing) => existing.id !== item.id);
   transcriptions = [item, ...withoutDuplicate].slice(0, currentLimit);
+  emit();
+}
+
+export function updateTranscription(item: TranscriptionItem) {
+  if (!item?.id) return;
+  const existingIndex = transcriptions.findIndex((existing) => existing.id === item.id);
+  if (existingIndex === -1) {
+    return;
+  }
+  const next = [...transcriptions];
+  next[existingIndex] = item;
+  transcriptions = next;
   emit();
 }
 

@@ -1793,10 +1793,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
   async saveTranscription(payload) {
     try {
-      await window.electronAPI.saveTranscription(payload);
-      return true;
+      return await window.electronAPI.saveTranscription(payload);
     } catch (error) {
-      return false;
+      return { success: false, error: error?.message || String(error) };
     }
   }
 

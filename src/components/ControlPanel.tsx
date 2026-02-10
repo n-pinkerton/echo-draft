@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import {
   Trash2,
   Settings,
@@ -31,6 +32,7 @@ import {
   clearTranscriptions as clearStoreTranscriptions,
 } from "../stores/transcriptionStore";
 import { formatHotkeyLabel } from "../utils/hotkeys";
+import type { TranscriptionItem as TranscriptionItemType } from "../types/electron";
 
 export default function ControlPanel() {
   const history = useTranscriptions();
@@ -43,6 +45,13 @@ export default function ControlPanel() {
   const [aiCTADismissed, setAiCTADismissed] = useState(
     () => localStorage.getItem("aiCTADismissed") === "true"
   );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [modeFilter, setModeFilter] = useState<"all" | "insert" | "clipboard">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "success" | "error" | "cancelled">(
+    "all"
+  );
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [isExporting, setIsExporting] = useState(false);
   const [showCloudMigrationBanner, setShowCloudMigrationBanner] = useState(false);
   const cloudMigrationProcessed = useRef(false);
   const { hotkey } = useHotkey();
@@ -131,7 +140,7 @@ export default function ControlPanel() {
   const loadTranscriptions = async () => {
     try {
       setIsLoading(true);
-      await initializeTranscriptions();
+      await initializeTranscriptions(250);
     } catch (error) {
       showAlertDialog({
         title: "Unable to load history",
@@ -142,12 +151,15 @@ export default function ControlPanel() {
     }
   };
 
-  const copyToClipboard = async (text: string) => {
+  const copyToClipboard = async (
+    text: string,
+    options: { title?: string; description?: string } = {}
+  ) => {
     try {
       await navigator.clipboard.writeText(text);
       toast({
-        title: "Copied!",
-        description: "Text copied to your clipboard",
+        title: options.title || "Copied!",
+        description: options.description || "Text copied to your clipboard",
         variant: "success",
         duration: 2000,
       });
@@ -157,6 +169,97 @@ export default function ControlPanel() {
         description: "Failed to copy text to clipboard",
         variant: "destructive",
       });
+    }
+  };
+
+  const copyDiagnostics = async (item: TranscriptionItemType) => {
+    const diagnostics = {
+      id: item.id,
+      timestamp: item.timestamp,
+      textLength: item.text?.length || 0,
+      rawTextLength: item.raw_text?.length || item.text?.length || 0,
+      meta: item.meta || {},
+    };
+    await copyToClipboard(JSON.stringify(diagnostics, null, 2), {
+      title: "Diagnostics Copied",
+      description: "Diagnostic JSON copied to clipboard.",
+    });
+  };
+
+  const providerOptions = useMemo(() => {
+    const providers = new Set<string>();
+    for (const item of history) {
+      const meta = item.meta || {};
+      const provider = meta.provider || meta.source;
+      if (provider) {
+        providers.add(String(provider));
+      }
+    }
+    return Array.from(providers).sort((a, b) => a.localeCompare(b));
+  }, [history]);
+
+  const filteredHistory = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    return history.filter((item) => {
+      const meta = item.meta || {};
+      const provider = String(meta.provider || meta.source || "").toLowerCase();
+      const model = String(meta.model || "").toLowerCase();
+      const outputMode = String(meta.outputMode || "insert").toLowerCase();
+      const status = String(meta.status || "success").toLowerCase();
+      const haystack = [item.text || "", item.raw_text || "", provider, model, status, outputMode]
+        .join(" ")
+        .toLowerCase();
+
+      if (normalizedQuery && !haystack.includes(normalizedQuery)) {
+        return false;
+      }
+      if (modeFilter !== "all" && outputMode !== modeFilter) {
+        return false;
+      }
+      if (statusFilter !== "all" && status !== statusFilter) {
+        return false;
+      }
+      if (providerFilter !== "all" && provider !== providerFilter.toLowerCase()) {
+        return false;
+      }
+      return true;
+    });
+  }, [history, modeFilter, providerFilter, searchQuery, statusFilter]);
+
+  const exportTranscriptions = async (format: "csv" | "json") => {
+    if (!window.electronAPI?.exportTranscriptions) {
+      toast({
+        title: "Export Unavailable",
+        description: "This build does not support history export yet.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsExporting(true);
+      const result = await window.electronAPI.exportTranscriptions(format);
+      if (result?.success) {
+        toast({
+          title: `Exported ${format.toUpperCase()}`,
+          description: `${result.count || 0} items exported.`,
+          variant: "success",
+        });
+      } else if (!result?.canceled) {
+        toast({
+          title: "Export Failed",
+          description: "Could not export history. Please try again.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Export Failed",
+        description: "Could not export history. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -356,7 +459,8 @@ export default function ControlPanel() {
               <h2 className="text-sm font-semibold text-foreground">Transcriptions</h2>
               {history.length > 0 && (
                 <span className="text-[11px] text-muted-foreground tabular-nums">
-                  ({history.length})
+                  ({filteredHistory.length}
+                  {filteredHistory.length !== history.length ? ` / ${history.length}` : ""})
                 </span>
               )}
             </div>
@@ -454,6 +558,76 @@ export default function ControlPanel() {
           )}
 
           <div className="rounded-lg border border-border bg-card/50 dark:bg-card/30 backdrop-blur-sm">
+            <div className="border-b border-border/50 p-3 space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search text, provider, model…"
+                  className="h-8 text-xs"
+                />
+                <select
+                  value={modeFilter}
+                  onChange={(event) => setModeFilter(event.target.value as typeof modeFilter)}
+                  className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
+                >
+                  <option value="all">All modes</option>
+                  <option value="insert">Insert</option>
+                  <option value="clipboard">Clipboard</option>
+                </select>
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+                  className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
+                >
+                  <option value="all">All statuses</option>
+                  <option value="success">Success</option>
+                  <option value="error">Error</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <select
+                  value={providerFilter}
+                  onChange={(event) => setProviderFilter(event.target.value)}
+                  className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
+                >
+                  <option value="all">All providers</option>
+                  {providerOptions.map((provider) => (
+                    <option key={provider} value={provider}>
+                      {provider}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] text-muted-foreground">
+                  Workspace view with raw/clean copy and per-session diagnostics.
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => exportTranscriptions("json")}
+                    disabled={isExporting || history.length === 0}
+                  >
+                    <Download size={12} className="mr-1" />
+                    Export JSON
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => exportTranscriptions("csv")}
+                    disabled={isExporting || history.length === 0}
+                  >
+                    <Download size={12} className="mr-1" />
+                    Export CSV
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             {isLoading ? (
               <div className="flex items-center justify-center gap-2 py-8">
                 <Loader2 size={14} className="animate-spin text-primary" />
@@ -473,15 +647,39 @@ export default function ControlPanel() {
                   <span>to start</span>
                 </div>
               </div>
+            ) : filteredHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 px-4">
+                <p className="text-sm text-muted-foreground">No matching dictations.</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2 h-7 px-2 text-[11px]"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setModeFilter("all");
+                    setStatusFilter("all");
+                    setProviderFilter("all");
+                  }}
+                >
+                  Reset filters
+                </Button>
+              </div>
             ) : (
-              <div className="divide-y divide-border/50 max-h-[calc(100vh-180px)] overflow-y-auto">
-                {history.map((item, index) => (
+              <div className="divide-y divide-border/50 max-h-[calc(100vh-240px)] overflow-y-auto">
+                {filteredHistory.map((item, index) => (
                   <TranscriptionItem
                     key={item.id}
                     item={item}
                     index={index}
-                    total={history.length}
-                    onCopy={copyToClipboard}
+                    total={filteredHistory.length}
+                    onCopyClean={(text) => copyToClipboard(text)}
+                    onCopyRaw={(text) =>
+                      copyToClipboard(text, {
+                        title: "Raw Transcript Copied",
+                        description: "Raw transcript copied to clipboard.",
+                      })
+                    }
+                    onCopyDiagnostics={copyDiagnostics}
                     onDelete={deleteTranscription}
                   />
                 ))}
