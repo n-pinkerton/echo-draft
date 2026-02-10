@@ -311,9 +311,15 @@ public static class WinApiNp {
 "@
 
 $existingHwnd = @{}
+$existingPids = @{}
 try {
-  @(Get-Process -Name Notepad -ErrorAction SilentlyContinue) | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object {
-    $existingHwnd[[Int64]$_.MainWindowHandle] = $true
+  @(Get-Process -Name Notepad -ErrorAction SilentlyContinue) | ForEach-Object {
+    try { $existingPids[[Int32]$_.Id] = $true } catch {}
+    try {
+      if ($_.MainWindowHandle -ne 0) {
+        $existingHwnd[[Int64]$_.MainWindowHandle] = $true
+      }
+    } catch {}
   }
 } catch {}
 
@@ -326,16 +332,17 @@ for ($i = 0; $i -lt 250 -and $hwnd -eq 0; $i++) {
   Start-Sleep -Milliseconds 100
   try {
     $candidates = @(Get-Process -Name Notepad -ErrorAction SilentlyContinue) | Where-Object { $_.MainWindowHandle -ne 0 }
-    $uiProc = $candidates | Where-Object { -not $existingHwnd.ContainsKey([Int64]$_.MainWindowHandle) } | Select-Object -First 1
-    if (-not $uiProc -and $existingHwnd.Count -eq 0 -and $candidates.Count -gt 0) {
-      $uiProc = $candidates[0]
-    }
+    $uiProc = $candidates | Where-Object { -not $existingPids.ContainsKey([Int32]$_.Id) } | Select-Object -First 1
     if ($uiProc) { $hwnd = [Int64]$uiProc.MainWindowHandle }
   } catch {}
 }
 
 if ($hwnd -eq 0) {
-  [pscustomobject]@{ success = $false; error = "notepad_no_window" } | ConvertTo-Json -Compress
+  [pscustomobject]@{
+    success = $false
+    error = "notepad_no_window"
+    details = $(if ($existingPids.Count -gt 0) { "existing_notepad_processes_detected" } else { "" })
+  } | ConvertTo-Json -Compress
   exit 0
 }
 [void][WinApiNp]::ShowWindowAsync([IntPtr]$hwnd, 9)
