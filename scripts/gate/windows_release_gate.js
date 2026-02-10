@@ -741,6 +741,9 @@ $text = $null
 $rtf = $null
 $html = $null
 $imagePngB64 = $null
+$imageWidth = $null
+$imageHeight = $null
+$imageSkipped = $false
 
 try {
   if ([System.Windows.Forms.Clipboard]::ContainsText([System.Windows.Forms.TextDataFormat]::UnicodeText)) {
@@ -764,11 +767,18 @@ try {
   if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
     $img = [System.Windows.Forms.Clipboard]::GetImage()
     if ($img -ne $null) {
-      $ms = New-Object System.IO.MemoryStream
-      $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-      $bytes = $ms.ToArray()
-      if ($bytes -ne $null -and $bytes.Length -gt 0) {
-        $imagePngB64 = [System.Convert]::ToBase64String($bytes)
+      $imageWidth = [Int32]$img.Width
+      $imageHeight = [Int32]$img.Height
+      $pixels = [Int64]$imageWidth * [Int64]$imageHeight
+      if ($pixels -le 6000000) {
+        $ms = New-Object System.IO.MemoryStream
+        $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+        $bytes = $ms.ToArray()
+        if ($bytes -ne $null -and $bytes.Length -gt 0) {
+          $imagePngB64 = [System.Convert]::ToBase64String($bytes)
+        }
+      } else {
+        $imageSkipped = $true
       }
     }
   }
@@ -780,18 +790,33 @@ try {
   rtf = $rtf
   html = $html
   imagePngB64 = $imagePngB64
+  imageWidth = $imageWidth
+  imageHeight = $imageHeight
+  imageSkipped = $imageSkipped
 } | ConvertTo-Json -Compress
 `.trim();
 
-  const result = await psJson(script, [], { sta: true, timeoutMs: 20000 });
-  if (result.code !== 0 || !result.parsed?.success) {
+  try {
+    const result = await psJson(script, [], { sta: true, timeoutMs: 12000 });
+    if (result.code !== 0 || !result.parsed?.success) {
+      return null;
+    }
+    return result.parsed;
+  } catch {
     return null;
   }
-  return result.parsed;
 }
 
 async function restoreClipboardSnapshot(snapshot) {
   if (!snapshot || snapshot.success !== true) return false;
+  const hasRestorableImage = typeof snapshot.imagePngB64 === "string" && snapshot.imagePngB64.length > 0;
+  const hasRestorableText = typeof snapshot.text === "string" && snapshot.text.length > 0;
+  const hasRestorableRtf = typeof snapshot.rtf === "string" && snapshot.rtf.length > 0;
+  const hasRestorableHtml = typeof snapshot.html === "string" && snapshot.html.length > 0;
+
+  if (!hasRestorableImage && !hasRestorableText && !hasRestorableRtf && !hasRestorableHtml) {
+    return true;
+  }
 
   const script = `
 Add-Type -AssemblyName System.Windows.Forms
@@ -849,12 +874,16 @@ try {
 }
 `.trim();
 
-  const result = await psJson(script, [], {
-    sta: true,
-    timeoutMs: 20000,
-    stdin: JSON.stringify(snapshot),
-  });
-  return Boolean(result.parsed?.success);
+  try {
+    const result = await psJson(script, [], {
+      sta: true,
+      timeoutMs: 20000,
+      stdin: JSON.stringify(snapshot),
+    });
+    return Boolean(result.parsed?.success);
+  } catch {
+    return false;
+  }
 }
 
 async function main() {
@@ -1081,6 +1110,81 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
       })
     );
 
+    // A) Push-to-talk: verify Windows native listener can start for BOTH routes when mode=push.
+    const pttStatus = await panel.eval(`
+      (async function () {
+        if (!window.electronAPI?.saveActivationMode) {
+          return { success: false, error: "saveActivationMode unavailable" };
+        }
+        if (!window.electronAPI?.notifyActivationModeChanged) {
+          return { success: false, error: "notifyActivationModeChanged unavailable" };
+        }
+        if (!window.electronAPI?.e2eGetHotkeyStatus) {
+          return { success: false, error: "e2eGetHotkeyStatus unavailable" };
+        }
+
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const setMode = async (mode) => {
+          try { await window.electronAPI.saveActivationMode(mode); } catch {}
+          try { window.electronAPI.notifyActivationModeChanged(mode); } catch {}
+        };
+
+        const waitFor = async (predicate, timeoutMs = 12000) => {
+          const startedAt = Date.now();
+          let last = null;
+          while (Date.now() - startedAt < timeoutMs) {
+            try {
+              last = await predicate();
+              if (last?.ok) return last;
+            } catch (e) {
+              last = { ok: false, error: (e && e.message) ? e.message : String(e) };
+            }
+            await sleep(250);
+          }
+          return last || { ok: false };
+        };
+
+        await setMode("push");
+        const push = await waitFor(async () => {
+          const status = await window.electronAPI.e2eGetHotkeyStatus();
+          const ok =
+            status?.activationMode === "push" &&
+            Boolean(status?.insertUsesNativeListener) &&
+            Boolean(status?.clipboardUsesNativeListener) &&
+            Boolean(status?.windowsPushToTalkAvailable);
+          return {
+            ok,
+            activationMode: status?.activationMode,
+            insertUsesNativeListener: status?.insertUsesNativeListener,
+            clipboardUsesNativeListener: status?.clipboardUsesNativeListener,
+            windowsPushToTalkAvailable: status?.windowsPushToTalkAvailable,
+          };
+        }, 15000);
+
+        await setMode("tap");
+        const tap = await waitFor(async () => {
+          const status = await window.electronAPI.e2eGetHotkeyStatus();
+          const ok =
+            status?.activationMode === "tap" &&
+            Boolean(status?.insertGlobalRegistered) &&
+            Boolean(status?.clipboardGlobalRegistered);
+          return {
+            ok,
+            activationMode: status?.activationMode,
+            insertGlobalRegistered: status?.insertGlobalRegistered,
+            clipboardGlobalRegistered: status?.clipboardGlobalRegistered,
+          };
+        }, 15000);
+
+        return { success: true, ok: Boolean(push?.ok) && Boolean(tap?.ok), push, tap };
+      })()
+    `);
+    record(
+      "Push-to-talk mode uses native listener (both routes)",
+      Boolean(pttStatus?.success) && Boolean(pttStatus?.ok),
+      JSON.stringify(pttStatus)
+    );
+
     // B) Always-visible status bar
     await dictation.waitForSelector('[data-testid="dictation-status-bar"]', 15000);
     record("Status bar present", true);
@@ -1158,6 +1262,12 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
       afterForegroundText.includes(insertForegroundText) &&
         afterForegroundText.length > beforeForegroundText.length,
       `len ${beforeForegroundText.length} -> ${afterForegroundText.length}`
+    );
+    const fgAfterInsert = await getForegroundWindowInfo();
+    record(
+      "No focus-steal on insert completion",
+      fgAfterInsert.hwnd === notepad.hwnd,
+      `${fgAfterInsert.processName} (${fgAfterInsert.hwnd})`
     );
 
     // F) "Remember insertion target": switch focus away before insert, then ensure paste
@@ -1283,8 +1393,18 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     }
     const imageHashBefore = clipImageBefore.hash;
 
-    await setForegroundWindow(notepad.hwnd);
+    const focusTarget2 = await ensureForegroundWindow(notepad.hwnd, "target-image", 4);
+    assert(focusTarget2?.success, "Could not focus the target window for clipboard image test.");
+
     const capture2 = await dictation.eval(`window.electronAPI.captureInsertionTarget()`);
+    const capture2Hwnd = Number(capture2?.target?.hwnd || 0);
+    const capture2Ok = Boolean(capture2?.success) && capture2Hwnd === expectedHwnd;
+    record(
+      "Capture insertion target for image test",
+      capture2Ok,
+      JSON.stringify({ success: capture2?.success, expectedHwnd, capturedHwnd: capture2Hwnd })
+    );
+    assert(capture2Ok, `captureInsertionTarget mismatch before clipboard image test (expected ${expectedHwnd}, got ${capture2Hwnd}).`);
     await dictation.eval(`
       (async function () {
         await window.__openwhisprE2E.simulateTranscriptionComplete(
@@ -1296,15 +1416,32 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     `);
 
     await sleep(2500);
-    const clipImageAfter = await getClipboardImageHash();
+    let clipImageAfter = null;
+    let clipAfterAttempt = 0;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      clipAfterAttempt = attempt;
+      clipImageAfter = await getClipboardImageHash();
+      const ok =
+        Boolean(clipImageAfter?.hasImage) &&
+        Number(clipImageAfter?.len || 0) > 0 &&
+        safeString(clipImageAfter?.hash) &&
+        safeString(clipImageAfter?.hash) !== EMPTY_SHA256;
+      if (ok) break;
+      await sleep(350);
+    }
+
+    const clipAfterOk =
+      Boolean(clipImageAfter?.hasImage) &&
+      Number(clipImageAfter?.len || 0) > 0 &&
+      safeString(clipImageAfter?.hash) &&
+      safeString(clipImageAfter?.hash) !== EMPTY_SHA256;
     record(
       "Clipboard image preserved after insert",
-      Boolean(clipImageAfter.hasImage) &&
-        Number(clipImageAfter.len || 0) > 0 &&
-        clipImageAfter.hash === imageHashBefore,
+      clipAfterOk && clipImageAfter.hash === imageHashBefore,
       JSON.stringify({
         before: { len: clipImageBefore?.len, hash: imageHashBefore },
-        after: { len: clipImageAfter?.len, hash: clipImageAfter.hash || null },
+        after: { len: clipImageAfter?.len, hash: clipImageAfter?.hash || null },
+        attempts: clipAfterAttempt,
       })
     );
 
@@ -1314,6 +1451,13 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
       `document.querySelectorAll('[data-testid="transcription-item"]').length`
     );
     record("History renders items", historyCount >= 2, `count=${historyCount}`);
+
+    await panel.setInputValue('[data-testid="history-search"]', "InsertFail");
+    await sleep(250);
+    const insertFailCount = await panel.eval(
+      `document.querySelectorAll('[data-testid="transcription-item"]').length`
+    );
+    record("History retains text after insert failure", insertFailCount >= 1, `count=${insertFailCount}`);
 
     await panel.setInputValue('[data-testid="history-search"]', "Clipboard");
     await sleep(250);
@@ -1335,6 +1479,36 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
       `(async () => window.electronAPI.e2eExportTranscriptions("csv", ${JSON.stringify(exportCsvPath)}) )()`
     );
     record("E2E export transcriptions (CSV)", Boolean(exportCsvResult?.success), JSON.stringify(exportCsvResult));
+
+    // D) Sanity check export content includes useful diagnostic fields (and no obvious secrets).
+    try {
+      const exported = JSON.parse(fs.readFileSync(exportJsonPath, "utf8"));
+      const rows = Array.isArray(exported) ? exported : [];
+      const hasOutputModes = rows.some((r) => r?.outputMode === "insert") && rows.some((r) => r?.outputMode === "clipboard");
+      const hasTimingCols = rows.some((r) => typeof r?.totalMs !== "undefined") && rows.some((r) => typeof r?.pasteMs !== "undefined");
+      const secretLike = JSON.stringify(rows).includes("sk-");
+      record(
+        "Export JSON includes diagnostics columns",
+        rows.length >= 2 && hasOutputModes && hasTimingCols && !secretLike,
+        JSON.stringify({ rows: rows.length, hasOutputModes, hasTimingCols, secretLike })
+      );
+    } catch (error) {
+      record("Export JSON includes diagnostics columns", false, `parse_failed: ${safeString(error?.message || error)}`);
+    }
+
+    try {
+      const csv = fs.readFileSync(exportCsvPath, "utf8");
+      const header = safeString(csv.split(/\r?\n/)[0] || "");
+      const required = ["outputMode", "status", "provider", "model", "pasteSucceeded", "totalMs"];
+      const missing = required.filter((key) => !header.includes(key));
+      record(
+        "Export CSV includes diagnostics columns",
+        missing.length === 0,
+        missing.length === 0 ? header : `missing=${missing.join("|")}`
+      );
+    } catch (error) {
+      record("Export CSV includes diagnostics columns", false, `read_failed: ${safeString(error?.message || error)}`);
+    }
 
     // E) Dictionary batch parsing + merge/replace + export/import (E2E IPC)
     await panel.eval(`
