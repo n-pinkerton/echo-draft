@@ -132,11 +132,13 @@ Verified in `electron-builder.json`:
 - `productName`: `OpenWhispr`
 
 These values should remain stable to preserve the existing `%APPDATA%\OpenWhispr\` userData folder on upgrade.
+Note: current Windows builds use `%APPDATA%\open-whispr\` (based on the Electron app name); back up whichever exists on your machine.
 
 ### User install instructions (upgrade-in-place; no data loss)
 
 1) **Back up user data (copy only; do not delete)**
-   - `%APPDATA%\OpenWhispr\` (includes DB + Local Storage)
+   - `%APPDATA%\open-whispr\` (includes DB + Local Storage; current builds)
+   - `%APPDATA%\OpenWhispr\` (only if it exists from older builds)
    - `%USERPROFILE%\.cache\openwhispr\models\` (local models)
 
 2) Build installer on Windows (if needed)
