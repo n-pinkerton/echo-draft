@@ -111,15 +111,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   getCustomDictionaryPrompt() {
-    try {
-      const raw = localStorage.getItem("customDictionary");
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed.join(", ");
-    } catch {
-      // ignore parse errors
-    }
-    return null;
+    const entries = this.getCustomDictionaryArray();
+    if (entries.length === 0) return null;
+    return entries.join(", ");
   }
 
   setCallbacks({
@@ -1270,7 +1264,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     const opts = {};
     if (language) opts.language = language;
 
-    const dictionaryPrompt = this.getCustomDictionaryPrompt();
+    const dictionaryEntries = this.getCustomDictionaryArray();
+    const dictionaryPrompt = dictionaryEntries.length > 0 ? dictionaryEntries.join(", ") : null;
     if (dictionaryPrompt) opts.prompt = dictionaryPrompt;
 
     // Use withSessionRefresh to handle AUTH_EXPIRED automatically
@@ -1287,7 +1282,15 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     timings.transcriptionProcessingDurationMs = Math.round(performance.now() - transcriptionStart);
 
     // Process with reasoning if enabled
-    let processedText = result.text;
+    const rawText = result.text;
+    let processedText = rawText;
+
+    if (dictionaryPrompt && this.isLikelyDictionaryPromptEcho(rawText, dictionaryEntries)) {
+      throw new Error(
+        "Transcription returned the dictionary prompt (likely no usable audio). Please try again."
+      );
+    }
+
     const useReasoningModel = localStorage.getItem("useReasoningModel") === "true";
     if (useReasoningModel && processedText) {
       this.emitProgress({
@@ -1336,6 +1339,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return {
       success: true,
       text: processedText,
+      rawText,
       source: "openwhispr",
       timings,
       limitReached: result.limitReached,
@@ -1355,7 +1359,84 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
   }
 
-  async processWithOpenAIAPI(audioBlob, metadata = {}) {
+  shouldGuardDictionaryPromptEcho(dictionaryEntries) {
+    if (!Array.isArray(dictionaryEntries)) return false;
+    const uniqueCount = new Set(
+      dictionaryEntries
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean)
+        .map((entry) => entry.toLowerCase())
+    ).size;
+    // Avoid false positives for tiny dictionaries (someone might actually dictate 2-3 terms)
+    return uniqueCount >= 10;
+  }
+
+  extractTermsFromCommaOrBullets(text) {
+    const raw = typeof text === "string" ? text : "";
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+
+    const lines = trimmed
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const bulletLines = lines.filter((line) => /^[-*•]\s+/.test(line));
+    if (bulletLines.length >= 3) {
+      return bulletLines.map((line) => line.replace(/^[-*•]\s+/, "").trim()).filter(Boolean);
+    }
+
+    if (trimmed.includes(",")) {
+      return trimmed
+        .split(",")
+        .map((term) => term.trim())
+        .filter(Boolean);
+    }
+
+    return lines;
+  }
+
+  isLikelyDictionaryPromptEcho(transcribedText, dictionaryEntries) {
+    if (!this.shouldGuardDictionaryPromptEcho(dictionaryEntries)) {
+      return false;
+    }
+
+    const dictionarySet = new Set(
+      dictionaryEntries
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean)
+        .map((entry) => entry.toLowerCase())
+    );
+
+    const transcriptTerms = this.extractTermsFromCommaOrBullets(transcribedText);
+    const transcriptSet = new Set(
+      transcriptTerms
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean)
+        .map((entry) => entry.toLowerCase())
+    );
+
+    if (dictionarySet.size === 0 || transcriptSet.size === 0) {
+      return false;
+    }
+
+    let intersection = 0;
+    for (const term of dictionarySet) {
+      if (transcriptSet.has(term)) {
+        intersection += 1;
+      }
+    }
+
+    const coverage = intersection / dictionarySet.size;
+    const jaccard = intersection / (dictionarySet.size + transcriptSet.size - intersection);
+
+    return coverage >= 0.95 && jaccard >= 0.9;
+  }
+
+  async processWithOpenAIAPI(audioBlob, metadata = {}, options = {}) {
+    const skipDictionaryPrompt = options.skipDictionaryPrompt === true;
+    const allowPromptEchoRetry = options.allowPromptEchoRetry !== false;
+
     const timings = {};
     const language = getBaseLanguageCode(localStorage.getItem("preferredLanguage"));
     const allowLocalFallback = localStorage.getItem("allowLocalFallback") === "true";
@@ -1438,9 +1519,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         formData.append("language", language);
       }
 
+      const dictionaryEntries = skipDictionaryPrompt ? [] : this.getCustomDictionaryArray();
+      const dictionaryPrompt = dictionaryEntries.length > 0 ? dictionaryEntries.join(", ") : null;
+      const shouldAttachDictionaryPrompt = Boolean(dictionaryPrompt);
+
       // Add custom dictionary as prompt hint for cloud transcription
-      const dictionaryPrompt = this.getCustomDictionaryPrompt();
-      if (dictionaryPrompt) {
+      if (shouldAttachDictionaryPrompt) {
         formData.append("prompt", dictionaryPrompt);
       }
 
@@ -1480,6 +1564,29 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         if (proxyText && proxyText.trim().length > 0) {
           timings.transcriptionProcessingDurationMs = Math.round(performance.now() - apiCallStart);
           const rawText = proxyText;
+
+          if (
+            shouldAttachDictionaryPrompt &&
+            this.isLikelyDictionaryPromptEcho(rawText, dictionaryEntries)
+          ) {
+            logger.warn(
+              "Transcription appears to have echoed the dictionary prompt (Mistral proxy). Retrying without prompt.",
+              { model, provider, rawTextPreview: rawText.slice(0, 120) },
+              "transcription"
+            );
+
+            if (allowPromptEchoRetry && !skipDictionaryPrompt) {
+              return await this.processWithOpenAIAPI(audioBlob, metadata, {
+                skipDictionaryPrompt: true,
+                allowPromptEchoRetry: false,
+              });
+            }
+
+            throw new Error(
+              "Transcription returned the dictionary prompt (likely no usable audio). Please try again."
+            );
+          }
+
           let cleanedText = rawText;
           let source = "mistral";
 
@@ -1625,6 +1732,29 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         timings.transcriptionProcessingDurationMs = Math.round(performance.now() - apiCallStart);
 
         const rawText = result.text;
+
+        if (
+          shouldAttachDictionaryPrompt &&
+          this.isLikelyDictionaryPromptEcho(rawText, dictionaryEntries)
+        ) {
+          logger.warn(
+            "Transcription appears to have echoed the dictionary prompt. Retrying without prompt.",
+            { model, provider, rawTextPreview: rawText.slice(0, 120) },
+            "transcription"
+          );
+
+          if (allowPromptEchoRetry && !skipDictionaryPrompt) {
+            return await this.processWithOpenAIAPI(audioBlob, metadata, {
+              skipDictionaryPrompt: true,
+              allowPromptEchoRetry: false,
+            });
+          }
+
+          throw new Error(
+            "Transcription returned the dictionary prompt (likely no usable audio). Please try again."
+          );
+        }
+
         let cleanedText = rawText;
         let source = "openai";
 

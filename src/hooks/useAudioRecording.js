@@ -742,6 +742,13 @@ export const useAudioRecording = (toast, options = {}) => {
             wordsRemaining: resultPatch.wordsRemaining,
           });
         },
+        isLikelyDictionaryPromptEcho: (transcribedText = "", dictionaryEntries = []) => {
+          const manager = audioManagerRef.current;
+          if (!manager?.isLikelyDictionaryPromptEcho) {
+            return false;
+          }
+          return manager.isLikelyDictionaryPromptEcho(transcribedText, dictionaryEntries);
+        },
       };
     }
 

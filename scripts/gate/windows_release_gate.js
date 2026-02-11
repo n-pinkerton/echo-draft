@@ -1232,6 +1232,38 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     );
     record("Stage label updates (Transcribing)", stageTranscribing.trim() === "Transcribing", stageTranscribing);
 
+    // B/G) Regression guard: ensure dictionary prompt-echo heuristic flags obvious prompt output
+    const dictTerms = [
+      "Hello Cashflow",
+      "DbMcp",
+      "SlackMcp",
+      "MondayMcp",
+      "AGENTS.md",
+      "Codex",
+      "Postgres",
+      "TypeScript",
+      "OpenWhispr",
+      "PowerShell",
+    ];
+    const dictPrompt = dictTerms.join(", ");
+    const echoDetected = await dictation.eval(
+      `window.__openwhisprE2E.isLikelyDictionaryPromptEcho(${JSON.stringify(dictPrompt)}, ${JSON.stringify(dictTerms)})`
+    );
+    record(
+      "Dictionary prompt echo guard detects prompt output",
+      Boolean(echoDetected) === true,
+      `value=${safeString(echoDetected)}`
+    );
+
+    const echoFalsePositive = await dictation.eval(
+      `window.__openwhisprE2E.isLikelyDictionaryPromptEcho("let's test cloud transcription then shall we", ${JSON.stringify(dictTerms)})`
+    );
+    record(
+      "Dictionary prompt echo guard avoids false positive",
+      Boolean(echoFalsePositive) === false,
+      `value=${safeString(echoFalsePositive)}`
+    );
+
     // A) Dual output modes + insertion
     let notepad = await startTextTarget();
 
