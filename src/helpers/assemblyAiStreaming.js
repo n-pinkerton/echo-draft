@@ -36,6 +36,29 @@ class AssemblyAiStreaming {
     this.rewarmTimer = null;
     this.keepAliveInterval = null;
     this.isDisconnecting = false;
+
+    this.audioStats = null;
+    this.resetAudioStats();
+  }
+
+  resetAudioStats() {
+    this.audioStats = {
+      chunksReceived: 0,
+      bytesReceived: 0,
+      chunksSent: 0,
+      bytesSent: 0,
+      chunksDropped: 0,
+      firstChunkAt: null,
+      lastChunkAt: null,
+      firstDropAt: null,
+      lastDropAt: null,
+      lastBufferedAmount: null,
+      maxBufferedAmount: 0,
+    };
+  }
+
+  getAudioStats() {
+    return this.audioStats ? { ...this.audioStats } : null;
   }
 
   buildWebSocketUrl(options) {
@@ -291,6 +314,7 @@ class AssemblyAiStreaming {
     this.accumulatedText = "";
     this.lastTurnText = "";
     this.turns = [];
+    this.resetAudioStats();
 
     // Try to use pre-warmed connection for instant start
     if (this.hasWarmConnection()) {
@@ -419,20 +443,24 @@ class AssemblyAiStreaming {
           break;
 
         case "Termination":
+          const audioStats = this.getAudioStats();
           debugLogger.debug("AssemblyAI session terminated", {
             audioDuration: message.audio_duration_seconds,
+            audioStats,
           });
           // Resolve any pending termination wait
           if (this.terminationResolve) {
             this.terminationResolve({
               audioDuration: message.audio_duration_seconds,
               text: this.accumulatedText,
+              audioStats,
             });
             this.terminationResolve = null;
           }
           this.onSessionEnd?.({
             audioDuration: message.audio_duration_seconds,
             text: this.accumulatedText,
+            audioStats,
           });
           this.cleanup();
           break;
@@ -459,11 +487,45 @@ class AssemblyAiStreaming {
   }
 
   sendAudio(pcmBuffer) {
+    const byteLength =
+      typeof pcmBuffer?.byteLength === "number"
+        ? pcmBuffer.byteLength
+        : typeof pcmBuffer?.length === "number"
+          ? pcmBuffer.length
+          : 0;
+
+    const now = Date.now();
+    if (this.audioStats) {
+      this.audioStats.chunksReceived += 1;
+      this.audioStats.bytesReceived += byteLength;
+      if (!this.audioStats.firstChunkAt) {
+        this.audioStats.firstChunkAt = now;
+      }
+      this.audioStats.lastChunkAt = now;
+    }
+
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      if (this.audioStats) {
+        this.audioStats.chunksDropped += 1;
+        if (!this.audioStats.firstDropAt) {
+          this.audioStats.firstDropAt = now;
+        }
+        this.audioStats.lastDropAt = now;
+      }
       return false;
     }
 
     this.ws.send(pcmBuffer);
+    if (this.audioStats) {
+      this.audioStats.chunksSent += 1;
+      this.audioStats.bytesSent += byteLength;
+      const bufferedAmount = this.ws.bufferedAmount;
+      this.audioStats.lastBufferedAmount = bufferedAmount;
+      this.audioStats.maxBufferedAmount = Math.max(
+        this.audioStats.maxBufferedAmount,
+        bufferedAmount
+      );
+    }
     return true;
   }
 
@@ -494,7 +556,11 @@ class AssemblyAiStreaming {
           new Promise((resolve) => {
             timeoutId = setTimeout(() => {
               debugLogger.debug("AssemblyAI termination timeout, using accumulated text");
-              resolve({ text: this.accumulatedText });
+              resolve({
+                text: this.accumulatedText,
+                audioStats: this.getAudioStats(),
+                terminationTimedOut: true,
+              });
             }, TERMINATION_TIMEOUT_MS);
           }),
         ]);
@@ -509,7 +575,10 @@ class AssemblyAiStreaming {
       }
     }
 
-    const result = { text: this.accumulatedText };
+    const result = {
+      text: this.accumulatedText,
+      audioStats: this.getAudioStats(),
+    };
     this.cleanup();
     this.isDisconnecting = false;
     return result;

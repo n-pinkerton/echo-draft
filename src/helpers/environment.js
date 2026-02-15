@@ -10,6 +10,7 @@ const PERSISTED_KEYS = [
   "MISTRAL_API_KEY",
   "CUSTOM_TRANSCRIPTION_API_KEY",
   "CUSTOM_REASONING_API_KEY",
+  "OPENWHISPR_LOG_LEVEL",
   "LOCAL_TRANSCRIPTION_PROVIDER",
   "PARAKEET_MODEL",
   "LOCAL_WHISPER_MODEL",
@@ -22,6 +23,8 @@ const PERSISTED_KEYS = [
 
 class EnvironmentManager {
   constructor() {
+    this._envWriteInProgress = false;
+    this._envWriteNeedsRetry = false;
     this.loadEnvironmentVariables();
   }
 
@@ -51,6 +54,116 @@ class EnvironmentManager {
   _saveKey(envVarName, key) {
     process.env[envVarName] = key;
     return { success: true };
+  }
+
+  _getUserDataEnvPath() {
+    return path.join(app.getPath("userData"), ".env");
+  }
+
+  _readDotEnvFile(envPath) {
+    try {
+      if (!fs.existsSync(envPath)) {
+        return "";
+      }
+      return fs.readFileSync(envPath, "utf8");
+    } catch {
+      return "";
+    }
+  }
+
+  _parseEnvLine(line) {
+    const trimmed = typeof line === "string" ? line.trim() : "";
+    if (!trimmed || trimmed.startsWith("#")) {
+      return null;
+    }
+    const eqIndex = line.indexOf("=");
+    if (eqIndex <= 0) {
+      return null;
+    }
+    return {
+      key: line.slice(0, eqIndex),
+      value: line.slice(eqIndex + 1),
+      raw: line,
+    };
+  }
+
+  _persistAllKeysToEnvFile(envPath) {
+    try {
+      const existingLines = this._readDotEnvFile(envPath).split(/\r?\n/);
+      const persistedKeySet = new Set(PERSISTED_KEYS);
+      const wroteKeys = new Set();
+      const keptLines = [];
+
+      for (const line of existingLines) {
+        const parsed = this._parseEnvLine(line);
+        if (!parsed) {
+          if (line !== undefined && line !== null && line.length > 0) {
+            keptLines.push(line);
+          }
+          continue;
+        }
+
+        if (!persistedKeySet.has(parsed.key)) {
+          keptLines.push(line);
+          continue;
+        }
+
+        const envValue = process.env[parsed.key];
+        if (envValue) {
+          keptLines.push(`${parsed.key}=${envValue}`);
+          wroteKeys.add(parsed.key);
+        }
+      }
+
+      for (const key of PERSISTED_KEYS) {
+        if (wroteKeys.has(key)) {
+          continue;
+        }
+        const value = process.env[key];
+        if (!value) {
+          continue;
+        }
+        keptLines.push(`${key}=${value}`);
+        wroteKeys.add(key);
+      }
+
+      const output = keptLines.join("\n");
+      fs.writeFileSync(envPath, output, "utf8");
+      require("dotenv").config({ path: envPath });
+
+      return { success: true, path: envPath };
+    } catch (error) {
+      return { success: false, path: envPath, error: error?.message || String(error) };
+    }
+  }
+
+  _queueEnvWrite(fn) {
+    if (this._envWriteInProgress) {
+      this._envWriteNeedsRetry = true;
+      return { success: true, queued: true };
+    }
+
+    this._envWriteInProgress = true;
+    let result = { success: true };
+    try {
+      const fnResult = fn();
+      if (fnResult && typeof fnResult === "object" && !Array.isArray(fnResult)) {
+        result = fnResult;
+      } else {
+        result = { success: true };
+      }
+      this._envWriteNeedsRetry = false;
+    } catch (error) {
+      result = { success: false, error: error?.message || String(error) };
+    } finally {
+      this._envWriteInProgress = false;
+      if (this._envWriteNeedsRetry) {
+        this._envWriteNeedsRetry = false;
+        return this._queueEnvWrite(fn);
+      }
+    }
+
+    return result;
   }
 
   getOpenAIKey() {
@@ -141,6 +254,21 @@ class EnvironmentManager {
     return result;
   }
 
+  saveDebugLogLevel(level) {
+    const normalizedLevel = typeof level === "string" ? level.trim().toLowerCase() : "info";
+    const nextLevel =
+      normalizedLevel === "trace" || normalizedLevel === "debug" || normalizedLevel === "warn" || normalizedLevel === "error" || normalizedLevel === "fatal"
+        ? normalizedLevel
+        : "info";
+    const result = this._saveKey("OPENWHISPR_LOG_LEVEL", nextLevel);
+    const envWrite = this.saveAllKeysToEnvFile();
+    return {
+      ...result,
+      saveAllKeysResult: envWrite,
+      logLevel: nextLevel,
+    };
+  }
+
   createProductionEnvFile(apiKey) {
     const envPath = path.join(app.getPath("userData"), ".env");
 
@@ -156,20 +284,14 @@ OPENAI_API_KEY=${apiKey}
   }
 
   saveAllKeysToEnvFile() {
-    const envPath = path.join(app.getPath("userData"), ".env");
-
-    let envContent = "# OpenWhispr Environment Variables\n";
-
-    for (const key of PERSISTED_KEYS) {
-      if (process.env[key]) {
-        envContent += `${key}=${process.env[key]}\n`;
-      }
+    const envPath = this._getUserDataEnvPath();
+    const result = this._queueEnvWrite(() => {
+      return this._persistAllKeysToEnvFile(envPath);
+    });
+    if (result?.success !== false) {
+      return { success: true, path: envPath, queued: Boolean(result?.queued) };
     }
-
-    fs.writeFileSync(envPath, envContent, "utf8");
-    require("dotenv").config({ path: envPath });
-
-    return { success: true, path: envPath };
+    return result;
   }
 }
 

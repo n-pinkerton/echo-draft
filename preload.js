@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setDictionary: (words) => ipcRenderer.invoke("db-set-dictionary", words),
   importDictionaryFile: () => ipcRenderer.invoke("db-import-dictionary-file"),
   exportDictionary: (format) => ipcRenderer.invoke("db-export-dictionary", format),
+  selectAudioFileForTranscription: () =>
+    ipcRenderer.invoke("select-audio-file-for-transcription"),
   ...(IS_E2E_MODE
     ? {
         e2eExportDictionary: (format, filePath) =>

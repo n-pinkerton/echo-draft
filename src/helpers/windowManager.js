@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const HotkeyManager = require("./hotkeyManager");
 const { isModifierOnlyHotkey, isRightSideModifier } = HotkeyManager;
 const DragManager = require("./dragManager");
+const debugLogger = require("./debugLogger");
 const MenuManager = require("./menuManager");
 const DevServerManager = require("./devServerManager");
 const { DEV_SERVER_PORT } = DevServerManager;
@@ -189,6 +190,7 @@ class WindowManager {
       return;
     }
 
+    debugLogger.debug("[Dictation] sendToggleDictation", payload, "hotkey");
     this.showDictationPanel({ focus: false });
     this.emitDictationEvent("toggle-dictation", payload);
   }
@@ -199,6 +201,7 @@ class WindowManager {
 
     return async () => {
       if (this.hotkeyManager.isInListeningMode()) {
+        debugLogger.debug("[Hotkey] Ignored (listening mode)", { outputMode }, "hotkey");
         return;
       }
 
@@ -228,11 +231,22 @@ class WindowManager {
 
       const now = Date.now();
       if (now - lastToggleTime < DEBOUNCE_MS) {
+        debugLogger.trace(
+          "[Hotkey] Debounced",
+          { outputMode, resolvedHotkey, activationMode, debounceMs: DEBOUNCE_MS },
+          "hotkey"
+        );
         return;
       }
       lastToggleTime = now;
 
-      this.sendToggleDictation(this.createSessionPayload(outputMode));
+      const payload = this.createSessionPayload(outputMode);
+      debugLogger.debug(
+        "[Hotkey] Triggered",
+        { outputMode, resolvedHotkey, activationMode, payload },
+        "hotkey"
+      );
+      this.sendToggleDictation(payload);
     };
   }
 
@@ -372,6 +386,7 @@ class WindowManager {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      debugLogger.debug("[Dictation] sendStartDictation", payload, "hotkey");
       this.showDictationPanel({ focus: false });
       this.emitDictationEvent("start-dictation", payload);
     }
@@ -382,6 +397,7 @@ class WindowManager {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      debugLogger.debug("[Dictation] sendStopDictation", payload, "hotkey");
       this.emitDictationEvent("stop-dictation", payload);
     }
   }

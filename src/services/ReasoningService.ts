@@ -3,7 +3,12 @@ import { BaseReasoningService, ReasoningConfig } from "./BaseReasoningService";
 import { SecureCache } from "../utils/SecureCache";
 import { withRetry, createApiRetryStrategy } from "../utils/retry";
 import { API_ENDPOINTS, TOKEN_LIMITS, buildApiUrl, normalizeBaseUrl } from "../config/constants";
-import { UNIFIED_SYSTEM_PROMPT, LEGACY_PROMPTS } from "../config/prompts";
+import {
+  LEGACY_PROMPTS,
+  UNIFIED_SYSTEM_PROMPT,
+  getUserPrompt,
+  stripUntrustedTranscriptionWrapper,
+} from "../config/prompts";
 import logger from "../utils/logger";
 import { isSecureEndpoint } from "../utils/urlUtils";
 import { withSessionRefresh } from "../lib/neonAuth";
@@ -267,7 +272,7 @@ class ReasoningService extends BaseReasoningService {
     providerName: string
   ): Promise<string> {
     const systemPrompt = this.getSystemPrompt(agentName);
-    const userPrompt = text;
+    const userPrompt = getUserPrompt(text);
 
     const messages = [
       { role: "system", content: systemPrompt },
@@ -451,6 +456,8 @@ class ReasoningService extends BaseReasoningService {
           throw new Error(`Unsupported reasoning provider: ${provider}`);
       }
 
+      result = stripUntrustedTranscriptionWrapper(result);
+
       const processingTime = Date.now() - startTime;
 
       logger.logReasoning("PROVIDER_SUCCESS", {
@@ -504,7 +511,7 @@ class ReasoningService extends BaseReasoningService {
 
     try {
       const systemPrompt = this.getSystemPrompt(agentName);
-      const userPrompt = text;
+      const userPrompt = getUserPrompt(text);
 
       const messages = [
         { role: "system", content: systemPrompt },
@@ -720,10 +727,12 @@ class ReasoningService extends BaseReasoningService {
       });
 
       const systemPrompt = this.getSystemPrompt(agentName);
-      const result = await window.electronAPI.processAnthropicReasoning(text, model, agentName, {
+      const userPrompt = getUserPrompt(text);
+      const result = await window.electronAPI.processAnthropicReasoning(userPrompt, model, agentName, {
         ...config,
         systemPrompt,
       });
+
 
       const processingTime = Date.now() - startTime;
 
@@ -771,10 +780,12 @@ class ReasoningService extends BaseReasoningService {
       });
 
       const systemPrompt = this.getSystemPrompt(agentName);
-      const result = await window.electronAPI.processLocalReasoning(text, model, agentName, {
+      const userPrompt = getUserPrompt(text);
+      const result = await window.electronAPI.processLocalReasoning(userPrompt, model, agentName, {
         ...config,
         systemPrompt,
       });
+
 
       const processingTime = Date.now() - startTime;
 
@@ -828,7 +839,7 @@ class ReasoningService extends BaseReasoningService {
 
     try {
       const systemPrompt = this.getSystemPrompt(agentName);
-      const userPrompt = text;
+      const userPrompt = getUserPrompt(text);
 
       const requestBody = {
         contents: [

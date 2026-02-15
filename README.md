@@ -55,19 +55,22 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ### For Personal Use (Recommended)
 
 1. **Clone the repository**:
+
    ```bash
    git clone https://github.com/OpenWhispr/openwhispr.git
    cd openwhispr
    ```
 
 2. **Install dependencies**:
+
    ```bash
    npm install
    ```
 
 3. **Optional: Set up API keys** (only needed for cloud processing):
-   
+
    **Method A - Environment file**:
+
    ```bash
    cp .env.example .env
    # Edit .env and add your API keys:
@@ -77,17 +80,19 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
    # GROQ_API_KEY=your_groq_key
    # MISTRAL_API_KEY=your_mistral_key
    ```
-   
+
    **Method B - In-app configuration**:
    - Run the app and configure API keys through the Control Panel
    - Keys are automatically saved and persist across app restarts
 
 4. **Build the application**:
+
    ```bash
    npm run build
    ```
 
 5. **Run the application**:
+
    ```bash
    npm run dev  # Development mode with hot reload
    # OR
@@ -120,7 +125,8 @@ npm run pack
 OpenWhispr now supports multiple Linux package formats for maximum compatibility:
 
 **Available Formats**:
-- `.deb` - Debian, Ubuntu, Linux Mint, Pop!_OS
+
+- `.deb` - Debian, Ubuntu, Linux Mint, Pop!\_OS
 - `.rpm` - Fedora, Red Hat, CentOS, openSUSE
 - `.tar.gz` - Universal archive (works on any distro)
 - `.flatpak` - Sandboxed cross-distro package
@@ -182,6 +188,7 @@ chmod +x dist/OpenWhispr-*.AppImage
 The clipboard paste feature requires platform-specific tools:
 
 **X11 (Traditional Linux Desktop)**:
+
 ```bash
 # Debian/Ubuntu
 sudo apt install xdotool
@@ -196,6 +203,7 @@ sudo pacman -S xdotool
 **Wayland (Modern Linux Desktop)**:
 
 **Recommended:** Install `wl-clipboard` for reliable clipboard sharing between Wayland apps:
+
 ```bash
 sudo apt install wl-clipboard    # Debian/Ubuntu
 sudo dnf install wl-clipboard    # Fedora/RHEL
@@ -205,6 +213,7 @@ sudo pacman -S wl-clipboard      # Arch
 Choose **one** of the following paste tools:
 
 **Option 1: wtype** (requires virtual keyboard protocol support)
+
 ```bash
 # Debian/Ubuntu
 sudo apt install wtype
@@ -217,6 +226,7 @@ sudo pacman -S wtype
 ```
 
 **Option 2: ydotool** (works on more compositors, requires daemon)
+
 ```bash
 # Debian/Ubuntu
 sudo apt install ydotool
@@ -232,6 +242,7 @@ sudo systemctl enable --now ydotoold
 ```
 
 **Terminal Detection** (Optional - for KDE Wayland users):
+
 ```bash
 # On KDE Wayland, kdotool enables automatic terminal detection
 # to paste with Ctrl+Shift+V instead of Ctrl+V
@@ -290,6 +301,7 @@ npm run build:linux  # Linux
 ## Usage
 
 ### Basic Dictation
+
 1. **Start the app** - A small draggable panel appears on your screen
 2. **Press your hotkey** (default: backtick `) - Start dictating (panel shows recording animation)
 3. **Press your hotkey again** - Stop dictation and begin transcription (panel shows processing animation)
@@ -297,6 +309,7 @@ npm run build:linux  # Linux
 5. **Drag the panel** - Click and drag to move the dictation panel anywhere on your screen
 
 ### Control Panel
+
 - **Access**: Right-click the tray icon (macOS) or through the system menu
 - **Configure**: Choose between local and cloud processing
 - **History**: View, copy, and delete past transcriptions
@@ -305,21 +318,25 @@ npm run build:linux  # Linux
 - **Settings**: Configure API keys, customize hotkeys, and manage permissions
 
 ### Uninstall & Cache Cleanup
-- **In-App**: Use *Settings → General → Local Model Storage → Remove Downloaded Models* to clear `~/.cache/openwhispr/whisper-models` (or `%USERPROFILE%\.cache\openwhispr\whisper-models` on Windows).
+
+- **In-App**: Use _Settings → General → Local Model Storage → Remove Downloaded Models_ to clear `~/.cache/openwhispr/whisper-models` (or `%USERPROFILE%\.cache\openwhispr\whisper-models` on Windows).
 - **Windows Uninstall**: The NSIS uninstaller automatically deletes the same cache directory.
 - **Linux Packages**: `deb`/`rpm` post-uninstall scripts also remove cached models.
 - **macOS**: If you uninstall manually, remove `~/Library/Caches` or `~/.cache/openwhispr/whisper-models` if desired.
 
 ### Agent Naming & AI Processing
+
 Once you've named your agent during setup, you can interact with it using multiple AI providers:
 
 **🎯 Agent Commands** (for AI assistance):
+
 - "Hey [AgentName], make this more professional"
 - "Hey [AgentName], format this as a list"
 - "Hey [AgentName], write a thank you email"
 - "Hey [AgentName], convert this to bullet points"
 
 **🤖 AI Provider Options**:
+
 - **OpenAI**: GPT-5, GPT-4.1, o-series reasoning models
 - **Anthropic**: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5
 - **Google**: Gemini 2.5 Pro/Flash/Flash-Lite
@@ -327,6 +344,7 @@ Once you've named your agent during setup, you can interact with it using multip
 - **Local**: Qwen, LLaMA, Mistral via llama.cpp
 
 **📝 Regular Dictation** (for normal text):
+
 - "This is just normal text I want transcribed"
 - "Meeting notes: John mentioned the quarterly report"
 - "Dear Sarah, thank you for your help"
@@ -334,6 +352,7 @@ Once you've named your agent during setup, you can interact with it using multip
 The AI automatically detects when you're giving it commands versus dictating regular text, and removes agent name references from the final output.
 
 ### Custom Dictionary
+
 Improve transcription accuracy for specific words, names, or technical terms:
 
 1. **Access Settings**: Open Control Panel → Settings → Custom Dictionary
@@ -341,12 +360,14 @@ Improve transcription accuracy for specific words, names, or technical terms:
 3. **How It Works**: Words are provided as context hints to the speech recognition model
 
 **Examples of words to add**:
+
 - Uncommon names (e.g., "Sergey", "Xanthe")
 - Technical jargon (e.g., "Kubernetes", "OAuth")
 - Brand names (e.g., "OpenWhispr", "whisper.cpp")
 - Domain-specific terms (e.g., "amortization", "polymerase")
 
 ### Processing Options
+
 - **OpenWhispr Cloud**:
   - Sign in with Google or email — no API keys needed
   - Free plan: 2,000 words/week with 7-day Pro trial for new accounts
@@ -409,6 +430,34 @@ open-whispr/
 
 ## Development
 
+### Agent Quickstart (for contributors / LLM agents)
+
+```bash
+npm ci
+npm run dev
+```
+
+Then (recommended before shipping changes):
+
+```bash
+npm test
+npm run typecheck
+npm run lint
+```
+
+Key docs:
+
+- Debug logging (daily JSONL logs + analysis): see `DEBUG.md`
+- Windows installer build / in-place upgrade: see **Building → Windows Install / In-Place Upgrade** (and **Building the Windows Installer from WSL**)
+- Windows packaged runtime release gate: `scripts/gate/windows_release_gate.js` (requires `OPENWHISPR_E2E=1`)
+- Windows-specific gotchas: `WINDOWS_TROUBLESHOOTING.md`
+- General troubleshooting: `TROUBLESHOOTING.md`
+
+Important stability notes (to keep Windows in-place upgrades working):
+
+- Avoid changing `electron-builder.json` `appId` / `productName` without an explicit migration plan.
+- Avoid changing the Windows AppUserModelId (`main.js` sets this) without understanding taskbar grouping + installer identity implications.
+
 ### Scripts
 
 - `npm run dev` - Start development with hot reload
@@ -436,6 +485,7 @@ open-whispr/
 ### Architecture
 
 The app consists of two main windows:
+
 1. **Main Window**: Minimal overlay for dictation controls
 2. **Control Panel**: Full settings and history interface
 
@@ -453,6 +503,7 @@ Both use the same React codebase but render different components based on URL pa
 ### Tailwind CSS v4 Setup
 
 This project uses the latest Tailwind CSS v4 with:
+
 - CSS-first configuration using `@theme` directive
 - Vite plugin for optimal performance
 - Custom design tokens for consistent theming
@@ -471,6 +522,41 @@ npm run dist           # Current platform
 npm run build:mac      # macOS DMG + ZIP
 npm run build:win      # Windows NSIS + Portable
 npm run build:linux    # AppImage + DEB
+```
+
+### Windows Install / In-Place Upgrade
+
+On Windows, `npm run build:win` produces two `.exe` files in `dist/`:
+
+- `OpenWhispr Setup <version>.exe` - **NSIS installer** (use this to install, reinstall, or upgrade over the top of an existing installation)
+- `OpenWhispr <version>.exe` - **portable** build (no installer; runs in-place)
+
+> Tip: If you're trying to “reinstall/upgrade”, run the **Setup** installer (NSIS). The portable `.exe` won't update an existing installed app.
+
+### Building the Windows Installer from WSL
+
+Windows packaging must run on **Windows** (native modules like `better-sqlite3` are platform-specific and `scripts/require-windows.js` will block WSL/Linux builds).
+
+If you develop in WSL, copy the repo into the Windows filesystem and run the build from Windows PowerShell:
+
+```bash
+# From WSL (copy into a Windows folder; keep node_modules/dist out of the copy)
+rsync -a --delete \
+  --exclude ".git" --exclude "node_modules" --exclude "dist" --exclude "resources/bin" \
+  ./ /mnt/c/Users/<you>/AppData/Local/Temp/openwhispr-winbuild/
+```
+
+```powershell
+# From Windows PowerShell
+cd $env:TEMP\openwhispr-winbuild
+npm ci
+npm run build:win
+```
+
+Optionally copy the installer somewhere convenient (e.g. Downloads) for an in-place upgrade:
+
+```powershell
+Copy-Item ".\\dist\\OpenWhispr Setup *.exe" "$env:USERPROFILE\\Downloads\\"
 ```
 
 Note: build/pack/dist scripts automatically download whisper.cpp, llama-server, and sherpa-onnx for the current platform. For multi-platform packaging from one host, run the `:all` variants first (`npm run download:whisper-cpp:all`, `npm run download:llama-server:all`, `npm run download:sherpa-onnx:all`).
@@ -516,12 +602,14 @@ For local processing, OpenWhispr uses OpenAI's Whisper model via whisper.cpp - a
 3. **No Dependencies**: No Python or other runtime required
 
 **System Fallback**: If the bundled binary fails, install via package manager:
+
 - macOS: `brew install whisper-cpp`
 - Linux: Build from source at https://github.com/ggml-org/whisper.cpp
 
 **From Source**: When running locally (not a packaged build), download the binary with `npm run download:whisper-cpp` so `resources/bin/` has your platform executable.
 
 **Requirements**:
+
 - Sufficient disk space for models (75MB - 3GB depending on model)
 
 **Upgrading from Python-based version**: If you previously used the Python-based Whisper, you'll need to re-download models in GGML format. You can safely delete the old Python environment (`~/.openwhispr/python/`) and PyTorch models (`~/.cache/whisper/`) to reclaim disk space.
@@ -535,9 +623,11 @@ OpenWhispr also supports NVIDIA Parakeet models via sherpa-onnx - a fast alterna
 3. **Models stored in**: `~/.cache/openwhispr/parakeet-models/`
 
 **Available Models**:
+
 - `parakeet-tdt-0.6b-v3`: Multilingual (25 languages), ~680MB
 
 **When to use Parakeet vs Whisper**:
+
 - **Parakeet**: Best for speed-critical use cases or lower-end hardware
 - **Whisper**: Best for quality-critical use cases or when you need specific model sizes
 
@@ -567,12 +657,14 @@ We welcome contributions! Please follow these steps:
 - Follow the existing code style
 - Update documentation as needed
 - Test on your target platform before submitting
+
 ## Security
 
 OpenWhispr is designed with privacy and security in mind:
 
 - **Local Processing Option**: Keep your voice data completely private
 - **No Analytics**: We don't collect any usage data or telemetry
+- **Optional Local Debug Logs**: You can enable a high-detail debug log that is written locally to disk (never uploaded automatically)
 - **Open Source**: All code is available for review
 - **Secure Storage**: API keys are stored securely in your system's keychain/credential manager
 - **Minimal Permissions**: Only requests necessary permissions (microphone, accessibility)
@@ -601,6 +693,47 @@ OpenWhispr is designed with privacy and security in mind:
    - Linux Wayland: Install `wtype` or `ydotool` for paste simulation (ensure `ydotoold` daemon is running)
    - All platforms: Text is always copied to clipboard - use Ctrl+V (Cmd+V on macOS) to paste manually
 7. **Panel position**: If the panel appears off-screen, restart the app to reset position
+
+### Debug Logs (Local)
+
+If you need to diagnose lag, missing audio, or truncated transcripts, enable **Debug mode** in the Control Panel:
+
+- Control Panel → **Developer** → **Debug mode**
+- Logs are written as **JSONL** (one JSON object per line) to a **daily** file:
+  - Preferred: `logs/openwhispr-debug-YYYY-MM-DD.jsonl` next to the installed `OpenWhispr.exe`
+  - Fallback: the app’s `userData/logs` directory (if the install directory isn’t writable)
+- Use **Open Logs Folder** in the Developer section to jump to the current log location.
+
+For full details (enable/disable options, log format, and what gets captured), see `DEBUG.md`.
+
+#### Log analysis tips
+
+- The first line of each file is a `type: "header"` record (system/app details + settings snapshot placeholders). Most queries should filter it out.
+- When debug mode is enabled, the renderer logs a `Renderer settings snapshot` and traces localStorage mutations (`localStorage.setItem`/`removeItem`/`clear`) with basic redaction heuristics.
+- Follow a single dictation end-to-end via `meta.sessionId` and/or `meta.jobId` (these appear on hotkey/dictation/paste/history events).
+- Useful `scope` values to filter by: `hotkey`, `dictation`, `audio`, `streaming`, `transcription`, `reasoning`, `paste`, `history`, `settings`, `performance`, `pipeline`.
+- To separate “transcription vs cleanup” issues:
+  - Compare `rawText` vs `cleanedText` in `trace` logs (e.g. `Transcription result text`, `Streaming transcript text`, `Dictation transcript text`).
+  - In History, `raw_text` is stored separately and shown under “Details” when different.
+  - When OpenWhispr Cloud cleanup runs, `meta.source` is tagged as `openwhispr-reasoned` (or `openwhispr-byok-reasoned`).
+
+If you have `jq` installed, a few quick recipes:
+
+```bash
+# 1) Show warnings/errors (good first-pass triage)
+jq -r 'select(.type!="header") | select(.level=="warn" or .level=="error") | [.ts,.scope,.message] | @tsv' \
+  logs/openwhispr-debug-YYYY-MM-DD.jsonl
+
+# 2) Hotkey → recording latency (helps diagnose “delay before recording starts”)
+jq -r 'select(.message=="Dictation recording started") | [.ts,.meta.hotkeyToRecordingMs,.meta.method] | @tsv' \
+  logs/openwhispr-debug-YYYY-MM-DD.jsonl
+
+# 3) Pipeline timings (helps spot truncation, slow cleanup, etc.)
+jq -r 'select(.message=="Pipeline timing") | [.ts,.meta.mode,.meta.model,.meta.roundTripDurationMs,.meta.transcriptionProcessingDurationMs,.meta.reasoningProcessingDurationMs] | @tsv' \
+  logs/openwhispr-debug-YYYY-MM-DD.jsonl
+```
+
+Warning: Debug logs may contain transcribed text and other sensitive data. Share only with trusted support.
 
 ### Getting Help
 
@@ -639,7 +772,7 @@ A: OpenWhispr supports 58 languages including English, Spanish, French, German, 
 
 ## Project Status
 
-OpenWhispr is actively maintained and ready for production use. Current version: 1.4.4
+OpenWhispr is actively maintained and ready for production use. Current version: 1.4.5
 
 - ✅ Core functionality complete
 - ✅ Cross-platform support (macOS, Windows, Linux)

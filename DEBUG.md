@@ -1,73 +1,61 @@
-# Debug Mode
+# Debug Logging
 
-Enable verbose logging to diagnose issues like "no audio detected" or transcription failures.
+OpenWhispr can capture detailed telemetry (including transcript text) to a **daily JSONL log file**. Use this when diagnosing issues like delayed recording start, truncated transcripts, or cleanup/transcription mismatches.
 
-## Enable Debug Logging
+## Enable debug logging
 
-### Option 1: Command Line
+### Option 1: In-app toggle (recommended)
+
+`Settings → Developer → Debug mode`
+
+This sets `OPENWHISPR_LOG_LEVEL=trace` in the app’s userData `.env` and starts writing logs to disk immediately.
+
+### Option 2: Command line
+
 ```bash
 # macOS
-/Applications/OpenWhispr.app/Contents/MacOS/OpenWhispr --log-level=debug
+/Applications/OpenWhispr.app/Contents/MacOS/OpenWhispr --log-level=trace
 
 # Windows
-OpenWhispr.exe --log-level=debug
+OpenWhispr.exe --log-level=trace
 ```
 
-### Option 2: Environment File
-Add to your `.env` file and restart:
+### Option 3: userData `.env`
+
+Add (or set) and restart:
+
+```env
+OPENWHISPR_LOG_LEVEL=trace
 ```
-OPENWHISPR_LOG_LEVEL=debug
-```
 
-**Env file locations:**
-- macOS: `~/Library/Application Support/OpenWhispr/.env`
-- Windows: `%APPDATA%\OpenWhispr\.env`
-- Linux: `~/.config/OpenWhispr/.env`
+## Log files & format
 
-## Log File Locations
+- **Directory**: `logs/` next to the installed executable **when writable** (preferred), otherwise `logs/` inside the app’s `userData` directory.
+- **Filename**: `openwhispr-debug-YYYY-MM-DD.jsonl` (local system date).
+- **Format**: JSON Lines (one JSON object per line).
+  - Line 1 is a `type: "header"` record (system/app details + settings snapshot placeholders).
+  - Subsequent lines are structured log records with `ts`, `level`, `scope`, and `meta`.
 
-- **macOS**: `~/Library/Application Support/OpenWhispr/logs/debug-*.log`
-- **Windows**: `%APPDATA%\OpenWhispr\logs\debug-*.log`
-- **Linux**: `~/.config/OpenWhispr/logs/debug-*.log`
+Tip: In-app, `Settings → Developer → Open Logs Folder` shows you the exact location used on your machine.
 
-## What Gets Logged
+## What gets logged (when enabled)
 
-| Stage | Details |
-|-------|---------|
-| FFmpeg | Path resolution, permissions, ASAR unpacking |
-| Audio Recording | Permission requests, chunk sizes, audio levels |
-| Audio Processing | File creation, Whisper command, process output |
-| IPC | Messages between renderer and main process |
+Examples of the high-value telemetry captured in debug mode:
 
-## Common Issues
+- Hotkey activity (including Windows push-to-talk key down/up)
+- Dictation lifecycle (requested → recording started → stop → paste/clipboard → save)
+- Per-stage pipeline timings (record/transcribe/cleanup/paste/save/total)
+- Audio chunk telemetry (MediaRecorder chunks and/or streaming PCM chunks)
+- Transcription outputs (raw + cleaned text) at `trace` level
+- API request/response metadata (never logs API keys)
+- Errors and warnings with stack/context
 
-### "No Audio Detected"
-Look for:
-- `maxLevel < 0.01` → Audio too quiet
-- `Audio appears to be silent` → Microphone issue
-- `FFmpeg not available` → Path resolution failed
+## Sharing logs
 
-### Transcription Fails
-Look for:
-- `Whisper stderr:` → whisper.cpp/FFmpeg errors
-- `Process closed with code: [non-zero]` → Process failure
-- `Failed to parse Whisper output` → Invalid JSON
+Debug logs may contain sensitive text (transcripts and settings). Share only with trusted support and redact as needed.
 
-### Permission Issues
-Look for:
-- `Microphone Access Denied`
-- `isExecutable: false` → FFmpeg permission issue
+## Disable debug logging
 
-## Sharing Logs
-
-When reporting issues:
-1. Enable debug mode and reproduce the issue
-2. Locate the log file
-3. Redact any sensitive information
-4. Include relevant log sections in your issue report
-
-## Disable Debug Mode
-
-Debug mode is off by default. To ensure it's disabled:
-- Remove `--log-level=debug` from command
-- Remove `OPENWHISPR_LOG_LEVEL` from `.env`
+- Turn off `Settings → Developer → Debug mode`, or
+- Remove/adjust `OPENWHISPR_LOG_LEVEL` in the userData `.env`, or
+- Stop passing `--log-level=trace` on launch.

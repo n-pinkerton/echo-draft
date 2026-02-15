@@ -18,13 +18,25 @@ import TitleBar from "./TitleBar";
 import SupportDropdown from "./ui/SupportDropdown";
 import TranscriptionItem from "./ui/TranscriptionItem";
 import UpgradePrompt from "./UpgradePrompt";
-import { ConfirmDialog, AlertDialog } from "./ui/dialog";
+import {
+  AlertDialog,
+  ConfirmDialog,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Toggle } from "./ui/toggle";
 import { useDialogs } from "../hooks/useDialogs";
 import { useHotkey } from "../hooks/useHotkey";
 import { useToast } from "./ui/Toast";
 import { useUpdater } from "../hooks/useUpdater";
 import { useSettings } from "../hooks/useSettings";
 import { useAuth } from "../hooks/useAuth";
+import AudioManager from "../helpers/audioManager";
+import logger from "../utils/logger";
 import {
   useTranscriptions,
   initializeTranscriptions,
@@ -46,12 +58,20 @@ export default function ControlPanel() {
     () => localStorage.getItem("aiCTADismissed") === "true"
   );
   const [searchQuery, setSearchQuery] = useState("");
-  const [modeFilter, setModeFilter] = useState<"all" | "insert" | "clipboard">("all");
+  const [modeFilter, setModeFilter] = useState<"all" | "insert" | "clipboard" | "file">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "success" | "error" | "cancelled">(
     "all"
   );
   const [providerFilter, setProviderFilter] = useState("all");
   const [isExporting, setIsExporting] = useState(false);
+  const [showFileTranscribeDialog, setShowFileTranscribeDialog] = useState(false);
+  const [fileCleanupEnabled, setFileCleanupEnabled] = useState(
+    () => localStorage.getItem("useReasoningModel") === "true"
+  );
+  const [fileTranscribeStageLabel, setFileTranscribeStageLabel] = useState<string | null>(null);
+  const [fileTranscribeMessage, setFileTranscribeMessage] = useState<string | null>(null);
+  const [fileTranscribeFileName, setFileTranscribeFileName] = useState<string | null>(null);
+  const [isFileTranscribing, setIsFileTranscribing] = useState(false);
   const [showCloudMigrationBanner, setShowCloudMigrationBanner] = useState(false);
   const cloudMigrationProcessed = useRef(false);
   const { hotkey } = useHotkey();
@@ -204,6 +224,223 @@ export default function ControlPanel() {
       title: "Diagnostics Copied",
       description: "Diagnostic JSON copied to clipboard.",
     });
+  };
+
+  const createSessionId = () => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+
+  const transcribeAudioFile = async () => {
+    if (isFileTranscribing) return;
+    if (!window.electronAPI?.selectAudioFileForTranscription) {
+      toast({
+        title: "Unavailable",
+        description: "This build does not support file transcription yet.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setFileTranscribeStageLabel(null);
+    setFileTranscribeMessage(null);
+    setFileTranscribeFileName(null);
+
+    const selection = await window.electronAPI.selectAudioFileForTranscription();
+    if (selection?.canceled) {
+      return;
+    }
+    if (!selection?.success) {
+      toast({
+        title: "File Selection Failed",
+        description: selection?.error || "Could not read the selected file.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!selection.data || selection.data.byteLength === 0) {
+      toast({
+        title: "File Selection Failed",
+        description: "Selected file was empty or could not be read.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const fileName = selection.fileName || "audio";
+    const mimeType = selection.mimeType || "application/octet-stream";
+    const bytes = new Uint8Array(selection.data.byteLength);
+    bytes.set(selection.data);
+    const audioBlob = new Blob([bytes.buffer], { type: mimeType });
+
+    const sessionId = createSessionId();
+    const triggeredAt = Date.now();
+    const startedAt = Date.now();
+    const context = {
+      sessionId,
+      outputMode: "file",
+      triggeredAt,
+      cleanupEnabled: fileCleanupEnabled,
+      file: {
+        fileName,
+        extension: selection.extension ?? null,
+        mimeType,
+        sizeBytes: selection.sizeBytes ?? null,
+      },
+    };
+
+    logger.info(
+      "File transcription started",
+      {
+        sessionId,
+        fileName,
+        mimeType,
+        sizeBytes: selection.sizeBytes ?? null,
+        cleanupEnabled: fileCleanupEnabled,
+      },
+      "file"
+    );
+
+    setFileTranscribeFileName(fileName);
+    setIsFileTranscribing(true);
+
+    const manager = new AudioManager();
+    const providerRef = { current: null as null | string };
+    const modelRef = { current: null as null | string };
+    const lastStageRef = { current: null as null | string };
+
+    const finalize = () => {
+      try {
+        manager.cleanup();
+      } catch {
+        // Ignore cleanup errors
+      }
+    };
+
+    manager.setCallbacks({
+      onStateChange: (state) => {
+        logger.trace("File transcription state change", { sessionId, ...state }, "file");
+      },
+      onProgress: (event) => {
+        if (event?.provider) {
+          providerRef.current = String(event.provider);
+        }
+        if (event?.model) {
+          modelRef.current = String(event.model);
+        }
+        if (
+          typeof event?.stage === "string" &&
+          event.stage &&
+          event.stage !== lastStageRef.current
+        ) {
+          lastStageRef.current = event.stage;
+          setFileTranscribeStageLabel(event.stageLabel || event.stage);
+          setFileTranscribeMessage(typeof event.message === "string" ? event.message : null);
+          logger.trace(
+            "File transcription stage",
+            {
+              sessionId,
+              stage: event.stage,
+              stageLabel: event.stageLabel || null,
+              message: event.message || null,
+              provider: event.provider || null,
+              model: event.model || null,
+            },
+            "file"
+          );
+        }
+      },
+      onPartialTranscript: () => {},
+      onError: (error) => {
+        logger.error("File transcription error", { sessionId, error }, "file");
+        toast({
+          title: error?.title || "Transcription Error",
+          description: error?.description || "Failed to transcribe audio file.",
+          variant: "destructive",
+          duration: 7000,
+        });
+        setIsFileTranscribing(false);
+        finalize();
+      },
+      onTranscriptionComplete: async (result) => {
+        try {
+          if (!result?.success) {
+            throw new Error("Transcription failed");
+          }
+
+          const provider = providerRef.current || result.source || null;
+          const model = modelRef.current || null;
+          const totalDurationMs = Math.max(0, Date.now() - startedAt);
+
+          const saveResult = await window.electronAPI.saveTranscription({
+            text: result.text,
+            rawText: result.rawText ?? result.text,
+            meta: {
+              sessionId,
+              outputMode: "file",
+              status: "success",
+              source: result.source,
+              provider,
+              model,
+              cleanupEnabled: fileCleanupEnabled,
+              file: context.file,
+              timings: {
+                ...(result.timings || {}),
+                totalDurationMs,
+              },
+            },
+          });
+
+          if (!saveResult?.success) {
+            throw new Error("Saved transcription to history failed");
+          }
+
+          toast({
+            title: "Transcribed",
+            description: "Saved to history.",
+            variant: "success",
+            duration: 2500,
+          });
+
+          logger.info(
+            "File transcription saved",
+            {
+              sessionId,
+              transcriptionId: saveResult.id ?? null,
+              provider,
+              model,
+              textLength: result.text?.length ?? null,
+              rawTextLength: result.rawText?.length ?? null,
+              totalDurationMs,
+            },
+            "file"
+          );
+        } catch (error) {
+          toast({
+            title: "Transcription Failed",
+            description: (error as Error)?.message || "An unexpected error occurred.",
+            variant: "destructive",
+            duration: 7000,
+          });
+          logger.error(
+            "File transcription completion handler failed",
+            { sessionId, error: (error as Error)?.message || String(error) },
+            "file"
+          );
+        } finally {
+          setIsFileTranscribing(false);
+          setShowFileTranscribeDialog(false);
+          setFileTranscribeStageLabel(null);
+          setFileTranscribeMessage(null);
+          setFileTranscribeFileName(null);
+          finalize();
+        }
+      },
+    });
+
+    manager.enqueueProcessingJob(audioBlob, {}, context);
   };
 
   const providerOptions = useMemo(() => {
@@ -421,6 +658,83 @@ export default function ControlPanel() {
         onOk={() => {}}
       />
 
+      <Dialog
+        open={showFileTranscribeDialog}
+        onOpenChange={(open) => {
+          setShowFileTranscribeDialog(open);
+          if (open) {
+            setFileCleanupEnabled(useReasoningModel);
+            setFileTranscribeStageLabel(null);
+            setFileTranscribeMessage(null);
+            setFileTranscribeFileName(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Transcribe audio file</DialogTitle>
+            <DialogDescription>
+              Uses your current transcription settings (local or cloud). The result is saved to
+              history.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-6">
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-medium text-foreground">Cleanup (AI enhancement)</p>
+                <p className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed">
+                  Runs the cleanup model after transcription.
+                </p>
+              </div>
+              <div className="shrink-0">
+                <Toggle
+                  checked={fileCleanupEnabled}
+                  onChange={setFileCleanupEnabled}
+                  disabled={isFileTranscribing}
+                />
+              </div>
+            </div>
+
+            {isFileTranscribing && (
+              <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
+                <p className="text-[13px] font-medium text-foreground">
+                  {fileTranscribeFileName
+                    ? `Transcribing ${fileTranscribeFileName}`
+                    : "Transcribing…"}
+                </p>
+                {fileTranscribeStageLabel && (
+                  <p className="text-[12px] text-muted-foreground mt-1 leading-relaxed">
+                    {fileTranscribeStageLabel}
+                    {fileTranscribeMessage ? ` — ${fileTranscribeMessage}` : ""}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowFileTranscribeDialog(false)}
+              disabled={isFileTranscribing}
+            >
+              Close
+            </Button>
+            <Button variant="default" onClick={transcribeAudioFile} disabled={isFileTranscribing}>
+              {isFileTranscribing ? (
+                <>
+                  <Loader2 size={14} className="mr-2 animate-spin" />
+                  Working…
+                </>
+              ) : (
+                "Choose file…"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <UpgradePrompt
         open={showUpgradePrompt}
         onOpenChange={setShowUpgradePrompt}
@@ -485,17 +799,28 @@ export default function ControlPanel() {
                 </span>
               )}
             </div>
-            {history.length > 0 && (
+            <div className="flex items-center gap-2">
               <Button
-                onClick={clearHistory}
-                variant="ghost"
+                onClick={() => setShowFileTranscribeDialog(true)}
+                variant="outline"
                 size="sm"
-                className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                className="h-7 px-2 text-[11px]"
+                disabled={isFileTranscribing}
               >
-                <Trash2 size={12} className="mr-1" />
-                Clear
+                Transcribe Audio File…
               </Button>
-            )}
+              {history.length > 0 && (
+                <Button
+                  onClick={clearHistory}
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 size={12} className="mr-1" />
+                  Clear
+                </Button>
+              )}
+            </div>
           </div>
 
           {showCloudMigrationBanner && (
@@ -597,6 +922,7 @@ export default function ControlPanel() {
                   <option value="all">All modes</option>
                   <option value="insert">Insert</option>
                   <option value="clipboard">Clipboard</option>
+                  <option value="file">File</option>
                 </select>
                 <select
                   data-testid="history-filter-status"

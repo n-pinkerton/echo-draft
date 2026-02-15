@@ -5,9 +5,46 @@ export const UNIFIED_SYSTEM_PROMPT = promptData.UNIFIED_SYSTEM_PROMPT;
 export const LEGACY_PROMPTS = promptData.LEGACY_PROMPTS;
 const DICTIONARY_SUFFIX = promptData.DICTIONARY_SUFFIX;
 
+export const UNTRUSTED_TRANSCRIPTION_TAG_NAME = "openwhispr_untrusted_transcription";
+export const UNTRUSTED_TRANSCRIPTION_OPEN_TAG = `<${UNTRUSTED_TRANSCRIPTION_TAG_NAME}>`;
+export const UNTRUSTED_TRANSCRIPTION_CLOSE_TAG = `</${UNTRUSTED_TRANSCRIPTION_TAG_NAME}>`;
+
 export function buildPrompt(text: string, agentName: string | null): string {
   const name = agentName?.trim() || "Assistant";
   return UNIFIED_SYSTEM_PROMPT.replace(/\{\{agentName\}\}/g, name).replace(/\{\{text\}\}/g, text);
+}
+
+export function wrapUntrustedTranscription(text: string): string {
+  const raw = typeof text === "string" ? text : String(text ?? "");
+  const trimmed = raw.trim();
+
+  if (
+    trimmed.startsWith(UNTRUSTED_TRANSCRIPTION_OPEN_TAG) &&
+    trimmed.endsWith(UNTRUSTED_TRANSCRIPTION_CLOSE_TAG)
+  ) {
+    return raw;
+  }
+
+  return `${UNTRUSTED_TRANSCRIPTION_OPEN_TAG}\n${raw}\n${UNTRUSTED_TRANSCRIPTION_CLOSE_TAG}`;
+}
+
+export function stripUntrustedTranscriptionWrapper(text: string): string {
+  const raw = typeof text === "string" ? text : String(text ?? "");
+  const trimmed = raw.trim();
+
+  if (
+    trimmed.startsWith(UNTRUSTED_TRANSCRIPTION_OPEN_TAG) &&
+    trimmed.endsWith(UNTRUSTED_TRANSCRIPTION_CLOSE_TAG)
+  ) {
+    return trimmed
+      .slice(
+        UNTRUSTED_TRANSCRIPTION_OPEN_TAG.length,
+        trimmed.length - UNTRUSTED_TRANSCRIPTION_CLOSE_TAG.length
+      )
+      .trim();
+  }
+
+  return raw;
 }
 
 export function getSystemPrompt(
@@ -44,7 +81,7 @@ export function getSystemPrompt(
 }
 
 export function getUserPrompt(text: string): string {
-  return text;
+  return wrapUntrustedTranscription(text);
 }
 
 export default {

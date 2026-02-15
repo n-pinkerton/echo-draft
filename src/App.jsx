@@ -160,6 +160,8 @@ export default function App() {
     isProcessing,
     progress,
     jobs,
+    transcript,
+    partialTranscript,
     toggleListening,
     cancelRecording,
     cancelProcessing,
@@ -260,26 +262,70 @@ export default function App() {
     : [];
   const stackedJobs = visibleJobs.slice(-3).reverse();
 
+  const transcriptToCopy =
+    typeof partialTranscript === "string" && partialTranscript.trim()
+      ? partialTranscript
+      : transcript;
+
+  const canCopyTranscript = Boolean(transcriptToCopy && transcriptToCopy.trim());
+
+  const copyLastTranscript = async () => {
+    const text = typeof transcriptToCopy === "string" ? transcriptToCopy.trim() : "";
+    if (!text) {
+      toast({
+        title: "Nothing to copy",
+        description: "No transcript yet.",
+        duration: 2000,
+      });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      try {
+        await window.electronAPI?.writeClipboard?.(text);
+      } catch {
+        toast({
+          title: "Copy failed",
+          description: "Could not copy to clipboard.",
+          duration: 2500,
+        });
+        return;
+      }
+    }
+
+    toast({
+      title: "Copied",
+      description: "Copied transcript to clipboard.",
+      duration: 1500,
+    });
+  };
+
   return (
     <div className="dictation-window">
       {/* Bottom-right voice button - window expands upward/leftward */}
       <div className="fixed bottom-4 right-4 z-50">
-        <div className="flex flex-col items-end gap-2">
-          <DictationStatusBar progress={progress} />
+        <div
+          className="flex flex-col items-end gap-2"
+          onMouseEnter={() => {
+            setIsHovered(true);
+            setWindowInteractivity(true);
+          }}
+          onMouseLeave={() => {
+            setIsHovered(false);
+            if (!isCommandMenuOpen) {
+              setWindowInteractivity(false);
+            }
+          }}
+        >
+          <DictationStatusBar
+            progress={progress}
+            canCopyTranscript={canCopyTranscript}
+            onCopyTranscript={copyLastTranscript}
+          />
 
-          <div
-            className="relative flex items-center gap-2"
-            onMouseEnter={() => {
-              setIsHovered(true);
-              setWindowInteractivity(true);
-            }}
-            onMouseLeave={() => {
-              setIsHovered(false);
-              if (!isCommandMenuOpen) {
-                setWindowInteractivity(false);
-              }
-            }}
-          >
+          <div className="relative flex items-center gap-2">
             {(isRecording || isProcessing) && isHovered && (
               <button
                 aria-label={isRecording ? "Cancel recording" : "Cancel processing"}

@@ -63,8 +63,11 @@ export default function TranscriptionItem({
   const status = meta.status || "success";
   const provider = meta.provider || meta.source || "unknown";
   const model = meta.model || "";
-  const rawText = item.raw_text || item.text;
-  const hasDifferentRaw = rawText !== item.text;
+  const rawTextFromDb = typeof item.raw_text === "string" ? item.raw_text : null;
+  const hasRawText = Boolean(rawTextFromDb && rawTextFromDb.trim());
+  const rawTextForCopy = rawTextFromDb ?? item.text;
+  const outputModeLabel =
+    outputMode === "clipboard" ? "Clipboard" : outputMode === "file" ? "File" : "Insert";
 
   const timestampSource =
     typeof item.timestamp === "string" && item.timestamp.endsWith("Z")
@@ -131,7 +134,7 @@ export default function TranscriptionItem({
               {formattedTimestamp}
             </span>
             <span className="inline-flex items-center rounded-sm px-1.5 py-px text-[10px] font-medium bg-primary/10 text-primary">
-              {outputMode === "clipboard" ? "Clipboard" : "Insert"}
+              {outputModeLabel}
             </span>
             <span
               className={cn(
@@ -173,7 +176,7 @@ export default function TranscriptionItem({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => onCopyRaw(rawText)}
+              onClick={() => onCopyRaw(rawTextForCopy)}
               className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
             >
               Raw
@@ -216,16 +219,20 @@ export default function TranscriptionItem({
 
           {isExpanded && (
             <div className="mt-2 space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
-              {hasDifferentRaw && (
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Raw Transcript
-                  </p>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Raw Transcript
+                </p>
+                {hasRawText ? (
                   <p className="mt-1 text-[12px] text-foreground/90 whitespace-pre-wrap break-words">
-                    {rawText}
+                    {rawTextFromDb}
                   </p>
-                </div>
-              )}
+                ) : (
+                  <p className="mt-1 text-[12px] text-muted-foreground whitespace-pre-wrap break-words">
+                    Raw transcript wasn't stored for this item.
+                  </p>
+                )}
+              </div>
 
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">

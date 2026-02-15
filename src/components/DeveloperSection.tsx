@@ -3,10 +3,15 @@ import { Button } from "./ui/button";
 import { FolderOpen, Copy, Check } from "lucide-react";
 import { useToast } from "./ui/Toast";
 import { Toggle } from "./ui/toggle";
+import logger from "../utils/logger";
 
 export default function DeveloperSection() {
   const [debugEnabled, setDebugEnabled] = useState(false);
   const [logPath, setLogPath] = useState<string | null>(null);
+  const [logsDir, setLogsDir] = useState<string | null>(null);
+  const [logsDirSource, setLogsDirSource] = useState<string | null>(null);
+  const [fileLoggingEnabled, setFileLoggingEnabled] = useState<boolean | null>(null);
+  const [fileLoggingError, setFileLoggingError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
@@ -21,14 +26,23 @@ export default function DeveloperSection() {
       setIsLoading(true);
       const state = await window.electronAPI.getDebugState();
       setDebugEnabled(state.enabled);
+      localStorage.setItem("openwhisprDebugEnabled", String(Boolean(state.enabled)));
       setLogPath(state.logPath);
+      setLogsDir(state.logsDir || null);
+      setLogsDirSource(state.logsDirSource || null);
+      setFileLoggingEnabled(
+        typeof state.fileLoggingEnabled === "boolean" ? state.fileLoggingEnabled : null
+      );
+      setFileLoggingError(
+        typeof state.fileLoggingError === "string" ? state.fileLoggingError : null
+      );
     } catch (error) {
       console.error("Failed to load debug state:", error);
-      toast({
-        title: "Error loading debug state",
-        description: "Could not retrieve debug logging status",
-        variant: "destructive",
-      });
+        toast({
+          title: "Error loading debug state",
+          description: `Could not retrieve debug logging status: ${error}`,
+          variant: "destructive",
+        });
     } finally {
       setIsLoading(false);
     }
@@ -47,6 +61,8 @@ export default function DeveloperSection() {
       }
 
       setDebugEnabled(newState);
+      localStorage.setItem("openwhisprDebugEnabled", String(newState));
+      logger.refreshLogLevel();
       await loadDebugState();
 
       toast({
@@ -128,8 +144,8 @@ export default function DeveloperSection() {
               </div>
               <p className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed">
                 {debugEnabled
-                  ? "Logging audio processing, API requests, and system operations"
-                  : "Enable to capture detailed diagnostic information"}
+                  ? "Capturing detailed telemetry (including transcripts) to a daily log file"
+                  : "Enable to capture detailed diagnostic information (writes to disk)"}
               </p>
             </div>
             <div className="shrink-0">
@@ -142,29 +158,65 @@ export default function DeveloperSection() {
           </div>
         </div>
 
-        {/* Log Path — only when active */}
-        {debugEnabled && logPath && (
-          <div className="px-5 py-4">
-            <p className="text-[11px] font-medium text-muted-foreground/60 uppercase tracking-wider mb-2">
-              Current log file
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-[11px] text-muted-foreground font-mono break-all leading-relaxed bg-muted/30 dark:bg-surface-raised/30 px-3 py-2 rounded-lg border border-border/30">
-                {logPath}
+        {/* Log Details */}
+        {debugEnabled && (
+          <div className="px-5 py-4 space-y-3">
+            <div>
+              <p className="text-[11px] font-medium text-muted-foreground/60 uppercase tracking-wider mb-2">
+                Logs folder
+              </p>
+              <code className="block text-[11px] text-muted-foreground font-mono break-all leading-relaxed bg-muted/30 dark:bg-surface-raised/30 px-3 py-2 rounded-lg border border-border/30">
+                {logsDir || "(not available)"}
+                {logsDirSource ? ` (${logsDirSource})` : ""}
               </code>
-              <Button
-                onClick={handleCopyPath}
-                variant="ghost"
-                size="sm"
-                className="shrink-0 h-8 w-8 p-0"
-              >
-                {copiedPath ? (
-                  <Check className="h-3.5 w-3.5 text-success" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-                )}
-              </Button>
             </div>
+
+            <div>
+              <p className="text-[11px] font-medium text-muted-foreground/60 uppercase tracking-wider mb-2">
+                Current log file
+              </p>
+              {logPath ? (
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-[11px] text-muted-foreground font-mono break-all leading-relaxed bg-muted/30 dark:bg-surface-raised/30 px-3 py-2 rounded-lg border border-border/30">
+                    {logPath}
+                  </code>
+                  <Button
+                    onClick={handleCopyPath}
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 h-8 w-8 p-0"
+                  >
+                    {copiedPath ? (
+                      <Check className="h-3.5 w-3.5 text-success" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-[12px] text-muted-foreground leading-relaxed">
+                  No daily log file has been created yet.
+                </p>
+              )}
+            </div>
+
+            {fileLoggingError && (
+              <div className="rounded-lg border border-warning/20 bg-warning/5 dark:bg-warning/10 p-3">
+                <p className="text-[12px] font-medium text-warning">Log file error</p>
+                <p className="text-[12px] text-muted-foreground mt-1 break-words">
+                  {fileLoggingError}
+                </p>
+              </div>
+            )}
+
+            {fileLoggingEnabled === false && !fileLoggingError && (
+              <div className="rounded-lg border border-warning/20 bg-warning/5 dark:bg-warning/10 p-3">
+                <p className="text-[12px] font-medium text-warning">Log file status</p>
+                <p className="text-[12px] text-muted-foreground mt-1 break-words">
+                  Debug mode is enabled, but file logging is not active yet.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -244,7 +296,8 @@ export default function DeveloperSection() {
                 ))}
               </div>
               <p className="text-[11px] text-muted-foreground/40 mt-4 pt-3 border-t border-border/20">
-                Logs do not contain API keys or sensitive data
+                Logs may contain transcribed text and other sensitive data. Share only with trusted
+                support.
               </p>
             </div>
           </div>

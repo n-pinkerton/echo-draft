@@ -1,6 +1,8 @@
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { app } = require("electron");
+const { TelemetryFileLogger } = require("./telemetryFileLogger");
 
 const LOG_LEVELS = {
   trace: 10,
@@ -36,14 +38,182 @@ class DebugLogger {
     this.logLevel = this.resolveLogLevel();
     this.levelValue = LOG_LEVELS[this.logLevel] || LOG_LEVELS.info;
     this.debugMode = this.isDebugEnabled();
-    this.logFile = null;
-    this.logStream = null;
     this.fileLoggingEnabled = false;
     this.fileLoggingPending = this.debugMode; // Track if we need to initialize file logging later
+    this.logsDir = null;
+    this.logsDirSource = null;
+    this.nextFileLoggingInitAttemptAt = 0;
+    this.lastFileLoggingInitError = null;
+
+    this.telemetryLogger = new TelemetryFileLogger({
+      filePrefix: "openwhispr-debug",
+      getHeaderRecord: () => this.buildHeaderRecord(),
+    });
 
     // IMPORTANT: Do NOT call initializeFileLogging() here!
     // It uses app.getPath() which is unsafe before app.whenReady().
     // File logging will be initialized on first log write or via ensureFileLogging().
+  }
+
+  getInstallDir() {
+    try {
+      const exePath = app.getPath("exe");
+      if (exePath && typeof exePath === "string") {
+        return path.dirname(exePath);
+      }
+    } catch {
+      // Ignore
+    }
+    return null;
+  }
+
+  getLogsDirCandidates() {
+    const installDir = this.getInstallDir();
+    const installLogsDir = installDir ? path.join(installDir, "logs") : null;
+    const userDataLogsDir = path.join(app.getPath("userData"), "logs");
+
+    const candidates = [];
+    if (installLogsDir) {
+      candidates.push({ dir: installLogsDir, source: "install" });
+    }
+    candidates.push({ dir: userDataLogsDir, source: "userData" });
+
+    return candidates;
+  }
+
+  resolveLogsDir() {
+    const installDir = this.getInstallDir();
+    const installLogsDir = installDir ? path.join(installDir, "logs") : null;
+    const userDataLogsDir = path.join(app.getPath("userData"), "logs");
+
+    // Prefer installation directory logs for packaged builds (per request),
+    // but fall back to userData if install dir isn't writable.
+    const candidates = [];
+    if (installLogsDir) {
+      candidates.push({ dir: installLogsDir, source: "install" });
+    }
+    candidates.push({ dir: userDataLogsDir, source: "userData" });
+
+    for (const candidate of candidates) {
+      try {
+        fs.mkdirSync(candidate.dir, { recursive: true });
+        fs.accessSync(candidate.dir, fs.constants.W_OK);
+        this.logsDirSource = candidate.source;
+        return candidate.dir;
+      } catch {
+        // Try next candidate
+      }
+    }
+
+    this.logsDirSource = null;
+    return null;
+  }
+
+  redactEnvSnapshot(env) {
+    const snapshot = {};
+    const redact = (value) => {
+      if (!value) return "";
+      return "[REDACTED]";
+    };
+
+    const safeString = (value) => (value == null ? "" : String(value));
+
+    // Non-secret settings that help debugging.
+    snapshot.ACTIVATION_MODE = safeString(env.ACTIVATION_MODE);
+    snapshot.DICTATION_KEY = safeString(env.DICTATION_KEY);
+    snapshot.DICTATION_KEY_CLIPBOARD = safeString(env.DICTATION_KEY_CLIPBOARD);
+    snapshot.LOCAL_TRANSCRIPTION_PROVIDER = safeString(env.LOCAL_TRANSCRIPTION_PROVIDER);
+    snapshot.PARAKEET_MODEL = safeString(env.PARAKEET_MODEL);
+    snapshot.LOCAL_WHISPER_MODEL = safeString(env.LOCAL_WHISPER_MODEL);
+    snapshot.REASONING_PROVIDER = safeString(env.REASONING_PROVIDER);
+    snapshot.LOCAL_REASONING_MODEL = safeString(env.LOCAL_REASONING_MODEL);
+
+    // Secret presence flags (never include actual values).
+    snapshot.OPENAI_API_KEY = env.OPENAI_API_KEY ? redact(env.OPENAI_API_KEY) : "";
+    snapshot.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY ? redact(env.ANTHROPIC_API_KEY) : "";
+    snapshot.GEMINI_API_KEY = env.GEMINI_API_KEY ? redact(env.GEMINI_API_KEY) : "";
+    snapshot.GROQ_API_KEY = env.GROQ_API_KEY ? redact(env.GROQ_API_KEY) : "";
+    snapshot.MISTRAL_API_KEY = env.MISTRAL_API_KEY ? redact(env.MISTRAL_API_KEY) : "";
+    snapshot.CUSTOM_TRANSCRIPTION_API_KEY = env.CUSTOM_TRANSCRIPTION_API_KEY
+      ? redact(env.CUSTOM_TRANSCRIPTION_API_KEY)
+      : "";
+    snapshot.CUSTOM_REASONING_API_KEY = env.CUSTOM_REASONING_API_KEY
+      ? redact(env.CUSTOM_REASONING_API_KEY)
+      : "";
+
+    return snapshot;
+  }
+
+  buildHeaderRecord() {
+    try {
+      const now = new Date();
+      const tzOffsetMinutes = now.getTimezoneOffset();
+      const exePath = (() => {
+        try {
+          return app.getPath("exe");
+        } catch {
+          return null;
+        }
+      })();
+
+      return {
+        type: "header",
+        ts: now.toISOString(),
+        tzOffsetMinutes,
+        logLevel: this.logLevel,
+        logsDir: this.logsDir,
+        logsDirSource: this.logsDirSource,
+        app: {
+          name: app.getName?.() || "OpenWhispr",
+          version: app.getVersion?.() || null,
+          isPackaged: Boolean(app.isPackaged),
+          appPath: (() => {
+            try {
+              return app.getAppPath();
+            } catch {
+              return null;
+            }
+          })(),
+        },
+        system: {
+          platform: process.platform,
+          arch: process.arch,
+          release: os.release(),
+          node: process.version,
+          electron: process.versions?.electron,
+          chrome: process.versions?.chrome,
+          cpuCount: os.cpus?.()?.length || null,
+          totalMemBytes: os.totalmem?.() || null,
+          freeMemBytes: os.freemem?.() || null,
+        },
+        paths: {
+          exePath,
+          installDir: this.getInstallDir(),
+          userData: (() => {
+            try {
+              return app.getPath("userData");
+            } catch {
+              return null;
+            }
+          })(),
+          resourcesPath: process.resourcesPath || null,
+        },
+        env: {
+          NODE_ENV: process.env.NODE_ENV || null,
+          OPENWHISPR_LOG_LEVEL: process.env.OPENWHISPR_LOG_LEVEL || null,
+        },
+        settings: {
+          env: this.redactEnvSnapshot(process.env || {}),
+          rendererLocalStorage: "[PENDING]",
+        },
+      };
+    } catch (error) {
+      return {
+        type: "header",
+        ts: new Date().toISOString(),
+        error: error?.message || String(error),
+      };
+    }
   }
 
   initializeFileLogging() {
@@ -56,34 +226,63 @@ class DebugLogger {
       return;
     }
 
-    try {
-      const logsDir = path.join(app.getPath("userData"), "logs");
-      if (!fs.existsSync(logsDir)) {
-        fs.mkdirSync(logsDir, { recursive: true });
-      }
-
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      this.logFile = path.join(logsDir, `debug-${timestamp}.log`);
-
-      this.logStream = fs.createWriteStream(this.logFile, { flags: "a" });
-      this.fileLoggingEnabled = true;
-      this.fileLoggingPending = false;
-
-      this.debug("Debug logging enabled", { logFile: this.logFile });
-      this.info("System Info", {
-        platform: process.platform,
-        nodeVersion: process.version,
-        electronVersion: process.versions.electron,
-        appPath: app.getAppPath(),
-        userDataPath: app.getPath("userData"),
-        resourcesPath: process.resourcesPath,
-        environment: process.env.NODE_ENV,
-      });
-    } catch (error) {
-      this.fileLoggingEnabled = false;
-      this.fileLoggingPending = false;
-      console.error("Failed to initialize debug logging:", error);
+    const nowMs = Date.now();
+    if (nowMs < this.nextFileLoggingInitAttemptAt) {
+      return;
     }
+
+    let lastError = null;
+    const candidates = this.getLogsDirCandidates();
+
+    for (const candidate of candidates) {
+      try {
+        fs.mkdirSync(candidate.dir, { recursive: true });
+        fs.accessSync(candidate.dir, fs.constants.W_OK);
+
+        this.logsDir = candidate.dir;
+        this.logsDirSource = candidate.source;
+        this.telemetryLogger.setLogsDir(candidate.dir);
+        this.telemetryLogger.setEnabled(true);
+
+        // Ensure the daily stream is opened and header written if needed.
+        if (!this.telemetryLogger.ensureStream()) {
+          throw new Error("Failed to open daily log file");
+        }
+
+        this.fileLoggingEnabled = true;
+        this.fileLoggingPending = false;
+        this.nextFileLoggingInitAttemptAt = 0;
+        this.lastFileLoggingInitError = null;
+
+        this.debug("Debug logging enabled", { logPath: this.telemetryLogger.getLogPath() });
+        this.info("System Info", {
+          platform: process.platform,
+          nodeVersion: process.version,
+          electronVersion: process.versions.electron,
+          appPath: app.getAppPath(),
+          userDataPath: app.getPath("userData"),
+          resourcesPath: process.resourcesPath,
+          environment: process.env.NODE_ENV,
+        });
+
+        return;
+      } catch (error) {
+        lastError = error;
+        try {
+          this.telemetryLogger.setEnabled(false);
+        } catch {
+          // Ignore shutdown errors
+        }
+      }
+    }
+
+    this.fileLoggingEnabled = false;
+    // Keep pending so we can retry later when debug mode is still enabled.
+    this.fileLoggingPending = this.debugMode;
+    this.lastFileLoggingInitError = lastError?.message || String(lastError || "unknown error");
+    this.nextFileLoggingInitAttemptAt = nowMs + 5000;
+
+    console.error("Failed to initialize debug logging:", lastError);
   }
 
   /**
@@ -91,9 +290,16 @@ class DebugLogger {
    * This should be called after app.whenReady() to safely initialize file logging.
    */
   ensureFileLogging() {
-    if (this.fileLoggingPending && !this.fileLoggingEnabled) {
-      this.initializeFileLogging();
+    if (!this.debugMode) {
+      return;
     }
+
+    if (this.fileLoggingEnabled) {
+      return;
+    }
+
+    this.fileLoggingPending = true;
+    this.initializeFileLogging();
   }
 
   resolveLogLevel() {
@@ -112,15 +318,24 @@ class DebugLogger {
 
   refreshLogLevel() {
     const nextLevel = this.resolveLogLevel();
-    if (nextLevel === this.logLevel) return;
+    const didChange = nextLevel !== this.logLevel;
 
     this.logLevel = nextLevel;
     this.levelValue = LOG_LEVELS[this.logLevel] || LOG_LEVELS.info;
     this.debugMode = this.isDebugEnabled();
 
-    if (this.debugMode && !this.fileLoggingEnabled) {
-      this.initializeFileLogging();
+    if (this.debugMode) {
+      this.fileLoggingPending = true;
+      this.ensureFileLogging();
+    } else {
+      // Debug disabled → stop file logging entirely (no disk writes).
+      this.fileLoggingPending = false;
+      this.fileLoggingEnabled = false;
+      this.lastFileLoggingInitError = null;
+      this.telemetryLogger.setEnabled(false);
     }
+
+    return didChange;
   }
 
   getLevel() {
@@ -191,8 +406,17 @@ class DebugLogger {
       consoleFn(`${levelTag}${scopeTag}${sourceTag} ${message}`);
     }
 
-    if (this.logStream) {
-      this.logStream.write(logLine);
+    if (this.fileLoggingEnabled) {
+      const record = {
+        ts: timestamp,
+        level: normalized,
+        scope: scope || null,
+        source: source || "main",
+        message,
+        meta: meta === undefined ? null : meta,
+        pid: process.pid,
+      };
+      this.telemetryLogger.write(record);
     }
   }
 
@@ -389,7 +613,23 @@ class DebugLogger {
   }
 
   getLogPath() {
-    return this.logFile;
+    return this.telemetryLogger.getLogPath();
+  }
+
+  getLogsDirSource() {
+    return this.logsDirSource;
+  }
+
+  isFileLoggingEnabled() {
+    return Boolean(this.fileLoggingEnabled);
+  }
+
+  getFileLoggingError() {
+    return this.lastFileLoggingInitError;
+  }
+
+  getLogsDir() {
+    return this.telemetryLogger.getLogsDir();
   }
 
   isEnabled() {
@@ -397,11 +637,8 @@ class DebugLogger {
   }
 
   close() {
-    if (this.logStream) {
-      this.log("📝 Debug logger closing");
-      this.logStream.end();
-      this.logStream = null;
-    }
+    this.telemetryLogger.setEnabled(false);
+    this.telemetryLogger.close();
   }
 }
 

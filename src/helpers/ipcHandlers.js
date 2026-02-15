@@ -12,6 +12,28 @@ const AssemblyAiStreaming = require("./assemblyAiStreaming");
 const MISTRAL_TRANSCRIPTION_URL = "https://api.mistral.ai/v1/audio/transcriptions";
 const DICTIONARY_SPLIT_REGEX = /[\n,;\t]+/g;
 
+const AUDIO_MIME_BY_EXTENSION = {
+  mp3: "audio/mpeg",
+  mpeg: "audio/mpeg",
+  wav: "audio/wav",
+  m4a: "audio/mp4",
+  mp4: "audio/mp4",
+  webm: "audio/webm",
+  ogg: "audio/ogg",
+  opus: "audio/ogg",
+  flac: "audio/flac",
+  aac: "audio/aac",
+  wma: "audio/x-ms-wma",
+  aif: "audio/aiff",
+  aiff: "audio/aiff",
+  caf: "audio/x-caf",
+};
+
+const guessAudioMimeType = (extension) => {
+  const normalized = typeof extension === "string" ? extension.trim().toLowerCase() : "";
+  return AUDIO_MIME_BY_EXTENSION[normalized] || "application/octet-stream";
+};
+
 const isTruthyFlag = (value) => {
   if (typeof value !== "string") return false;
   const normalized = value.trim().toLowerCase();
@@ -497,6 +519,77 @@ class IPCHandlers {
         throw new Error("words must be an array");
       }
       return this.databaseManager.setDictionary(words);
+    });
+
+    ipcMain.handle("select-audio-file-for-transcription", async () => {
+      try {
+        const openDialogResult = await dialog.showOpenDialog(
+          this.windowManager.controlPanelWindow || BrowserWindow.getFocusedWindow() || undefined,
+          {
+            properties: ["openFile"],
+            filters: [
+              {
+                name: "Audio files",
+                extensions: [
+                  "mp3",
+                  "wav",
+                  "m4a",
+                  "mp4",
+                  "webm",
+                  "ogg",
+                  "opus",
+                  "flac",
+                  "aac",
+                  "wma",
+                  "aif",
+                  "aiff",
+                  "caf",
+                ],
+              },
+              { name: "All files", extensions: ["*"] },
+            ],
+          }
+        );
+
+        if (openDialogResult.canceled || !openDialogResult.filePaths?.length) {
+          return { success: false, canceled: true };
+        }
+
+        const filePath = openDialogResult.filePaths[0];
+        const fileName = path.basename(filePath);
+        const extension = path.extname(fileName).slice(1).toLowerCase() || null;
+        const mimeType = guessAudioMimeType(extension || "");
+
+        const stats = fs.statSync(filePath);
+        const buffer = fs.readFileSync(filePath);
+
+        debugLogger.info(
+          "Audio file selected for transcription",
+          {
+            fileName,
+            extension,
+            mimeType,
+            sizeBytes: stats.size,
+          },
+          "transcription"
+        );
+
+        return {
+          success: true,
+          canceled: false,
+          filePath,
+          fileName,
+          extension,
+          mimeType,
+          sizeBytes: stats.size,
+          data: buffer,
+        };
+      } catch (error) {
+        debugLogger.error("Failed to select audio file for transcription", {
+          error: error?.message || String(error),
+        });
+        return { success: false, error: error?.message || String(error) };
+      }
     });
 
     ipcMain.handle("db-import-dictionary-file", async () => {
@@ -1914,67 +2007,53 @@ class IPCHandlers {
     // Debug logging handlers
     ipcMain.handle("get-debug-state", async () => {
       try {
+        const logsDir = debugLogger.getLogsDir?.() || null;
         return {
           enabled: debugLogger.isEnabled(),
           logPath: debugLogger.getLogPath(),
+          logsDir,
+          logsDirSource: debugLogger.getLogsDirSource?.() || null,
+          fileLoggingEnabled: debugLogger.isFileLoggingEnabled?.() || false,
+          fileLoggingError: debugLogger.getFileLoggingError?.() || null,
           logLevel: debugLogger.getLevel(),
         };
       } catch (error) {
         debugLogger.error("Failed to get debug state:", error);
-        return { enabled: false, logPath: null, logLevel: "info" };
+        return { enabled: false, logPath: null, logsDir: null, logLevel: "info" };
       }
     });
 
     ipcMain.handle("set-debug-logging", async (event, enabled) => {
       try {
-        const path = require("path");
-        const fs = require("fs");
-        const envPath = path.join(app.getPath("userData"), ".env");
-
-        // Read current .env content
-        let envContent = "";
-        if (fs.existsSync(envPath)) {
-          envContent = fs.readFileSync(envPath, "utf8");
+        const nextLevel = enabled ? "debug" : "info";
+        const debugSaveResult = this.environmentManager.saveDebugLogLevel(nextLevel);
+        const envWriteResult = debugSaveResult?.saveAllKeysResult || { success: true };
+        if (envWriteResult?.success === false) {
+          debugLogger.error("Failed to persist debug log level", {
+            nextLevel,
+            error: envWriteResult.error,
+          });
+          return {
+            success: false,
+            error: envWriteResult.error || "Failed to persist debug settings",
+            envWriteResult,
+          };
         }
-
-        // Parse lines
-        const lines = envContent.split("\n");
-        const logLevelIndex = lines.findIndex((line) =>
-          line.trim().startsWith("OPENWHISPR_LOG_LEVEL=")
-        );
-
-        if (enabled) {
-          // Set to debug
-          if (logLevelIndex !== -1) {
-            lines[logLevelIndex] = "OPENWHISPR_LOG_LEVEL=debug";
-          } else {
-            // Add new line
-            if (lines.length > 0 && lines[lines.length - 1] !== "") {
-              lines.push("");
-            }
-            lines.push("# Debug logging setting");
-            lines.push("OPENWHISPR_LOG_LEVEL=debug");
-          }
-        } else {
-          // Remove or set to info
-          if (logLevelIndex !== -1) {
-            lines[logLevelIndex] = "OPENWHISPR_LOG_LEVEL=info";
-          }
-        }
-
-        // Write back
-        fs.writeFileSync(envPath, lines.join("\n"), "utf8");
-
-        // Update environment variable
-        process.env.OPENWHISPR_LOG_LEVEL = enabled ? "debug" : "info";
-
-        // Refresh logger state
+        process.env.OPENWHISPR_LOG_LEVEL = nextLevel;
         debugLogger.refreshLogLevel();
+        debugLogger.ensureFileLogging?.();
 
         return {
           success: true,
+          envWriteResult,
+          envWriteQueued: Boolean(envWriteResult?.queued),
           enabled: debugLogger.isEnabled(),
           logPath: debugLogger.getLogPath(),
+          logsDir: debugLogger.getLogsDir?.() || null,
+          logsDirSource: debugLogger.getLogsDirSource?.() || null,
+          fileLoggingEnabled: debugLogger.isFileLoggingEnabled?.() || false,
+          fileLoggingError: debugLogger.getFileLoggingError?.() || null,
+          logLevel: debugLogger.getLevel(),
         };
       } catch (error) {
         debugLogger.error("Failed to set debug logging:", error);
@@ -1984,7 +2063,7 @@ class IPCHandlers {
 
     ipcMain.handle("open-logs-folder", async () => {
       try {
-        const logsDir = path.join(app.getPath("userData"), "logs");
+        const logsDir = debugLogger.getLogsDir?.() || path.join(app.getPath("userData"), "logs");
         await shell.openPath(logsDir);
         return { success: true };
       } catch (error) {
@@ -2188,7 +2267,20 @@ class IPCHandlers {
       try {
         if (!this.assemblyAiStreaming) return;
         const buffer = Buffer.from(audioBuffer);
-        this.assemblyAiStreaming.sendAudio(buffer);
+        const ok = this.assemblyAiStreaming.sendAudio(buffer);
+        if (!ok) {
+          debugLogger.trace(
+            "AssemblyAI audio chunk dropped (socket not open)",
+            {
+              bytes: buffer.length,
+              isConnected: this.assemblyAiStreaming.isConnected,
+              sessionId: this.assemblyAiStreaming.sessionId,
+              readyState: this.assemblyAiStreaming.ws?.readyState,
+              bufferedAmount: this.assemblyAiStreaming.ws?.bufferedAmount,
+            },
+            "streaming"
+          );
+        }
       } catch (error) {
         debugLogger.error("AssemblyAI streaming send error", { error: error.message });
       }
@@ -2207,7 +2299,13 @@ class IPCHandlers {
           this.assemblyAiStreaming = null;
         }
 
-        return { success: true, text: result?.text || "" };
+        return {
+          success: true,
+          text: result?.text || "",
+          audioDuration: result?.audioDuration ?? null,
+          audioStats: result?.audioStats ?? null,
+          terminationTimedOut: Boolean(result?.terminationTimedOut),
+        };
       } catch (error) {
         debugLogger.error("AssemblyAI streaming stop error", { error: error.message });
         return { success: false, error: error.message };

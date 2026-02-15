@@ -26,6 +26,8 @@
     "src/utils/**/*",
     "src/updater.js",
     "src/components.json",
+    "!src/**/__tests__/**",
+    "!src/**/*.test.*",
     "!node_modules/.cache/**/*",
     "!src/node_modules/**/*",
 
@@ -44,6 +46,10 @@
     "!**/node_modules/@eslint/**",
     "!**/node_modules/@typescript-eslint/**",
     "!**/node_modules/globals/**",
+    "!**/node_modules/vitest/**",
+    "!**/node_modules/@vitest/**",
+    "!**/node_modules/jsdom/**",
+    "!**/node_modules/happy-dom/**",
 
     "!**/node_modules/vite/**",
     "!**/node_modules/@vitejs/**",

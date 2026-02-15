@@ -745,14 +745,24 @@ async function startApp() {
         routeState.downTime = Date.now();
         routeState.isRecording = false;
         routeState.payload = windowManager.createSessionPayload(outputMode);
+        debugLogger.debug("[Push-to-Talk] Session payload created", {
+          hotkeyId,
+          outputMode,
+          sessionId: routeState.payload?.sessionId,
+          payload: routeState.payload,
+        });
         setTimeout(async () => {
           if (routeState.downTime > 0 && !routeState.isRecording) {
             routeState.isRecording = true;
+            const startPayload = { ...routeState.payload, startedAt: Date.now() };
+            routeState.payload = startPayload;
             debugLogger.debug("[Push-to-Talk] Sending start dictation command", {
               hotkeyId,
               outputMode,
+              sessionId: startPayload?.sessionId,
+              holdMs: Math.max(0, Date.now() - routeState.downTime),
             });
-            windowManager.sendStartDictation(routeState.payload);
+            windowManager.sendStartDictation(startPayload);
           }
         }, WIN_MIN_HOLD_DURATION_MS);
       } else if (activationMode === "tap") {
@@ -769,13 +779,23 @@ async function startApp() {
       if (activationMode === "push") {
         const routeState = getRouteState(hotkeyId);
         const wasRecording = routeState.isRecording;
-        const payload = routeState.payload;
+        const payload = routeState.payload
+          ? { ...routeState.payload, releasedAt: Date.now() }
+          : null;
         resetRouteState(hotkeyId);
         if (wasRecording) {
-          debugLogger.debug("[Push-to-Talk] Sending stop dictation command", { hotkeyId });
-          windowManager.sendStopDictation(payload);
+          debugLogger.debug("[Push-to-Talk] Sending stop dictation command", {
+            hotkeyId,
+            sessionId: payload?.sessionId,
+          });
+          if (payload) {
+            windowManager.sendStopDictation(payload);
+          }
         } else {
-          debugLogger.debug("[Push-to-Talk] Short tap detected, hiding panel", { hotkeyId });
+          debugLogger.debug("[Push-to-Talk] Short tap detected, hiding panel", {
+            hotkeyId,
+            sessionId: payload?.sessionId,
+          });
           windowManager.hideDictationPanel();
         }
       }

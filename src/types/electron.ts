@@ -1,5 +1,5 @@
 export type LocalTranscriptionProvider = "whisper" | "nvidia";
-export type DictationOutputMode = "insert" | "clipboard";
+export type DictationOutputMode = "insert" | "clipboard" | "file";
 
 export interface TranscriptionTimings {
   recordDurationMs?: number;
@@ -67,6 +67,18 @@ export interface DictionaryExportResult {
   format?: "txt" | "csv";
   filePath?: string;
   count?: number;
+}
+
+export interface AudioFileSelectionResult {
+  success: boolean;
+  canceled?: boolean;
+  error?: string;
+  filePath?: string;
+  fileName?: string;
+  extension?: string | null;
+  mimeType?: string;
+  sizeBytes?: number;
+  data?: Uint8Array;
 }
 
 export interface WhisperCheckResult {
@@ -284,6 +296,7 @@ declare global {
       setDictionary: (words: string[]) => Promise<{ success: boolean }>;
       importDictionaryFile?: () => Promise<DictionaryImportResult>;
       exportDictionary?: (format?: "txt" | "csv") => Promise<DictionaryExportResult>;
+      selectAudioFileForTranscription?: () => Promise<AudioFileSelectionResult>;
       e2eExportDictionary?: (
         format: "txt" | "csv",
         filePath: string
@@ -515,12 +528,21 @@ declare global {
       getDebugState: () => Promise<{
         enabled: boolean;
         logPath: string | null;
+        logsDir?: string | null;
+        logsDirSource?: string | null;
+        fileLoggingEnabled?: boolean;
+        fileLoggingError?: string | null;
         logLevel: string;
       }>;
       setDebugLogging: (enabled: boolean) => Promise<{
         success: boolean;
         enabled?: boolean;
         logPath?: string | null;
+        logsDir?: string | null;
+        logsDirSource?: string | null;
+        fileLoggingEnabled?: boolean;
+        fileLoggingError?: string | null;
+        logLevel?: string;
         error?: string;
       }>;
       openLogsFolder: () => Promise<{ success: boolean; error?: string }>;

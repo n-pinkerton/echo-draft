@@ -1,4 +1,5 @@
 import React from "react";
+import { Clipboard } from "lucide-react";
 import { cn } from "../lib/utils";
 
 const formatDuration = (ms = 0) => {
@@ -34,7 +35,27 @@ const getSecondaryText = (progress) => {
   }
 };
 
-export default function DictationStatusBar({ progress }) {
+const getCopyButtonStateClass = (stage) => {
+  if (stage === "listening") {
+    return "bg-primary/10 text-primary border-primary/30";
+  }
+
+  if (["transcribing", "cleaning", "inserting", "saving"].includes(stage)) {
+    return "bg-accent/10 text-accent border-accent/30 animate-pulse";
+  }
+
+  if (stage === "done") {
+    return "bg-success/10 text-success border-success/30";
+  }
+
+  return "bg-muted/30 text-muted-foreground border-border/50";
+};
+
+export default function DictationStatusBar({
+  progress,
+  canCopyTranscript = false,
+  onCopyTranscript,
+}) {
   const numericProgress =
     typeof progress?.stageProgress === "number"
       ? progress.stageProgress
@@ -42,8 +63,11 @@ export default function DictationStatusBar({ progress }) {
         ? progress.overallProgress
         : null;
 
-  const isIdle = progress.stage === "idle";
+  const stage = progress?.stage || "idle";
+  const isIdle = stage === "idle";
   const secondaryText = getSecondaryText(progress);
+
+  const copyTitle = canCopyTranscript ? "Copy last transcript" : "No transcript to copy yet";
 
   return (
     <div
@@ -62,9 +86,30 @@ export default function DictationStatusBar({ progress }) {
         >
           {progress.stageLabel}
         </p>
-        <span className="text-[10px] text-muted-foreground tabular-nums">
-          {formatDuration(progress.elapsedMs)}
-        </span>
+
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label={copyTitle}
+            title={copyTitle}
+            onClick={() => {
+              if (!canCopyTranscript) return;
+              onCopyTranscript?.();
+            }}
+            className={cn(
+              "h-5 w-5 rounded-md border flex items-center justify-center transition-all duration-150",
+              getCopyButtonStateClass(stage),
+              canCopyTranscript
+                ? "hover:brightness-110 cursor-pointer"
+                : "opacity-60 cursor-not-allowed"
+            )}
+          >
+            <Clipboard size={12} />
+          </button>
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {formatDuration(progress.elapsedMs)}
+          </span>
+        </div>
       </div>
 
       <p className="mt-0.5 text-[10px] text-muted-foreground/90 truncate">{secondaryText}</p>

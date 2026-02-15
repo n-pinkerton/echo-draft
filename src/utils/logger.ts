@@ -31,6 +31,11 @@ const resolveLogLevel = async (): Promise<LogLevel> => {
           const level = normalizeLevel(await window.electronAPI.getLogLevel());
           if (level) {
             cachedLevel = level;
+            try {
+              (window as any).__openwhisprLogLevel = cachedLevel;
+            } catch {
+              // Ignore
+            }
             return level;
           }
         } catch {
@@ -38,6 +43,11 @@ const resolveLogLevel = async (): Promise<LogLevel> => {
         }
       }
       cachedLevel = defaultLevel;
+      try {
+        (window as any).__openwhisprLogLevel = cachedLevel;
+      } catch {
+        // Ignore
+      }
       return cachedLevel;
     })();
   }
@@ -97,6 +107,13 @@ const logger = {
   refreshLogLevel: () => {
     cachedLevel = null;
     levelPromise = null;
+    try {
+      if (typeof window !== "undefined") {
+        delete (window as any).__openwhisprLogLevel;
+      }
+    } catch {
+      // Ignore
+    }
   },
 };
 
