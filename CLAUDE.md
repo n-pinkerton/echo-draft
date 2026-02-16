@@ -1,10 +1,10 @@
-# OpenWhispr Technical Reference for AI Assistants
+# EchoDraft Technical Reference for AI Assistants
 
-This document provides comprehensive technical details about the OpenWhispr project architecture for AI assistants working on the codebase.
+This document provides comprehensive technical details about the EchoDraft project architecture for AI assistants working on the codebase.
 
 ## Project Overview
 
-OpenWhispr is an Electron-based desktop dictation application that uses whisper.cpp for speech-to-text transcription. It supports both local (privacy-focused) and cloud (OpenAI API) processing modes.
+EchoDraft is an Electron-based desktop dictation application that uses whisper.cpp for speech-to-text transcription. It supports both local (privacy-focused) and cloud (OpenAI API) processing modes.
 
 ## Architecture Overview
 
@@ -373,7 +373,7 @@ Improve transcription accuracy for specific words, names, or technical terms:
 
 ### 14. GNOME Wayland Global Hotkeys
 
-On GNOME Wayland, Electron's `globalShortcut` API doesn't work due to Wayland's security model. OpenWhispr uses native GNOME shortcuts:
+On GNOME Wayland, Electron's `globalShortcut` API doesn't work due to Wayland's security model. EchoDraft uses native GNOME shortcuts:
 
 **Architecture**:
 1. `main.js` enables `GlobalShortcutsPortal` feature flag for Wayland

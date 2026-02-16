@@ -840,10 +840,10 @@ export default function ControlPanel() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-medium text-foreground mb-0.5">
-                    Welcome to OpenWhispr Pro
+                    Welcome to EchoDraft Pro
                   </p>
                   <p className="text-[12px] text-muted-foreground mb-2">
-                    Your 7-day free trial is active! We've switched your transcription to OpenWhispr
+                    Your 7-day free trial is active! We've switched your transcription to EchoDraft
                     Cloud for faster, more accurate results. Your previous settings are saved —
                     switch back anytime in Settings.
                   </p>

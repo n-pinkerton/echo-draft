@@ -1,8 +1,8 @@
 {
   "appId": "com.herotools.openwispr",
-  "productName": "OpenWhispr",
+  "productName": "EchoDraft",
   "protocols": {
-    "name": "OpenWhispr Protocol",
+    "name": "EchoDraft Protocol",
     "schemes": ["openwhispr"]
   },
   "directories": {
@@ -113,8 +113,8 @@
     "identity": "HeroTools Inc. (9R85XFMH59)",
     "extendInfo": {
       "LSUIElement": false,
-      "NSMicrophoneUsageDescription": "OpenWhispr needs microphone access for speech-to-text transcription.",
-      "NSAccessibilityUsageDescription": "OpenWhispr needs accessibility permissions to paste transcribed text into other applications."
+      "NSMicrophoneUsageDescription": "EchoDraft needs microphone access for speech-to-text transcription.",
+      "NSAccessibilityUsageDescription": "EchoDraft needs accessibility permissions to paste transcribed text into other applications."
     }
   },
   "win": {
@@ -170,7 +170,7 @@
     "include": "resources/nsis/cleanup-models.nsh"
   },
   "dmg": {
-    "title": "OpenWhispr",
+    "title": "EchoDraft",
     "icon": "src/assets/icon.icns",
     "window": {
       "width": 540,
@@ -180,7 +180,7 @@
   "publish": {
     "provider": "github",
     "owner": "n-pinkerton",
-    "repo": "openwhispr",
+    "repo": "echo-draft",
     "private": false,
     "releaseType": "draft"
   }

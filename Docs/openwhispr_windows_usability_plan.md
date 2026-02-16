@@ -1,6 +1,6 @@
-# OpenWhispr (openwhispr) — Windows 11 Usability & Reliability Improvement Plan
+# EchoDraft (openwhispr) — Windows 11 Usability & Reliability Improvement Plan
 
-**Repository reviewed:** the ZIP you attached (fork of `https://github.com/OpenWhispr/openwhispr`)  
+**Repository reviewed:** the ZIP you attached (fork of `https://github.com/n-pinkerton/echo-draft`)  
 **Date of this report:** 2026-02-09 (Pacific/Auckland)
 
 This document is written for engineers who will implement improvements. It includes:
@@ -39,7 +39,7 @@ This document is written for engineers who will implement improvements. It inclu
 
 1. **Introduce two output modes**:
    - **Insert mode** (current behavior): paste/type into the target app.
-   - **Clipboard mode**: *never* paste; copy result to clipboard + show it in OpenWhispr for review/copy.
+   - **Clipboard mode**: *never* paste; copy result to clipboard + show it in EchoDraft for review/copy.
    - Add a **second hotkey** to start dictation directly in Clipboard mode (you requested this).
 
 2. **Add an always-visible status/progress bar** in the dictation panel:
@@ -117,7 +117,7 @@ This is what matters for the requested features.
 ### Current upstream issues confirm pain points
 
 The upstream repo has open issues consistent with your requests:
-- **OpenWhispr window stealing focus** breaks insertion, especially when it’s already open (#236).  
+- **EchoDraft window stealing focus** breaks insertion, especially when it’s already open (#236).  
 - **Paste failures into terminal/CLI workflows** like Codex CLI (#224 shows a paste-related problem in codex-cli).  
 
 These are strong signals that:
@@ -213,7 +213,7 @@ Add two modes:
   Always also saves to history.
 
 - **Clipboard mode (new)**  
-  Dictate → (optional cleanup) → copy to clipboard + show in OpenWhispr UI.  
+  Dictate → (optional cleanup) → copy to clipboard + show in EchoDraft UI.  
   **Never** inserts into another app automatically.
 
 ### UX flow (clipboard mode)
@@ -405,7 +405,7 @@ You already have a Control Panel with a transcription list. This should be upgra
 1. **Search box** (full-text search over transcriptions)
 2. **Filters**:
    - Output mode: Insert vs Clipboard
-   - Provider: Local Whisper / Local Parakeet / OpenAI / Groq / OpenWhispr cloud / etc
+   - Provider: Local Whisper / Local Parakeet / OpenAI / Groq / EchoDraft cloud / etc
    - Status: Success / Error / Cancelled
 3. **One-click actions per dictation**:
    - Copy cleaned output
@@ -588,7 +588,7 @@ This solves “I clicked elsewhere in the same app while it processed”, **but 
 If any of these fail:
 - copy to clipboard
 - show a non-intrusive notification: “Copied — paste manually”
-- keep the text available in the OpenWhispr UI
+- keep the text available in the EchoDraft UI
 
 ### Windows implementation: recommended approach
 
@@ -616,7 +616,7 @@ Possible but increases build complexity and CI burden (node-gyp, ABI compatibili
 
 ### Limitations you must clearly communicate to users
 1. Windows may block `SetForegroundWindow` for focus-stealing prevention; you can try `AttachThreadInput`, but it’s not guaranteed.
-2. `SendInput` is subject to UIPI/integrity rules — a non-elevated process can’t inject input into elevated apps. Users would need to run OpenWhispr elevated too, which has security implications.
+2. `SendInput` is subject to UIPI/integrity rules — a non-elevated process can’t inject input into elevated apps. Users would need to run EchoDraft elevated too, which has security implications.
 3. Caret position retrieval is not universal; many apps draw custom carets.
 
 Therefore:
@@ -658,7 +658,7 @@ At minimum:
 - preserve image + HTML + RTF + plain text.
 
 ### 3) Address focus-stealing bugs (upstream issue #236)
-If OpenWhispr comes to the foreground after transcription, you can lose the active textbox focus and insertion fails.
+If EchoDraft comes to the foreground after transcription, you can lose the active textbox focus and insertion fails.
 
 **Action:**
 - Ensure completion handlers never call `.focus()` or show a window in a way that steals focus.
@@ -713,7 +713,7 @@ Windows restricts bringing other apps to the foreground.
 
 **Best practice:**
 - Detect if target is elevated (advanced; optional).
-- If elevated and OpenWhispr is not:
+- If elevated and EchoDraft is not:
   - show: “Can’t insert into elevated apps. Copied to clipboard.”
 
 ### Packaging & code signing (Windows trust)
@@ -866,11 +866,11 @@ Test all combinations of:
 - Microsoft Support — Manage microphone permissions (Windows):  
   https://support.microsoft.com/windows/manage-app-permissions-for-your-microphone-in-windows-10-11
 
-### Upstream OpenWhispr issues illustrating real-world pain points
+### Upstream EchoDraft issues illustrating real-world pain points
 - Issue: window stealing focus breaks insertion (#236):  
-  https://github.com/OpenWhispr/openwhispr/issues/236
+  https://github.com/n-pinkerton/echo-draft/issues/236
 - Issue: paste failure into codex-cli (#224):  
-  https://github.com/OpenWhispr/openwhispr/issues/224
+  https://github.com/n-pinkerton/echo-draft/issues/224
 
 ### NirCmd license note (if you keep it)
 - NirSoft NirCmd license/distribution statement:  
@@ -882,7 +882,7 @@ Test all combinations of:
 
 If you want the highest reliability on Windows **without** fighting OS focus rules, the best UX pattern is:
 
-1) Dictate into OpenWhispr (status bar + live partial text),  
+1) Dictate into EchoDraft (status bar + live partial text),  
 2) Copy to clipboard automatically,  
 3) Provide explicit “Insert now” and “Insert to original target” buttons.
 

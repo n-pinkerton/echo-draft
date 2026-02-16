@@ -385,7 +385,7 @@ function isOAuthBrowserRedirect() {
       <div id="oauth-container" role="status" aria-live="polite">
         <div class="auth-card">
           <div class="logo-wrapper">
-            <svg class="logo" viewBox="0 0 1024 1024" width="64" height="64" aria-label="OpenWhispr">
+            <svg class="logo" viewBox="0 0 1024 1024" width="64" height="64" aria-label="EchoDraft">
               <rect width="1024" height="1024" rx="241" fill="#2056DF"/>
               <circle cx="512" cy="512" r="314" fill="#2056DF" stroke="white" stroke-width="74"/>
               <path d="M512 383V641" stroke="white" stroke-width="74" stroke-linecap="round"/>
@@ -399,7 +399,7 @@ function isOAuthBrowserRedirect() {
           </div>
 
           <div class="content">
-            <h1>Redirecting to OpenWhispr</h1>
+            <h1>Redirecting to EchoDraft</h1>
             <p class="subtitle">You can close this tab</p>
           </div>
         </div>
@@ -459,7 +459,7 @@ function AppRouter() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading OpenWhispr...</p>
+          <p className="text-muted-foreground">Loading EchoDraft...</p>
         </div>
       </div>
     );

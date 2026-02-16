@@ -1,6 +1,6 @@
 # Debug Logging
 
-OpenWhispr can capture detailed telemetry (including transcript text) to a **daily JSONL log file**. Use this when diagnosing issues like delayed recording start, truncated transcripts, or cleanup/transcription mismatches.
+EchoDraft can capture detailed telemetry (including transcript text) to a **daily JSONL log file**. Use this when diagnosing issues like delayed recording start, truncated transcripts, or cleanup/transcription mismatches.
 
 ## Enable debug logging
 
@@ -14,10 +14,10 @@ This sets `OPENWHISPR_LOG_LEVEL=trace` in the app’s userData `.env` and starts
 
 ```bash
 # macOS
-/Applications/OpenWhispr.app/Contents/MacOS/OpenWhispr --log-level=trace
+/Applications/EchoDraft.app/Contents/MacOS/EchoDraft --log-level=trace
 
 # Windows
-OpenWhispr.exe --log-level=trace
+EchoDraft.exe --log-level=trace
 ```
 
 ### Option 3: userData `.env`

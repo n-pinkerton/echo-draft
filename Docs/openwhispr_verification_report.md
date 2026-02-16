@@ -1,4 +1,4 @@
-# OpenWhispr — Windows Usability Plan Verification Report (Adversarial Gate)
+# EchoDraft — Windows Usability Plan Verification Report (Adversarial Gate)
 
 - Review date: **2026-02-11** (NZDT) / **2026-02-10** (UTC)
 - Repo: `/home/npinkerton/ReposOther/openwhispr`
@@ -21,7 +21,7 @@ This report verifies `Docs/openwhispr_windows_usability_plan.md` against the cod
 - Windows build working copy:
   - `C:\Users\NigelPinkerton\AppData\Local\Temp\openwhispr-winbuild-20260211T014857Z`
 - Packaged app executed:
-  - `dist\win-unpacked\OpenWhispr.exe`
+  - `dist\win-unpacked\EchoDraft.exe`
 - Packaged gate runId (PASS):
   - `2026-02-11T01-54-57-866Z`
 
@@ -30,11 +30,11 @@ This report verifies `Docs/openwhispr_windows_usability_plan.md` against the cod
 Installer/portable artifacts were verified present under:
 
 - `C:\Users\NigelPinkerton\AppData\Local\Temp\openwhispr-winbuild-20260211T014857Z\dist\`
-  - `OpenWhispr Setup 1.4.4.exe` (NSIS)
-  - `OpenWhispr 1.4.4.exe` (portable)
+  - `EchoDraft Setup 1.4.4.exe` (NSIS)
+  - `EchoDraft 1.4.4.exe` (portable)
   - `latest.yml` (+ blockmap)
   - Convenience copy:
-    - `C:\Users\NigelPinkerton\Downloads\OpenWhispr Setup 1.4.4 (prompt-echo fix).exe`
+    - `C:\Users\NigelPinkerton\Downloads\EchoDraft Setup 1.4.4 (prompt-echo fix).exe`
 
 ## Traceability matrix (A–G)
 
@@ -87,7 +87,7 @@ Legend: **PASS** = code evidence + packaged runtime evidence. **FAIL** = missing
 
 4) **Fork safety: update feed and external links pointed to upstream**  
    - Severity: Medium (fork correctness; could confuse users / pull updates from wrong repo)  
-   - Fix (commit): `164f9f7` — repoint updater feed + Help/Issues links to `n-pinkerton/openwhispr` and allow env override.
+   - Fix (commit): `164f9f7` — repoint updater feed + Help/Issues links to `n-pinkerton/echo-draft` and allow env override.
 
 5) **User-safety during verification (clipboard disruption)**  
    - Severity: Low (developer UX)  
@@ -118,7 +118,7 @@ From `C:\Users\NigelPinkerton\AppData\Local\Temp\openwhispr-winbuild-20260211T01
 - `npm ci` → OK
 - `npm run quality-check` → PASS (warnings only)
 - `npm run build:win` → OK
-- `node scripts\gate\windows_release_gate.js dist\win-unpacked\OpenWhispr.exe`
+- `node scripts\gate\windows_release_gate.js dist\win-unpacked\EchoDraft.exe`
   - Result: **ALL CHECKS PASSED**
   - runId: `2026-02-11T01-54-57-866Z`
 
@@ -129,16 +129,16 @@ From `C:\Users\NigelPinkerton\AppData\Local\Temp\openwhispr-winbuild-20260211T01
 Verified in `electron-builder.json`:
 
 - `appId`: `com.herotools.openwispr`
-- `productName`: `OpenWhispr`
+- `productName`: `EchoDraft`
 
-These values should remain stable to preserve the existing `%APPDATA%\OpenWhispr\` userData folder on upgrade.
+These values should remain stable to preserve the existing `%APPDATA%\EchoDraft\` userData folder on upgrade.
 Note: current Windows builds use `%APPDATA%\open-whispr\` (based on the Electron app name); back up whichever exists on your machine.
 
 ### User install instructions (upgrade-in-place; no data loss)
 
 1) **Back up user data (copy only; do not delete)**
    - `%APPDATA%\open-whispr\` (includes DB + Local Storage; current builds)
-   - `%APPDATA%\OpenWhispr\` (only if it exists from older builds)
+   - `%APPDATA%\EchoDraft\` (only if it exists from older builds)
    - `%USERPROFILE%\.cache\openwhispr\models\` (local models)
 
 2) Build installer on Windows (if needed)
@@ -147,12 +147,12 @@ Note: current Windows builds use `%APPDATA%\open-whispr\` (based on the Electron
    - `npm run build:win`
 
 3) **Upgrade-in-place**
-   - Do **not** uninstall the existing OpenWhispr first.
+   - Do **not** uninstall the existing EchoDraft first.
    - Run the new installer and install over the existing installation:
-     - `C:\Users\NigelPinkerton\Downloads\OpenWhispr Setup 1.4.4 (prompt-echo fix).exe`
+     - `C:\Users\NigelPinkerton\Downloads\EchoDraft Setup 1.4.4 (prompt-echo fix).exe`
 
 4) Post-install verification
-   - Launch OpenWhispr.
+   - Launch EchoDraft.
    - Confirm:
      - provider/model settings remain
      - dictionary remains

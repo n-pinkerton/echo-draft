@@ -499,7 +499,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
             <div className="text-center">
               <h2 className="text-lg font-semibold text-foreground tracking-tight">Permissions</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {isMacOS ? "Required for OpenWhispr to work" : "Microphone access required"}
+                {isMacOS ? "Required for EchoDraft to work" : "Microphone access required"}
               </p>
             </div>
 

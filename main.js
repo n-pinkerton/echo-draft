@@ -59,7 +59,7 @@ function configureChannelUserDataPath() {
     ? `-e2e${e2eRunId ? `-${e2eRunId}` : ""}`
     : "";
 
-  const isolatedPath = path.join(app.getPath("appData"), `OpenWhispr-${APP_CHANNEL}${e2eSuffix}`);
+  const isolatedPath = path.join(app.getPath("appData"), `EchoDraft-${APP_CHANNEL}${e2eSuffix}`);
   app.setPath("userData", isolatedPath);
 }
 
@@ -110,7 +110,7 @@ function shouldRegisterProtocolWithAppArg() {
 // Register custom protocol for OAuth callbacks.
 // In development, always include the app path argument so macOS/Windows/Linux
 // can launch the project app instead of opening bare Electron.
-function registerOpenWhisprProtocol() {
+function registerEchoDraftProtocol() {
   const protocol = OAUTH_PROTOCOL;
 
   if (shouldRegisterProtocolWithAppArg()) {
@@ -121,7 +121,7 @@ function registerOpenWhisprProtocol() {
   return app.setAsDefaultProtocolClient(protocol);
 }
 
-const protocolRegistered = registerOpenWhisprProtocol();
+const protocolRegistered = registerEchoDraftProtocol();
 if (!protocolRegistered) {
   console.warn(`[Auth] Failed to register ${OAUTH_PROTOCOL}:// protocol handler`);
 }
@@ -135,8 +135,8 @@ if (!gotSingleInstanceLock) {
 const isLiveWindow = (window) => window && !window.isDestroyed();
 
 // Ensure macOS menus use the proper casing for the app name
-if (process.platform === "darwin" && app.getName() !== "OpenWhispr") {
-  app.setName("OpenWhispr");
+if (process.platform === "darwin" && app.getName() !== "EchoDraft") {
+  app.setName("EchoDraft");
 }
 
 // Add global error handling for uncaught exceptions
@@ -264,13 +264,13 @@ function initializeManagers() {
           "Run `npm run compile:globe` and rebuild the app to regenerate the listener binary."
         );
       } else {
-        detailLines.push("Try reinstalling OpenWhispr or contact support if the issue persists.");
+        detailLines.push("Try reinstalling EchoDraft or contact support if the issue persists.");
       }
 
       dialog.showMessageBox({
         type: "warning",
         title: "Globe Hotkey Unavailable",
-        message: "OpenWhispr could not activate the Globe key hotkey.",
+        message: "EchoDraft could not activate the Globe key hotkey.",
         detail: detailLines.join("\n\n"),
       });
     });
@@ -411,7 +411,7 @@ function startAuthBridgeServer() {
     navigateControlPanelWithVerifier(verifier);
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end("<html><body><h3>OpenWhispr sign-in complete.</h3><p>You can close this tab.</p></body></html>");
+    res.end("<html><body><h3>EchoDraft sign-in complete.</h3><p>You can close this tab.</p></body></html>");
   });
 
   authBridgeServer.on("error", (error) => {
@@ -917,7 +917,7 @@ if (gotSingleInstanceLock) {
     startApp().catch((error) => {
       console.error("Failed to start app:", error);
       dialog.showErrorBox(
-        "OpenWhispr Startup Error",
+        "EchoDraft Startup Error",
         `Failed to start the application:\n\n${error.message}\n\nPlease report this issue.`
       );
       app.exit(1);

@@ -1,4 +1,4 @@
-# OpenWhispr Fix Plan (Scratchpad)
+# EchoDraft Fix Plan (Scratchpad)
 
 Date: 2026-02-16
 Status: In Progress
@@ -6,7 +6,7 @@ Status: In Progress
 ## Issue 1 — Intermittent partial transcript truncation
 
 ### A) Investigate + baseline
-- [x] Read latest log files in `C:\Users\NigelPinkerton\AppData\Local\Programs\OpenWhispr\logs`.
+- [x] Read latest log files in `C:\Users\NigelPinkerton\AppData\Local\Programs\EchoDraft\logs`.
 - [x] Confirm `72c21aa6` / `cae59e8a` / `0e5a79dd` session sequence in `openwhispr-debug-2026-02-16.jsonl`.
 - [x] Confirm stop event with different session id appears while a recording is active.
 - [x] Confirm non-streaming stop path writes `Recording stopped` and enqueues one processing job in `audioManager.start/stop` flow.
@@ -57,9 +57,9 @@ Status: In Progress
 - [x] Export repo to Windows path and run `npm ci` on Windows.
 - [x] Run `npm run build:win`.
 - [x] Capture output `.exe` filenames from `dist`:
-  - `OpenWhispr Setup 1.4.5.exe`
-  - `OpenWhispr 1.4.5.exe`
-- [x] Install/reinstall from `OpenWhispr Setup 1.4.5.exe` via `/S` and confirmed exit code 0.
+  - `EchoDraft Setup 1.4.5.exe`
+  - `EchoDraft 1.4.5.exe`
+- [x] Install/reinstall from `EchoDraft Setup 1.4.5.exe` via `/S` and confirmed exit code 0.
 - [ ] Run one full and one short dictation test in installed app.
   - Completed 1 full test in this run: transcript complete, no truncation observed.
 - [ ] Confirm debug setting and transcript completeness post-upgrade.
@@ -70,4 +70,4 @@ Status: In Progress
 
 ### C) Final pass completion
 - [x] Copy latest Windows installer to `C:\Users\NigelPinkerton\Downloads`.
-  - Confirmed `OpenWhispr Setup 1.4.5.exe` exists at: `/mnt/c/Users/NigelPinkerton/Downloads/OpenWhispr Setup 1.4.5.exe` (131139262 bytes, timestamp 2026-02-16 11:04).
+  - Confirmed `EchoDraft Setup 1.4.5.exe` exists at: `/mnt/c/Users/NigelPinkerton/Downloads/EchoDraft Setup 1.4.5.exe` (131139262 bytes, timestamp 2026-02-16 11:04).

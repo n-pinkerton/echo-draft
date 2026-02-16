@@ -4,12 +4,12 @@
 
 ### No Window Appears
 
-**Symptoms:** OpenWhispr runs in Task Manager but no window shows
+**Symptoms:** EchoDraft runs in Task Manager but no window shows
 
 **Solutions:**
-1. Check system tray (click ^ caret) for OpenWhispr icon
-2. Run with debug: `OpenWhispr.exe --log-level=debug`
-3. Try disabling GPU: `OpenWhispr.exe --disable-gpu`
+1. Check system tray (click ^ caret) for EchoDraft icon
+2. Run with debug: `EchoDraft.exe --log-level=debug`
+3. Try disabling GPU: `EchoDraft.exe --disable-gpu`
 
 ### No Transcriptions
 
@@ -36,7 +36,7 @@
 **Symptoms:** Transcription fails silently
 
 **Solutions:**
-1. Reinstall OpenWhispr (FFmpeg is bundled)
+1. Reinstall EchoDraft (FFmpeg is bundled)
 2. Check antivirus isn't quarantining FFmpeg
 3. Install system FFmpeg and add to PATH if needed
 
@@ -44,13 +44,13 @@
 
 ```batch
 # Run with debug logging
-OpenWhispr.exe --log-level=debug
+EchoDraft.exe --log-level=debug
 
-# Or set in .env file at %APPDATA%\OpenWhispr\.env
+# Or set in .env file at %APPDATA%\EchoDraft\.env
 OPENWHISPR_LOG_LEVEL=debug
 ```
 
-Logs saved to: `%APPDATA%\OpenWhispr\logs\`
+Logs saved to: `%APPDATA%\EchoDraft\logs\`
 
 ## Common Errors
 
@@ -64,11 +64,11 @@ Logs saved to: `%APPDATA%\OpenWhispr\logs\`
 ## Windows-Specific Tips
 
 ### Windows Defender
-Add OpenWhispr to exclusions if blocked:
+Add EchoDraft to exclusions if blocked:
 Settings → Virus & threat protection → Exclusions
 
 ### Firewall (Cloud Mode)
-Allow OpenWhispr through firewall for cloud transcription
+Allow EchoDraft through firewall for cloud transcription
 
 ### Permission Errors
 Right-click → Run as administrator (or set in Properties → Compatibility)
@@ -76,17 +76,17 @@ Right-click → Run as administrator (or set in Properties → Compatibility)
 ## Complete Reset
 
 ```batch
-# Uninstall OpenWhispr first, then:
-rd /s /q "%APPDATA%\OpenWhispr"
-rd /s /q "%LOCALAPPDATA%\OpenWhispr"
+# Uninstall EchoDraft first, then:
+rd /s /q "%APPDATA%\EchoDraft"
+rd /s /q "%LOCALAPPDATA%\EchoDraft"
 ```
 
 Then reinstall.
 
 ## Getting Help
 
-Report issues at https://github.com/OpenWhispr/openwhispr/issues with:
+Report issues at https://github.com/n-pinkerton/echo-draft/issues with:
 - Windows version (`winver`)
-- OpenWhispr version
+- EchoDraft version
 - Debug log contents
 - Steps to reproduce

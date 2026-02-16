@@ -89,7 +89,7 @@ class GnomeShortcutManager {
   }
 
   _createInterfaceClass(dbusModule, callback) {
-    class OpenWhisprInterface extends dbusModule.interface.Interface {
+    class EchoDraftInterface extends dbusModule.interface.Interface {
       constructor() {
         super(DBUS_INTERFACE);
         this._callback = callback;
@@ -102,13 +102,13 @@ class GnomeShortcutManager {
       }
     }
 
-    OpenWhisprInterface.configureMembers({
+    EchoDraftInterface.configureMembers({
       methods: {
         Toggle: { inSignature: "", outSignature: "" },
       },
     });
 
-    return OpenWhisprInterface;
+    return EchoDraftInterface;
   }
 
   static isValidShortcut(shortcut) {
@@ -137,7 +137,7 @@ class GnomeShortcutManager {
 
       execFileSync(
         "gsettings",
-        ["set", `${KEYBINDING_SCHEMA}:${KEYBINDING_PATH}`, "name", "OpenWhispr Toggle"],
+        ["set", `${KEYBINDING_SCHEMA}:${KEYBINDING_PATH}`, "name", "EchoDraft Toggle"],
         { stdio: "pipe" }
       );
       execFileSync(

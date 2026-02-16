@@ -450,7 +450,7 @@ class ReasoningService extends BaseReasoningService {
           result = await this.processWithGroq(text, model, agentName, config);
           break;
         case "openwhispr":
-          result = await this.processWithOpenWhispr(text, model, agentName, config);
+          result = await this.processWithEchoDraft(text, model, agentName, config);
           break;
         default:
           throw new Error(`Unsupported reasoning provider: ${provider}`);
@@ -1032,7 +1032,7 @@ class ReasoningService extends BaseReasoningService {
     }
   }
 
-  private async processWithOpenWhispr(
+  private async processWithEchoDraft(
     text: string,
     model: string,
     agentName: string | null = null,
@@ -1060,7 +1060,7 @@ class ReasoningService extends BaseReasoningService {
         });
 
         if (!res.success) {
-          const err: any = new Error(res.error || "OpenWhispr cloud reasoning failed");
+          const err: any = new Error(res.error || "EchoDraft cloud reasoning failed");
           err.code = res.code;
           throw err;
         }

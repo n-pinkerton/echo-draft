@@ -1,12 +1,14 @@
-# OpenWhispr
+# EchoDraft
 
-[![Downloads](https://img.shields.io/github/downloads/OpenWhispr/openwhispr/total?style=flat&color=blue)](https://github.com/OpenWhispr/openwhispr/releases)
+[![Downloads](https://img.shields.io/github/downloads/n-pinkerton/echo-draft/total?style=flat&color=blue)](https://github.com/n-pinkerton/echo-draft/releases)
 
 An open source desktop dictation application that converts speech to text using OpenAI Whisper. Features both local and cloud processing options for maximum flexibility and privacy.
 
+EchoDraft is a fork of the original [OpenWhisper](https://github.com/OpenWhispr/openwhispr) project.
+
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=OpenWhispr/openwhispr&type=date&legend=top-left)](https://www.star-history.com/#OpenWhispr/openwhispr&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=n-pinkerton/echo-draft&type=date&legend=top-left)](https://www.star-history.com/#n-pinkerton/echo-draft&type=date&legend=top-left)
 
 ## License
 
@@ -14,7 +16,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Features
 
-- ☁️ **OpenWhispr Cloud**: Sign in and transcribe instantly — no API keys needed, with free and Pro plans
+- ☁️ **EchoDraft Cloud**: Sign in and transcribe instantly — no API keys needed, with free and Pro plans
 - 🔐 **Account System**: Google OAuth and email/password sign-in with email verification
 - 💳 **Subscription Management**: Free tier (2,000 words/week), Pro tier (unlimited), 7-day free trial
 - 🎤 **Global Hotkey**: Customizable hotkey to start/stop dictation from anywhere (default: backtick `)
@@ -57,8 +59,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/OpenWhispr/openwhispr.git
-   cd openwhispr
+   git clone https://github.com/n-pinkerton/echo-draft.git
+   cd echo-draft
    ```
 
 2. **Install dependencies**:
@@ -113,8 +115,8 @@ If you want to build a standalone app for personal use:
 # Build without code signing (no certificates required)
 npm run pack
 
-# The unsigned app will be in: dist/mac-arm64/OpenWhispr.app (macOS)
-# or dist/win-unpacked/OpenWhispr.exe (Windows)
+# The unsigned app will be in: dist/mac-arm64/EchoDraft.app (macOS)
+# or dist/win-unpacked/EchoDraft.exe (Windows)
 # or dist/linux-unpacked/open-whispr (Linux)
 ```
 
@@ -122,7 +124,7 @@ npm run pack
 
 #### Linux (Multiple Package Formats)
 
-OpenWhispr now supports multiple Linux package formats for maximum compatibility:
+EchoDraft now supports multiple Linux package formats for maximum compatibility:
 
 **Available Formats**:
 
@@ -139,10 +141,10 @@ OpenWhispr now supports multiple Linux package formats for maximum compatibility
 npm run build:linux
 
 # Find packages in dist/:
-# - OpenWhispr-x.x.x-linux-x64.AppImage
-# - OpenWhispr-x.x.x-linux-x64.deb
-# - OpenWhispr-x.x.x-linux-x64.rpm
-# - OpenWhispr-x.x.x-linux-x64.tar.gz
+# - EchoDraft-x.x.x-linux-x64.AppImage
+# - EchoDraft-x.x.x-linux-x64.deb
+# - EchoDraft-x.x.x-linux-x64.rpm
+# - EchoDraft-x.x.x-linux-x64.tar.gz
 ```
 
 **Optional: Building Flatpak** (requires additional setup):
@@ -165,22 +167,22 @@ npm run build:linux
 
 ```bash
 # Debian/Ubuntu
-sudo apt install ./dist/OpenWhispr-*-linux-x64.deb
+sudo apt install ./dist/EchoDraft-*-linux-x64.deb
 
 # Fedora/RHEL
-sudo dnf install ./dist/OpenWhispr-*-linux-x64.rpm
+sudo dnf install ./dist/EchoDraft-*-linux-x64.rpm
 
 # Universal tar.gz (no root required)
-tar -xzf dist/OpenWhispr-*-linux-x64.tar.gz
-cd OpenWhispr-*/
+tar -xzf dist/EchoDraft-*-linux-x64.tar.gz
+cd EchoDraft-*/
 ./openwhispr
 
 # Flatpak
-flatpak install --user ./dist/OpenWhispr-*-linux-x64.flatpak
+flatpak install --user ./dist/EchoDraft-*-linux-x64.flatpak
 
 # AppImage (existing method)
-chmod +x dist/OpenWhispr-*.AppImage
-./dist/OpenWhispr-*.AppImage
+chmod +x dist/EchoDraft-*.AppImage
+./dist/EchoDraft-*.AppImage
 ```
 
 **Optional Dependencies for Automatic Paste**:
@@ -251,13 +253,13 @@ sudo dnf install kdotool  # Fedora/RHEL
 sudo pacman -S kdotool    # Arch
 ```
 
-> ℹ️ **Note**: OpenWhispr automatically tries paste tools in this order: `wtype` → `ydotool` → `xdotool` (for XWayland apps). If no paste tool is installed, text will still be copied to the clipboard - you'll just need to paste manually with Ctrl+V.
+> ℹ️ **Note**: EchoDraft automatically tries paste tools in this order: `wtype` → `ydotool` → `xdotool` (for XWayland apps). If no paste tool is installed, text will still be copied to the clipboard - you'll just need to paste manually with Ctrl+V.
 
 > ⚠️ **ydotool Requirements**: The `ydotoold` daemon must be running for ydotool to work. Start it manually with `sudo ydotoold &` or enable the systemd service as shown above.
 
 **GNOME Wayland Global Hotkeys**:
 
-On GNOME Wayland, Electron's standard global shortcuts don't work due to Wayland's security model. OpenWhispr automatically uses native GNOME keyboard shortcuts via D-Bus and gsettings:
+On GNOME Wayland, Electron's standard global shortcuts don't work due to Wayland's security model. EchoDraft automatically uses native GNOME keyboard shortcuts via D-Bus and gsettings:
 
 - Hotkeys are registered as GNOME custom shortcuts (visible in Settings → Keyboard → Shortcuts)
 - Default hotkey is `Alt+R` (backtick not supported on GNOME Wayland)
@@ -283,7 +285,7 @@ npm run build:linux  # Linux
 ### First Time Setup
 
 1. **Choose Processing Method**:
-   - **OpenWhispr Cloud**: Sign in for instant cloud transcription with free and Pro plans
+   - **EchoDraft Cloud**: Sign in for instant cloud transcription with free and Pro plans
    - **Bring Your Own Key**: Use your own OpenAI/Groq/AssemblyAI API keys
    - **Local Processing**: Download Whisper or Parakeet models for completely private transcription
 
@@ -363,12 +365,12 @@ Improve transcription accuracy for specific words, names, or technical terms:
 
 - Uncommon names (e.g., "Sergey", "Xanthe")
 - Technical jargon (e.g., "Kubernetes", "OAuth")
-- Brand names (e.g., "OpenWhispr", "whisper.cpp")
+- Brand names (e.g., "EchoDraft", "whisper.cpp")
 - Domain-specific terms (e.g., "amortization", "polymerase")
 
 ### Processing Options
 
-- **OpenWhispr Cloud**:
+- **EchoDraft Cloud**:
   - Sign in with Google or email — no API keys needed
   - Free plan: 2,000 words/week with 7-day Pro trial for new accounts
   - Pro plan: unlimited transcriptions
@@ -528,8 +530,8 @@ npm run build:linux    # AppImage + DEB
 
 On Windows, `npm run build:win` produces two `.exe` files in `dist/`:
 
-- `OpenWhispr Setup <version>.exe` - **NSIS installer** (use this to install, reinstall, or upgrade over the top of an existing installation)
-- `OpenWhispr <version>.exe` - **portable** build (no installer; runs in-place)
+- `EchoDraft Setup <version>.exe` - **NSIS installer** (use this to install, reinstall, or upgrade over the top of an existing installation)
+- `EchoDraft <version>.exe` - **portable** build (no installer; runs in-place)
 
 > Tip: If you're trying to “reinstall/upgrade”, run the **Setup** installer (NSIS). The portable `.exe` won't update an existing installed app.
 
@@ -556,7 +558,7 @@ npm run build:win
 Optionally copy the installer somewhere convenient (e.g. Downloads) for an in-place upgrade:
 
 ```powershell
-Copy-Item ".\\dist\\OpenWhispr Setup *.exe" "$env:USERPROFILE\\Downloads\\"
+Copy-Item ".\\dist\\EchoDraft Setup *.exe" "$env:USERPROFILE\\Downloads\\"
 ```
 
 Note: build/pack/dist scripts automatically download whisper.cpp, llama-server, and sherpa-onnx for the current platform. For multi-platform packaging from one host, run the `:all` variants first (`npm run download:whisper-cpp:all`, `npm run download:llama-server:all`, `npm run download:sherpa-onnx:all`).
@@ -595,7 +597,7 @@ DEBUG=false
 
 ### Local Whisper Setup
 
-For local processing, OpenWhispr uses OpenAI's Whisper model via whisper.cpp - a high-performance C++ implementation:
+For local processing, EchoDraft uses OpenAI's Whisper model via whisper.cpp - a high-performance C++ implementation:
 
 1. **Bundled Binary**: whisper.cpp is bundled with the app for all platforms
 2. **GGML Models**: Downloads optimized GGML models on first use to `~/.cache/openwhispr/whisper-models/`
@@ -616,7 +618,7 @@ For local processing, OpenWhispr uses OpenAI's Whisper model via whisper.cpp - a
 
 ### Local Parakeet Setup (Alternative)
 
-OpenWhispr also supports NVIDIA Parakeet models via sherpa-onnx - a fast alternative to Whisper:
+EchoDraft also supports NVIDIA Parakeet models via sherpa-onnx - a fast alternative to Whisper:
 
 1. **Bundled Binary**: sherpa-onnx is bundled with the app for all platforms
 2. **INT8 Quantized Models**: Efficient CPU inference
@@ -660,7 +662,7 @@ We welcome contributions! Please follow these steps:
 
 ## Security
 
-OpenWhispr is designed with privacy and security in mind:
+EchoDraft is designed with privacy and security in mind:
 
 - **Local Processing Option**: Keep your voice data completely private
 - **No Analytics**: We don't collect any usage data or telemetry
@@ -676,7 +678,7 @@ OpenWhispr is designed with privacy and security in mind:
 1. **Microphone permissions**: Grant permissions in System Preferences/Settings
 2. **Accessibility permissions (macOS)**: Required for automatic text pasting
    - Go to System Settings → Privacy & Security → Accessibility
-   - Add OpenWhispr and enable the checkbox
+   - Add EchoDraft and enable the checkbox
    - Use "Fix Permission Issues" in Control Panel if needed
 3. **API key errors** (cloud processing only): Ensure your OpenAI API key is valid and has credits
    - Set key through Control Panel or .env file
@@ -700,7 +702,7 @@ If you need to diagnose lag, missing audio, or truncated transcripts, enable **D
 
 - Control Panel → **Developer** → **Debug mode**
 - Logs are written as **JSONL** (one JSON object per line) to a **daily** file:
-  - Preferred: `logs/openwhispr-debug-YYYY-MM-DD.jsonl` next to the installed `OpenWhispr.exe`
+  - Preferred: `logs/openwhispr-debug-YYYY-MM-DD.jsonl` next to the installed `EchoDraft.exe`
   - Fallback: the app’s `userData/logs` directory (if the install directory isn’t writable)
 - Use **Open Logs Folder** in the Developer section to jump to the current log location.
 
@@ -715,7 +717,7 @@ For full details (enable/disable options, log format, and what gets captured), s
 - To separate “transcription vs cleanup” issues:
   - Compare `rawText` vs `cleanedText` in `trace` logs (e.g. `Transcription result text`, `Streaming transcript text`, `Dictation transcript text`).
   - In History, `raw_text` is stored separately and shown under “Details” when different.
-  - When OpenWhispr Cloud cleanup runs, `meta.source` is tagged as `openwhispr-reasoned` (or `openwhispr-byok-reasoned`).
+  - When EchoDraft Cloud cleanup runs, `meta.source` is tagged as `openwhispr-reasoned` (or `openwhispr-byok-reasoned`).
 
 If you have `jq` installed, a few quick recipes:
 
@@ -737,7 +739,7 @@ Warning: Debug logs may contain transcribed text and other sensitive data. Share
 
 ### Getting Help
 
-- Check the [Issues](https://github.com/OpenWhispr/openwhispr/issues) page
+- Check the [Issues](https://github.com/n-pinkerton/echo-draft/issues) page
 - Review the console logs for debugging information
 - For local processing: Ensure whisper.cpp is accessible and models are downloaded
 - For cloud processing: Verify your OpenAI API key and billing status
@@ -752,8 +754,8 @@ Warning: Debug logs may contain transcribed text and other sensitive data. Share
 
 ## FAQ
 
-**Q: Is OpenWhispr really free?**
-A: Yes! OpenWhispr is open source and free to use. The free plan includes 2,000 words/week of cloud transcription, and local processing is completely free with no limits. Pro plan ($9/month) offers unlimited cloud transcription.
+**Q: Is EchoDraft really free?**
+A: Yes! EchoDraft is open source and free to use. The free plan includes 2,000 words/week of cloud transcription, and local processing is completely free with no limits. Pro plan ($9/month) offers unlimited cloud transcription.
 
 **Q: Which processing method should I use?**
 A: Use local processing for privacy and offline use. Use cloud processing for speed and convenience.
@@ -768,15 +770,15 @@ A: Open the Control Panel (right-click tray icon) and go to Settings. You can se
 A: With local processing, your audio never leaves your device. With cloud processing, audio is sent to OpenAI's servers (see their privacy policy).
 
 **Q: What languages are supported?**
-A: OpenWhispr supports 58 languages including English, Spanish, French, German, Chinese, Japanese, and more. Set your preferred language in the .env file or use auto-detect.
+A: EchoDraft supports 58 languages including English, Spanish, French, German, Chinese, Japanese, and more. Set your preferred language in the .env file or use auto-detect.
 
 ## Project Status
 
-OpenWhispr is actively maintained and ready for production use. Current version: 1.4.5
+EchoDraft is actively maintained and ready for production use. Current version: 1.4.5
 
 - ✅ Core functionality complete
 - ✅ Cross-platform support (macOS, Windows, Linux)
-- ✅ OpenWhispr Cloud with account system and usage tracking
+- ✅ EchoDraft Cloud with account system and usage tracking
 - ✅ Free and Pro plans with Stripe billing
 - ✅ Local and cloud processing
 - ✅ Multi-provider AI (OpenAI, Anthropic, Gemini, Groq, Mistral, Local)

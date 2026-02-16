@@ -29,14 +29,14 @@
 
 **macOS:**
 1. Open System Settings → Privacy & Security → Microphone
-2. Ensure OpenWhispr is listed and enabled
+2. Ensure EchoDraft is listed and enabled
 3. If not listed, click "Grant Access" in the app to trigger the permission prompt
 4. You can also click "Open Microphone Privacy" button in the app
 
 **Windows:**
 1. Open Settings → Privacy → Microphone
 2. Ensure "Allow apps to access your microphone" is ON
-3. Ensure OpenWhispr is listed and enabled
+3. Ensure EchoDraft is listed and enabled
 4. You can also click "Open Privacy Settings" button in the app
 
 **Linux:**
@@ -95,9 +95,9 @@
    - Fedora/RHEL: `sudo dnf install wl-clipboard`
    - Arch: `sudo pacman -S wl-clipboard`
 2. Ensure a paste tool is installed (`wtype`, `ydotool`, or `xdotool`)
-3. Restart OpenWhispr after installing
+3. Restart EchoDraft after installing
 
-OpenWhispr tries clipboard methods in order: `wl-copy` (most reliable) → renderer `navigator.clipboard` → X11 fallback.
+EchoDraft tries clipboard methods in order: `wl-copy` (most reliable) → renderer `navigator.clipboard` → X11 fallback.
 
 ### Windows-Specific Issues
 
@@ -113,8 +113,8 @@ For detailed diagnostics, see [DEBUG.md](DEBUG.md).
 
 1. Enable debug mode and reproduce the issue
 2. Collect diagnostic output from commands above
-3. Open an issue at https://github.com/OpenWhispr/openwhispr/issues with:
+3. Open an issue at https://github.com/n-pinkerton/echo-draft/issues with:
    - OS version
-   - OpenWhispr version
+   - EchoDraft version
    - Relevant log sections
    - Steps to reproduce

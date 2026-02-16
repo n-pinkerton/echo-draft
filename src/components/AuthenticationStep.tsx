@@ -297,11 +297,11 @@ export default function AuthenticationStep({
         <div className="text-center mb-4">
           <img
             src={logoIcon}
-            alt="OpenWhispr"
+            alt="EchoDraft"
             className="w-12 h-12 mx-auto mb-2.5 rounded-lg shadow-sm"
           />
           <p className="text-lg font-semibold text-foreground tracking-tight leading-tight">
-            Welcome to OpenWhispr
+            Welcome to EchoDraft
           </p>
           <p className="text-muted-foreground text-sm mt-1 leading-tight">
             Dictate anywhere using your voice
@@ -310,7 +310,7 @@ export default function AuthenticationStep({
 
         <div className="bg-warning/5 p-2.5 rounded border border-warning/20">
           <p className="text-[10px] text-warning text-center leading-snug">
-            Cloud features not configured. You can still use OpenWhispr locally.
+            Cloud features not configured. You can still use EchoDraft locally.
           </p>
         </div>
 
@@ -329,7 +329,7 @@ export default function AuthenticationStep({
         <div className="text-center mb-4">
           <img
             src={logoIcon}
-            alt="OpenWhispr"
+            alt="EchoDraft"
             className="w-12 h-12 mx-auto mb-2.5 rounded-lg shadow-sm"
           />
           <div className="w-5 h-5 mx-auto bg-success/10 rounded-full flex items-center justify-center mb-2">
@@ -478,11 +478,11 @@ export default function AuthenticationStep({
       <div className="text-center mb-4">
         <img
           src={logoIcon}
-          alt="OpenWhispr"
+          alt="EchoDraft"
           className="w-12 h-12 mx-auto mb-2.5 rounded-lg shadow-sm"
         />
         <p className="text-lg font-semibold text-foreground tracking-tight leading-tight">
-          Welcome to OpenWhispr
+          Welcome to EchoDraft
         </p>
         <p className="text-muted-foreground text-sm mt-1 leading-tight">
           Dictate anywhere using your voice

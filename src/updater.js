@@ -25,7 +25,7 @@ function isNoPublishedVersionsError(err) {
 function getGithubUpdateConfig() {
   // Fork-safe defaults: this should NOT point at upstream unless explicitly overridden.
   const owner = process.env.OPENWHISPR_UPDATE_OWNER?.trim() || "n-pinkerton";
-  const repo = process.env.OPENWHISPR_UPDATE_REPO?.trim() || "openwhispr";
+  const repo = process.env.OPENWHISPR_UPDATE_REPO?.trim() || "echo-draft";
 
   return { provider: "github", owner, repo, private: false };
 }

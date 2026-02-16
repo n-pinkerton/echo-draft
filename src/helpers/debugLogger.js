@@ -164,7 +164,7 @@ class DebugLogger {
         logsDir: this.logsDir,
         logsDirSource: this.logsDirSource,
         app: {
-          name: app.getName?.() || "OpenWhispr",
+          name: app.getName?.() || "EchoDraft",
           version: app.getVersion?.() || null,
           isPackaged: Boolean(app.isPackaged),
           appPath: (() => {

@@ -1,4 +1,4 @@
-# OpenWhispr Complete Cleanup Instructions
+# EchoDraft Complete Cleanup Instructions
 
 ## The Problem
 
@@ -26,7 +26,7 @@ bash scripts/complete-uninstall.sh
 ```
 
 This script will:
-- Stop all OpenWhispr processes
+- Stop all EchoDraft processes
 - Remove the production app
 - Delete all application data
 - Clear caches and logs
@@ -58,11 +58,11 @@ npm run dev
 
 ## Manual Cleanup (if script doesn't work)
 
-### 1. Stop all OpenWhispr processes
+### 1. Stop all EchoDraft processes
 
 ```bash
 # Kill production app
-pkill -f "OpenWhispr"
+pkill -f "EchoDraft"
 
 # Kill dev processes
 pkill -f "open-whispr"
@@ -72,14 +72,14 @@ pkill -f "electron"
 ### 2. Remove the Application
 
 ```bash
-rm -rf /Applications/OpenWhispr.app
+rm -rf /Applications/EchoDraft.app
 ```
 
 ### 3. Remove Application Data
 
 **Application Support** (contains databases, settings, logs):
 ```bash
-rm -rf "$HOME/Library/Application Support/OpenWhispr"
+rm -rf "$HOME/Library/Application Support/EchoDraft"
 rm -rf "$HOME/Library/Application Support/open-whispr"
 ```
 
@@ -91,13 +91,13 @@ rm -rf "$HOME/Library/Preferences/com.electron.openwhispr.plist"
 
 **Caches**:
 ```bash
-rm -rf "$HOME/Library/Caches/OpenWhispr"
+rm -rf "$HOME/Library/Caches/EchoDraft"
 rm -rf "$HOME/Library/Caches/open-whispr"
 ```
 
 **Logs**:
 ```bash
-rm -rf "$HOME/Library/Logs/OpenWhispr"
+rm -rf "$HOME/Library/Logs/EchoDraft"
 rm -rf "$HOME/Library/Logs/open-whispr"
 ```
 
@@ -246,7 +246,7 @@ bash scripts/complete-uninstall.sh
 **Solution:**
 ```bash
 # Remove database files specifically
-rm -rf "$HOME/Library/Application Support/OpenWhispr"
+rm -rf "$HOME/Library/Application Support/EchoDraft"
 rm -rf "$HOME/Library/Application Support/open-whispr"
 
 # Rebuild dependencies
@@ -266,19 +266,19 @@ npm run postinstall
 
 ## Data Locations Reference
 
-All OpenWhispr data is stored in these locations:
+All EchoDraft data is stored in these locations:
 
 | Type | Location |
 |------|----------|
-| **Databases** | `~/Library/Application Support/OpenWhispr/transcriptions.db` |
-| **Dev Database** | `~/Library/Application Support/OpenWhispr/transcriptions-dev.db` |
+| **Databases** | `~/Library/Application Support/EchoDraft/transcriptions.db` |
+| **Dev Database** | `~/Library/Application Support/EchoDraft/transcriptions-dev.db` |
 | **Settings** | Browser localStorage (in Electron's userData) |
 | **API Keys** | `.env` file in project root (dev) |
-| **Logs** | `~/Library/Application Support/OpenWhispr/logs/` |
-| **Debug Logs** | `~/Library/Logs/OpenWhispr/` |
+| **Logs** | `~/Library/Application Support/EchoDraft/logs/` |
+| **Debug Logs** | `~/Library/Logs/EchoDraft/` |
 | **Whisper Models** | `~/.cache/whisper/` |
 | **Preferences** | `~/Library/Preferences/com.openwhispr.app.plist` |
-| **Caches** | `~/Library/Caches/OpenWhispr/` |
+| **Caches** | `~/Library/Caches/EchoDraft/` |
 | **Temp Audio** | `/tmp/whisper_audio_*.wav` |
 
 ---
@@ -301,6 +301,6 @@ If cleanup doesn't solve your issue:
 2. Check Node version: `node -v`
 3. Check Electron version: `npm list electron`
 4. Run with debug mode: `npm run dev -- --debug`
-5. Check logs in: `~/Library/Application Support/OpenWhispr/logs/`
+5. Check logs in: `~/Library/Application Support/EchoDraft/logs/`
 
 Report issues with this information at: [GitHub Issues](https://github.com/your-repo/open-whispr/issues)

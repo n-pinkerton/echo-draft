@@ -106,7 +106,7 @@ export const CACHE_CONFIG = {
   PASTE_DELAY_MS: 50, // Delay before paste simulation to allow clipboard to settle
 } as const;
 
-// OpenWhispr Cloud API
+// EchoDraft Cloud API
 export const OPENWHISPR_API_URL = (env.VITE_OPENWHISPR_API_URL as string) || "";
 
 // Retry Configuration

@@ -145,7 +145,7 @@ export default function PasteToolsInfo({
               </>
             ) : (
               <p className="text-sm text-warning dark:text-warning mt-1">
-                Automatic pasting isn't available on this Wayland session. OpenWhispr will copy text
+                Automatic pasting isn't available on this Wayland session. EchoDraft will copy text
                 to your clipboard so you can paste manually with{" "}
                 <kbd className="bg-warning/20 px-1 rounded text-xs">Ctrl+V</kbd>.
               </p>
@@ -153,7 +153,7 @@ export default function PasteToolsInfo({
 
             {showInstall && (
               <p className="text-sm text-warning dark:text-warning mt-3">
-                Without this tool, OpenWhispr will copy text to your clipboard. You can then paste
+                Without this tool, EchoDraft will copy text to your clipboard. You can then paste
                 manually with <kbd className="bg-warning/20 px-1 rounded text-xs">Ctrl+V</kbd>.
               </p>
             )}

@@ -832,8 +832,8 @@ class WindowManager {
     ].filter(Boolean);
     dialog.showMessageBox({
       type: "error",
-      title: "OpenWhispr failed to load",
-      message: "OpenWhispr could not load its UI.",
+      title: "EchoDraft failed to load",
+      message: "EchoDraft could not load its UI.",
       detail: detailLines.join("\n"),
     });
   }

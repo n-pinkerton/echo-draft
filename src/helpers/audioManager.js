@@ -880,8 +880,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const cloudTranscriptionMode = localStorage.getItem("cloudTranscriptionMode") || "openwhispr";
       const isSignedIn = localStorage.getItem("isSignedIn") === "true";
 
-      const isOpenWhisprCloudMode = !useLocalWhisper && cloudTranscriptionMode === "openwhispr";
-      const useCloud = isOpenWhisprCloudMode && isSignedIn;
+      const isEchoDraftCloudMode = !useLocalWhisper && cloudTranscriptionMode === "openwhispr";
+      const useCloud = isEchoDraftCloudMode && isSignedIn;
       logger.debug(
         "Transcription routing",
         { useLocalWhisper, useCloud, isSignedIn, cloudTranscriptionMode },
@@ -918,7 +918,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           model: "openwhispr-cloud",
         });
         activeModel = "openwhispr-cloud";
-        result = await this.processWithOpenWhisprCloud(audioBlob, metadata);
+        result = await this.processWithEchoDraftCloud(audioBlob, metadata);
       } else {
         activeModel = this.getTranscriptionModel();
         this.emitProgress({
@@ -1758,7 +1758,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return result;
   }
 
-  async processWithOpenWhisprCloud(audioBlob, metadata = {}) {
+  async processWithEchoDraftCloud(audioBlob, metadata = {}) {
     if (!navigator.onLine) {
       const err = new Error("You're offline. Cloud transcription requires an internet connection.");
       err.code = "OFFLINE";
@@ -2879,7 +2879,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       } else if (errorCode === "AUTH_EXPIRED" || errorCode === "AUTH_REQUIRED") {
         errorTitle = "Sign-in Required";
         errorDescription =
-          "Your OpenWhispr Cloud session is unavailable. Please sign in again from Settings.";
+          "Your EchoDraft Cloud session is unavailable. Please sign in again from Settings.";
       }
 
       this.emitError(

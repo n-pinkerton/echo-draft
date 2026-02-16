@@ -244,7 +244,7 @@ class TrayManager {
       },
       { type: "separator" },
       {
-        label: "Quit OpenWhispr",
+        label: "Quit EchoDraft",
         click: () => {
           console.log("Quitting app via tray menu");
           app.quit();
@@ -257,7 +257,7 @@ class TrayManager {
     if (!this.tray) return;
 
     const contextMenu = Menu.buildFromTemplate(this.buildContextMenuTemplate());
-    this.tray.setToolTip("OpenWhispr - Voice Dictation");
+    this.tray.setToolTip("EchoDraft - Voice Dictation");
     this.tray.setContextMenu(contextMenu);
   }
 

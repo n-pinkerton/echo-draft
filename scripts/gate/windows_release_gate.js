@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * OpenWhispr Windows packaged-runtime release gate.
+ * EchoDraft Windows packaged-runtime release gate.
  *
  * Runs a small suite of Windows-first checks against a PACKAGED build
  * using Chrome DevTools Protocol (CDP) + PowerShell helpers.
  *
  * Usage (Windows):
- *   node scripts\\gate\\windows_release_gate.js [path\\to\\OpenWhispr.exe]
+ *   node scripts\\gate\\windows_release_gate.js [path\\to\\EchoDraft.exe]
  *
  * Required env:
  *   OPENWHISPR_E2E=1 (enables guarded E2E helpers in preload + IPC)
@@ -306,7 +306,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "OpenWhispr Gate Target"
+$form.Text = "EchoDraft Gate Target"
 $form.Width = 720
 $form.Height = 420
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
@@ -921,7 +921,7 @@ async function main() {
   const exePathArg = process.argv.slice(2).find((arg) => arg && !arg.startsWith("--"));
   const exePath = exePathArg
     ? path.resolve(exePathArg)
-    : path.join(process.cwd(), "dist", "win-unpacked", "OpenWhispr.exe");
+    : path.join(process.cwd(), "dist", "win-unpacked", "EchoDraft.exe");
 
   assert(fs.existsSync(exePath), `Packaged app not found: ${exePath}`);
 
@@ -1242,7 +1242,7 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
       "Codex",
       "Postgres",
       "TypeScript",
-      "OpenWhispr",
+      "EchoDraft",
       "PowerShell",
     ];
     const dictPrompt = dictTerms.join(", ");
@@ -1584,7 +1584,7 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     await panel.click('button[data-section-id="dictionary"]');
     await panel.waitForSelector('textarea[placeholder^="Paste one word"]', 15000);
 
-    const batchText = "OpenWhispr\nKubernetes\nopenwhispr\n;Dr. Martinez,  \n\n";
+    const batchText = "EchoDraft\nKubernetes\nopenwhispr\n;Dr. Martinez,  \n\n";
     await panel.setInputValue('textarea[placeholder^="Paste one word"]', batchText);
     await sleep(250);
     const previewText = await panel.eval(`
@@ -1620,7 +1620,7 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     record(
       "Dictionary merge writes to DB",
       dictWordsNormalized.length === 3 &&
-        dictWordsNormalized.includes("OpenWhispr") &&
+        dictWordsNormalized.includes("EchoDraft") &&
         dictWordsNormalized.includes("Kubernetes") &&
         dictWordsNormalized.includes("Dr. Martinez"),
       JSON.stringify(dictWordsAfterMerge)

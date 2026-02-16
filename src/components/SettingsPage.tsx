@@ -210,7 +210,7 @@ function TranscriptionSection({
     <div className="space-y-4">
       <SectionHeader
         title="Speech to Text"
-        description="Choose how OpenWhispr transcribes your voice"
+        description="Choose how EchoDraft transcribes your voice"
       />
 
       {/* Mode selector */}
@@ -224,8 +224,8 @@ function TranscriptionSection({
                   setUseLocalWhisper(false);
                   updateTranscriptionSettings({ useLocalWhisper: false });
                   toast({
-                    title: "Switched to OpenWhispr Cloud",
-                    description: "Transcription will use OpenWhispr's cloud service.",
+                    title: "Switched to EchoDraft Cloud",
+                    description: "Transcription will use EchoDraft's cloud service.",
                     variant: "success",
                     duration: 3000,
                   });
@@ -248,7 +248,7 @@ function TranscriptionSection({
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-[12px] font-medium text-foreground">OpenWhispr Cloud</span>
+                  <span className="text-[12px] font-medium text-foreground">EchoDraft Cloud</span>
                   {isCloudMode && (
                     <span className="text-[10px] font-medium text-primary bg-primary/10 dark:bg-primary/15 px-1.5 py-px rounded-sm">
                       Active
@@ -465,8 +465,8 @@ function AiModelsSection({
                     if (!isCloudMode) {
                       setCloudReasoningMode("openwhispr");
                       toast({
-                        title: "Switched to OpenWhispr Cloud",
-                        description: "AI text enhancement will use OpenWhispr's cloud service.",
+                        title: "Switched to EchoDraft Cloud",
+                        description: "AI text enhancement will use EchoDraft's cloud service.",
                         variant: "success",
                         duration: 3000,
                       });
@@ -490,7 +490,7 @@ function AiModelsSection({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-[12px] font-medium text-foreground">
-                        OpenWhispr Cloud
+                        EchoDraft Cloud
                       </span>
                       {isCloudMode && (
                         <span className="text-[10px] font-medium text-primary bg-primary/10 dark:bg-primary/15 px-1.5 py-px rounded-sm">
@@ -1047,7 +1047,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
         showAlertDialog({
           title: "Still Running",
           description:
-            "OpenWhispr didn't restart automatically. Please quit the app manually to finish installing the update.",
+            "EchoDraft didn't restart automatically. Please quit the app manually to finish installing the update.",
         });
       }, 10000);
     } else if (installTimeoutRef.current) {
@@ -1064,7 +1064,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
   }, [installInitiated, showAlertDialog]);
 
   const resetAccessibilityPermissions = () => {
-    const message = `To fix accessibility permissions:\n\n1. Open System Settings > Privacy & Security > Accessibility\n2. Remove any old OpenWhispr or Electron entries\n3. Click (+) and add the current OpenWhispr app\n4. Make sure the checkbox is enabled\n5. Restart OpenWhispr\n\nClick OK to open System Settings.`;
+    const message = `To fix accessibility permissions:\n\n1. Open System Settings > Privacy & Security > Accessibility\n2. Remove any old EchoDraft or Electron entries\n3. Click (+) and add the current EchoDraft app\n4. Make sure the checkbox is enabled\n5. Restart EchoDraft\n\nClick OK to open System Settings.`;
 
     showConfirmDialog({
       title: "Reset Accessibility Permissions",
@@ -1270,7 +1270,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                       <Button
                         onClick={async () => {
                           const result = await window.electronAPI?.openExternal(
-                            "https://github.com/n-pinkerton/openwhispr/releases"
+                            "https://github.com/n-pinkerton/echo-draft/releases"
                           );
                           if (!result?.success) {
                             toast({
@@ -1523,7 +1523,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
 
             {/* Appearance */}
             <div>
-              <SectionHeader title="Appearance" description="Control how OpenWhispr looks" />
+              <SectionHeader title="Appearance" description="Control how EchoDraft looks" />
               <SettingsPanel>
                 <SettingsPanelRow>
                   <SettingsRow label="Theme" description="Choose light, dark, or match your system">
@@ -1641,7 +1641,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   <SettingsPanelRow>
                     <SettingsRow
                       label="Launch at login"
-                      description="Start OpenWhispr automatically when you log in"
+                      description="Start EchoDraft automatically when you log in"
                     >
                       <Toggle
                         checked={autoStartEnabled}
@@ -1722,7 +1722,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   <p className="text-[12px] font-medium text-foreground">Add a word or phrase</p>
                   <div className="flex gap-2">
                     <Input
-                      placeholder="e.g. OpenWhispr, Kubernetes, Dr. Martinez..."
+                      placeholder="e.g. EchoDraft, Kubernetes, Dr. Martinez..."
                       value={newDictionaryWord}
                       onChange={(e) => setNewDictionaryWord(e.target.value)}
                       onKeyDown={(e) => {
@@ -2112,7 +2112,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
               <SettingsPanelRow>
                 <SettingsRow
                   label="Usage analytics"
-                  description="Help us improve OpenWhispr by sharing anonymous performance metrics. We never send transcription content — only timing and error data."
+                  description="Help us improve EchoDraft by sharing anonymous performance metrics. We never send transcription content — only timing and error data."
                 >
                   <Toggle checked={telemetryEnabled} onChange={setTelemetryEnabled} />
                 </SettingsRow>
@@ -2126,7 +2126,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
           <div className="space-y-5">
             <SectionHeader
               title="Permissions"
-              description="Test and manage system permissions required for OpenWhispr to function correctly"
+              description="Test and manage system permissions required for EchoDraft to function correctly"
             />
 
             {/* Permission Cards - matching onboarding style */}
@@ -2182,7 +2182,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   <SettingsPanelRow>
                     <SettingsRow
                       label="Reset accessibility permissions"
-                      description="Fix issues after reinstalling or rebuilding the app by removing and re-adding OpenWhispr in System Settings"
+                      description="Fix issues after reinstalling or rebuilding the app by removing and re-adding EchoDraft in System Settings"
                     >
                       <Button
                         onClick={resetAccessibilityPermissions}
@@ -2249,7 +2249,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                           showConfirmDialog({
                             title: "Reset All App Data",
                             description:
-                              "This will permanently delete ALL OpenWhispr data including:\n\n- Database and transcriptions\n- Local storage settings\n- Downloaded models\n- Environment files\n\nYou will need to manually remove app permissions in System Settings.\n\nThis action cannot be undone.",
+                              "This will permanently delete ALL EchoDraft data including:\n\n- Database and transcriptions\n- Local storage settings\n- Downloaded models\n- Environment files\n\nYou will need to manually remove app permissions in System Settings.\n\nThis action cannot be undone.",
                             onConfirm: () => {
                               window.electronAPI
                                 ?.cleanupApp()
