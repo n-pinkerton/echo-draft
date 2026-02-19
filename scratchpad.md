@@ -108,6 +108,45 @@ Status: In Progress
   - Persisted `stopReason` / `stopSource` (including auto `track-ended`) + chunk/blob diagnostics (`audioSizeBytes`, `audioFormat`, `chunksCount`, `stop*` latency/flush fields).
   - Added contract tests covering the new fields.
 
+---
+
+## App-wide Best-Practice Refactor (Post-audio)
+
+### Why
+Now that the audio subsystem is split and well-instrumented, the next maintainability hotspots are the remaining large “god files” that mix responsibilities and are difficult to unit test.
+
+### Current largest files (line count snapshot)
+- `src/helpers/ipcHandlers.js` (~2369)
+- `src/components/SettingsPage.tsx` (~2320)
+- `scripts/gate/windows_release_gate.js` (~1679)
+- `src/helpers/clipboard.js` (~1591)
+- `src/services/ReasoningService.ts` (~1243)
+- `src/hooks/useAudioRecording.js` (~1168)
+- `src/components/ControlPanel.tsx` (~1044)
+- `main.js` (~1011)
+
+### Target principles (same as audio refactor)
+- Split by responsibility (SRP), isolate pure logic, push side effects to boundaries.
+- Keep files reviewable (prefer < ~400 LoC; exceptions only with strong justification).
+- Add tests for extracted contracts and pure logic (use `// @vitest-environment node` for main-process units where needed).
+- Keep user-facing behavior stable; avoid “drive-by” changes.
+
+### Proposed execution order
+1) Main-process IPC layer: split `src/helpers/ipcHandlers.js` into `src/helpers/ipc/` modules (window/env/db/clipboard/streaming/model/downloads/etc).
+2) Clipboard/paste subsystem: split `src/helpers/clipboard.js` into platform-specific submodules + pure utils; add contract tests.
+3) Reasoning: split `src/services/ReasoningService.ts` (request building, response parsing, token limits, error classification) + expand tests.
+4) Renderer: split `src/hooks/useAudioRecording.js` into smaller hooks/services and reduce coupling to UI; add more contract tests for session normalization + lifecycle.
+5) UI: split `ControlPanel.tsx`/`SettingsPage.tsx` into focused components (minimize prop drilling; favor composition patterns where appropriate).
+6) Final: rebuild Windows installer, copy to Downloads, run full test/lint/typecheck, commit + push.
+
+### Progress log
+- [x] Refactored main-process IPC layer:
+  - Replaced `src/helpers/ipcHandlers.js` with a thin orchestrator that composes focused handler modules.
+  - Split handlers into `src/helpers/ipc/handlers/*` + extracted pure utilities into `src/helpers/ipc/utils/*`.
+  - Added `src/helpers/ipc/cloud/cloudContext.js` so Cloud API + streaming modules share `getApiUrl()` / `getSessionCookies()` behavior.
+  - Added unit tests for extracted pure utils (`dictionaryUtils`, `pathUtils`).
+  - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
+
 ## Archived: EchoDraft Fix Plan (2026-02-16)
 
 Date: 2026-02-16
