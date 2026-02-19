@@ -166,6 +166,13 @@ Now that the audio subsystem is split and well-instrumented, the next maintainab
   - Added unit tests for trigger payload normalization, stage updates, start/stop handler ordering, and transcription-complete persistence.
   - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
 
+- [x] Refactored ControlPanel UI:
+  - Reduced `src/components/ControlPanel.tsx` to a controller (~390 LoC) that delegates JSX to `src/components/controlPanel/*`.
+  - Split `ControlPanelView` into smaller presentational pieces (`HistoryPanel`, `ControlPanelBanners`, `TranscriptionsHeader`) to keep files reviewable (<400 LoC).
+  - Extracted history filtering utilities into `src/components/controlPanel/historyFilterUtils.ts` + unit tests.
+  - Added `@testing-library/react` + `@testing-library/jest-dom` and Vitest setup (`src/test/setup.ts`) and covered the new UI components with component-level tests.
+  - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
+
 ## Archived: EchoDraft Fix Plan (2026-02-16)
 
 Date: 2026-02-16
