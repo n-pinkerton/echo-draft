@@ -1,4 +1,114 @@
-# EchoDraft Fix Plan (Scratchpad)
+# EchoDraft Scratchpad
+
+Date: 2026-02-19
+Status: In Progress
+
+## AudioManager Refactor (SOLID + Maintainability)
+
+### Context / Why this work matters
+- `src/helpers/audioManager.js` is ~3.3k lines and currently mixes responsibilities:
+  - microphone constraints + warmup + permission heuristics
+  - non-streaming recording (MediaRecorder)
+  - streaming recording (AudioWorklet + AssemblyAI websocket via IPC)
+  - transcription provider routing (local Whisper/Parakeet, EchoDraft Cloud, BYOK OpenAI/Groq/Mistral/custom)
+  - OpenAI SSE parsing for streaming STT
+  - audio optimization + WAV conversion helpers
+  - reasoning/cleanup orchestration
+  - persistence helpers (safe paste, save history)
+  - debug-only instrumentation (trace logs, debug audio capture)
+- This makes changes risky, increases bug surface area (hidden coupling), and makes contract-style testing difficult.
+
+### Goals (acceptance criteria)
+- Split responsibilities into focused modules (single responsibility, clear boundaries, dependency injection where helpful).
+- Reduce file sizes to “reviewable” chunks:
+  - `src/helpers/audioManager.js` becomes a small orchestrator (target: < ~400 LoC).
+  - New modules should also stay in the same ballpark (prefer < ~400 LoC each).
+- Keep public contract stable for `useAudioRecording` and `ControlPanel`:
+  - `AudioManager` API and callbacks must continue to behave equivalently.
+- Add tests that enforce the contracts for every new/changed module (as practical):
+  - Pure logic fully unit tested.
+  - Side-effectful boundaries tested via mocks (MediaRecorder, fetch, IPC bridges).
+- Add JSDoc on module boundaries and cross references to make intent obvious.
+
+### Non-goals (explicitly out of scope unless needed)
+- Full repo-wide 100% coverage (this is a large Electron app; we focus on the audio subsystem contract + pure logic).
+- Rewriting the UI stage machine in `useAudioRecording` (we’ll keep its contract stable).
+
+### Proposed module split (target structure)
+- `src/helpers/audio/`
+  - `contracts.ts` (JSDoc/TS types for shared shapes: processing context, progress events, result payloads)
+  - `microphone/` (constraints + warmup + caching)
+  - `recording/` (non-streaming MediaRecorder controller)
+  - `streaming/` (AssemblyAI streaming controller + worklet)
+  - `transcription/` (routing + provider implementations)
+  - `reasoning/` (cleanup orchestration)
+  - `debug/` (debug audio capture client + helpers)
+
+### Execution plan
+1) Inventory and lock down the existing `AudioManager` contract with tests (public methods + key behaviors).
+2) Extract pure helpers first (word counting, dictionary prompt echo detection, SSE parsing) + add unit tests.
+3) Extract transcription providers (local whisper/parakeet, EchoDraft Cloud, BYOK OpenAI) into dependency-injected modules + add tests with mocked fetch/IPC.
+4) Extract recording controllers:
+   - Non-streaming MediaRecorder controller
+   - AssemblyAI streaming controller
+   Add contract tests with fakes/mocks (no real mic/audio needed).
+5) Replace `audioManager.js` with a thin orchestrator that composes these modules.
+6) Run full test suite + fix regressions; ensure module sizes stay within targets.
+7) Rebuild Windows installer (`npm run build:win` from Windows) + copy to Downloads.
+8) Commit + push (keep scratchpad updated throughout).
+
+---
+
+### Progress log
+- [x] Investigated “I have also provided…” truncation report:
+  - Source of truth is the SQLite DB at `C:\Users\NigelPinkerton\AppData\Roaming\open-whispr\transcriptions.db`.
+    - Query used (WSL): `python3 -c "…sqlite3…SELECT … FROM transcriptions WHERE id=931"`.
+  - Record `transcriptions.id=931`:
+    - `timestamp=2026-02-18 23:29:23` (UTC)
+    - `meta.sessionId=35641b96-d600-448b-bf94-28eea7ae3477`
+    - `meta.timings.recordDurationMs=34401` (**~34.4 seconds**, not minutes)
+    - `text === raw_text === "I have also provided our existing code deployment playbook."`
+    - Word count: raw `9`, cleaned `9`
+  - Logs:
+    - Installed debug log: `C:\Users\NigelPinkerton\AppData\Local\Programs\OpenWhispr\EchoDraft\logs\openwhispr-debug-2026-02-19.jsonl`
+    - That file starts at `2026-02-19T01:02:03Z` (after the `id=931` timestamp), and a search for that sessionId returns no matches.
+    - Conclusion: we can’t prove why that recording stopped at ~34s (no logs, no saved audio capture for that session).
+  - UI:
+    - The UI shows the same sentence for “raw transcript” and the clean text, and `Copy` copies `item.text` (not a preview), so this is not a UI truncation issue.
+  - Follow-up action (to confirm next time): persist stop metadata into `meta_json` (stopReason/stopSource/audio bytes/mime/chunks) + keep debug-audio rolling captures enabled.
+- [x] Added non-streaming recording contract tests (`src/helpers/__tests__/audioManagerRecording.test.ts`).
+- [x] Extracted pure helpers into `src/helpers/audio/` (word counting, dictionary prompt echo guard, OpenAI SSE parsing) + added unit tests; wired `audioManager.js` to use them.
+- [x] Extracted BYOK reasoning cleanup into `src/helpers/audio/reasoning/reasoningCleanupService.js` + unit tests; kept `AudioManager.isReasoningAvailable()` as a thin wrapper for compatibility/tests.
+- [x] Extracted custom dictionary helpers into `src/helpers/audio/transcription/customDictionary.js` + unit tests; removed `AudioManager.getCustomDictionary*` methods.
+- [x] Extracted BYOK HTTP transcription provider into `src/helpers/audio/transcription/openAiTranscriber.js` + unit tests; `AudioManager.processWithOpenAIAPI()` is now a wrapper.
+- [x] Extracted microphone selection + warmup into `src/helpers/audio/microphone/microphoneService.js` + unit tests; `AudioManager.getAudioConstraints()` etc now delegate.
+- [x] Extracted queue orchestration + pipeline routing:
+  - `src/helpers/audio/pipeline/processingQueue.js` + unit tests
+  - `src/helpers/audio/pipeline/transcriptionPipeline.js` + unit tests
+- [x] Extracted streaming worklet plumbing (blob URL + flush waiter + per-chunk forwarding):
+  - `src/helpers/audio/streaming/streamingWorkletManager.js` + unit tests
+- [x] Extracted AudioManager event emission + debug audio capture + persistence:
+  - `src/helpers/audio/events/audioManagerEvents.js` + unit tests
+  - `src/helpers/audio/debug/debugAudioCaptureClient.js` + unit tests
+  - `src/helpers/audio/persistence/audioPersistence.js` + unit tests
+- [x] Split streaming controller into small files (all <400 LoC):
+  - `src/helpers/audio/streaming/assemblyAiStreamingWarmup.js`
+  - `src/helpers/audio/streaming/assemblyAiStreamingStart.js`
+  - `src/helpers/audio/streaming/assemblyAiStreamingStop.js`
+  - `src/helpers/audio/streaming/assemblyAiStreamingCleanup.js`
+  - `src/helpers/audio/streaming/streamingAudioContext.js`
+  - `src/helpers/audio/streaming/assemblyAiStreamingController.js` now just re-exports
+- [x] Split OpenAI/Groq/Mistral BYOK transcription processing:
+  - `src/helpers/audio/transcription/openAiTranscriber.js` (now ~395 LoC)
+  - `src/helpers/audio/transcription/openAiTranscriptionProcessor.js` (~312 LoC)
+- [x] Reduced `src/helpers/audioManager.js` from ~3.3k → **399 LoC** (orchestrator only).
+- [x] Added additional non-streaming diagnostics to help root-cause “short recording” and hotkey delays next time:
+  - Persisted `hotkeyToStartCallMs` / `hotkeyToRecorderStartMs` (requires renderer to pass `triggeredAt` into recording context).
+  - Persisted `start*Ms` breakdown (constraints/getUserMedia/MediaRecorder init/start) into `result.timings` → DB `meta_json.timings`.
+  - Persisted `stopReason` / `stopSource` (including auto `track-ended`) + chunk/blob diagnostics (`audioSizeBytes`, `audioFormat`, `chunksCount`, `stop*` latency/flush fields).
+  - Added contract tests covering the new fields.
+
+## Archived: EchoDraft Fix Plan (2026-02-16)
 
 Date: 2026-02-16
 Status: In Progress

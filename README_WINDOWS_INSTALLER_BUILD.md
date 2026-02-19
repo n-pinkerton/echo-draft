@@ -115,3 +115,35 @@ npm run build:win
    - `logs/openwhispr-debug-YYYY-MM-DD.jsonl`
    - `logs/audio/` (last 10 recorded audio clips, rolling retention)
 
+## Debugging “truncated” transcriptions (runbook)
+
+If a transcription looks “cut off”, there are two different failure modes:
+
+1) The **audio recording stopped early** (e.g. hotkey pressed again, push-to-talk released, mic device ended).
+2) The audio is long, but the **transcription result is incomplete** (API/provider issue).
+
+### Source of truth: DB + debug logs
+
+- **DB** (history): `C:\\Users\\<you>\\AppData\\Roaming\\open-whispr\\transcriptions.db`
+- **Debug logs**: `C:\\Users\\<you>\\AppData\\Local\\Programs\\OpenWhispr\\EchoDraft\\logs\\openwhispr-debug-YYYY-MM-DD.jsonl`
+- **Saved audio** (debug enabled): `C:\\Users\\<you>\\AppData\\Local\\Programs\\OpenWhispr\\EchoDraft\\logs\\audio\\` (last 10 clips)
+
+### What to check first
+
+In the Control Panel → History item “Diagnostics”:
+
+- `Record` is the measured recording duration (shows `Xs` under 60 seconds, otherwise `M:SS`).
+- `Raw transcript` shows what the STT provider returned **before** cleanup.
+- `Copy` copies the full cleaned transcript (`item.text`) — if it’s short, the stored text is short (not a UI preview issue).
+
+### Useful metadata fields (recent builds)
+
+Newer builds persist extra fields into `meta_json.timings` to make this debuggable:
+
+- `stopReason` / `stopSource` (e.g. `manual`, `released`, `track-ended`)
+- `audioSizeBytes`, `audioFormat`, `chunksCount`
+- Recording start timing breakdown:
+  - `hotkeyToStartCallMs`, `hotkeyToRecorderStartMs`
+  - `startConstraintsMs`, `startGetUserMediaMs`, `startMediaRecorderInitMs`, `startMediaRecorderStartMs`, `startTotalMs`
+
+If something fails again, grab the matching JSONL session logs and the `.webm` from `logs/audio/` (if debug was enabled) and we can replay/transcribe the exact captured audio to confirm whether the recording itself stopped early vs. transcription truncation.

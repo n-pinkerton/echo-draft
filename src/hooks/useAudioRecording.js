@@ -311,6 +311,7 @@ export const useAudioRecording = (toast, options = {}) => {
         sessionId: session.sessionId,
         jobId: job.jobId,
         outputMode: session.outputMode,
+        triggeredAt: session.triggeredAt,
       };
 
       const shouldUseStreaming =

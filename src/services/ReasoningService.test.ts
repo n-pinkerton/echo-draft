@@ -23,7 +23,6 @@ describe("ReasoningService (OpenAI)", () => {
     if (originalFetch) {
       vi.stubGlobal("fetch", originalFetch);
     } else {
-      // @ts-expect-error - fetch may not exist in some runtimes
       delete (globalThis as any).fetch;
     }
 
@@ -123,4 +122,3 @@ describe("ReasoningService (OpenAI)", () => {
     );
   });
 });
-
