@@ -518,6 +518,18 @@ class ReasoningService extends BaseReasoningService {
         { role: "user", content: userPrompt },
       ];
 
+      const maxOutputTokens =
+        config.maxTokens ||
+        Math.max(
+          4096,
+          this.calculateMaxTokens(
+            text.length,
+            TOKEN_LIMITS.MIN_TOKENS,
+            TOKEN_LIMITS.MAX_TOKENS,
+            TOKEN_LIMITS.TOKEN_MULTIPLIER
+          )
+        );
+
       const isOlderModel = model && (model.startsWith("gpt-4") || model.startsWith("gpt-3"));
 
       const openAiBase = this.getConfiguredOpenAIBase();
@@ -553,12 +565,26 @@ class ReasoningService extends BaseReasoningService {
             if (type === "responses") {
               requestBody.input = messages;
               requestBody.store = false;
+              requestBody.max_output_tokens = maxOutputTokens;
             } else {
               requestBody.messages = messages;
               if (isOlderModel) {
                 requestBody.temperature = config.temperature || 0.3;
               }
+              requestBody.max_tokens = maxOutputTokens;
             }
+
+            logger.logReasoning("OPENAI_REQUEST", {
+              endpoint,
+              type,
+              model,
+              maxOutputTokens,
+              inputTextLength: text.length,
+              systemPromptLength: systemPrompt.length,
+              userPromptLength: userPrompt.length,
+              isOlderModel,
+              temperature: requestBody.temperature ?? null,
+            });
 
             const res = await fetch(endpoint, {
               method: "POST",
@@ -625,27 +651,42 @@ class ReasoningService extends BaseReasoningService {
         outputTypes: isResponsesApi ? response.output.map((item: any) => item.type) : undefined,
         hasChoices: isChatCompletions,
         choicesLength: isChatCompletions ? response.choices.length : 0,
+        status: typeof response?.status === "string" ? response.status : null,
+        incompleteReason:
+          typeof response?.incomplete_details?.reason === "string"
+            ? response.incomplete_details.reason
+            : null,
         usage: response.usage,
       });
 
       let responseText = "";
+      let chatFinishReason: string | null = null;
+      let responsesOutputTextPartsCount: number | null = null;
+      let responsesOutputTextCombinedLength: number | null = null;
 
-      if (isResponsesApi) {
-        for (const item of response.output) {
-          if (item.type === "message" && item.content) {
-            for (const content of item.content) {
-              if (content.type === "output_text" && content.text) {
-                responseText = content.text.trim();
-                break;
-              }
-            }
-            if (responseText) break;
-          }
-        }
+      if (typeof response?.output_text === "string" && response.output_text.trim()) {
+        // Note: Some SDKs expose `output_text` as a convenience property.
+        // Prefer it when present, otherwise fall back to aggregating `output` below.
+        responseText = response.output_text.trim();
       }
 
-      if (!responseText && typeof response?.output_text === "string") {
-        responseText = response.output_text.trim();
+      if (!responseText && isResponsesApi) {
+        const parts: string[] = [];
+
+        for (const item of response.output) {
+          if (item?.type !== "message" || !Array.isArray(item.content)) {
+            continue;
+          }
+          for (const content of item.content) {
+            if (content?.type === "output_text" && typeof content.text === "string") {
+              parts.push(content.text);
+            }
+          }
+        }
+
+        responsesOutputTextPartsCount = parts.length;
+        responsesOutputTextCombinedLength = parts.reduce((sum, part) => sum + part.length, 0);
+        responseText = parts.join("").trim();
       }
 
       if (!responseText && isChatCompletions) {
@@ -655,6 +696,7 @@ class ReasoningService extends BaseReasoningService {
 
           if (typeof content === "string" && content.trim()) {
             responseText = content.trim();
+            chatFinishReason = choice?.finish_reason || null;
             break;
           }
 
@@ -662,6 +704,7 @@ class ReasoningService extends BaseReasoningService {
             for (const part of content) {
               if (typeof part?.text === "string" && part.text.trim()) {
                 responseText = part.text.trim();
+                chatFinishReason = choice?.finish_reason || null;
                 break;
               }
             }
@@ -671,6 +714,7 @@ class ReasoningService extends BaseReasoningService {
 
           if (typeof choice?.text === "string" && choice.text.trim()) {
             responseText = choice.text.trim();
+            chatFinishReason = choice?.finish_reason || null;
             break;
           }
         }
@@ -682,7 +726,58 @@ class ReasoningService extends BaseReasoningService {
         tokensUsed: response.usage?.total_tokens || 0,
         success: true,
         isEmpty: responseText.length === 0,
+        finishReason: chatFinishReason,
+        maxOutputTokens,
+        responsesOutputTextPartsCount,
+        responsesOutputTextCombinedLength,
       });
+
+      // If the provider indicates truncation due to output limits, throw so callers can fall back
+      // to the unmodified transcription rather than returning partial text.
+      const status = typeof response?.status === "string" ? response.status : null;
+      const incompleteReason =
+        typeof response?.incomplete_details?.reason === "string"
+          ? response.incomplete_details.reason
+          : null;
+      if (status === "incomplete" && incompleteReason === "max_output_tokens") {
+        logger.logReasoning("OPENAI_OUTPUT_TRUNCATED", {
+          model,
+          status,
+          incompleteReason,
+          responseLength: responseText.length,
+          maxOutputTokens,
+        });
+        logger.warn(
+          "OpenAI cleanup truncated output (Responses API)",
+          { model, status, incompleteReason, responseLength: responseText.length, maxOutputTokens },
+          "reasoning"
+        );
+        throw new Error(
+          "OpenAI truncated the response due to max output tokens. Try a shorter input or increase max tokens."
+        );
+      }
+
+      if (chatFinishReason === "length") {
+        logger.logReasoning("OPENAI_OUTPUT_TRUNCATED", {
+          model,
+          finishReason: chatFinishReason,
+          responseLength: responseText.length,
+          maxOutputTokens,
+        });
+        logger.warn(
+          "OpenAI cleanup truncated output (Chat Completions)",
+          {
+            model,
+            finishReason: chatFinishReason,
+            responseLength: responseText.length,
+            maxOutputTokens,
+          },
+          "reasoning"
+        );
+        throw new Error(
+          "OpenAI truncated the response due to token limits. Try a shorter input or increase max tokens."
+        );
+      }
 
       if (!responseText) {
         logger.logReasoning("OPENAI_EMPTY_RESPONSE_FALLBACK", {

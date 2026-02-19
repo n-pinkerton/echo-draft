@@ -545,6 +545,26 @@ declare global {
         logLevel?: string;
         error?: string;
       }>;
+      debugSaveAudio?: (payload: {
+        audioBuffer: ArrayBuffer;
+        mimeType?: string;
+        sessionId?: string | null;
+        jobId?: number | null;
+        outputMode?: string | null;
+        durationSeconds?: number | null;
+        stopReason?: string | null;
+        stopSource?: string | null;
+      }) => Promise<{
+        success: boolean;
+        skipped?: boolean;
+        reason?: string;
+        audioDir?: string;
+        filePath?: string;
+        bytes?: number;
+        kept?: number;
+        deleted?: number;
+        error?: string;
+      }>;
       openLogsFolder: () => Promise<{ success: boolean; error?: string }>;
 
       // FFmpeg availability

@@ -83,6 +83,82 @@ describe("AudioManager", () => {
     manager.cleanup();
   });
 
+  it("readTranscriptionStream prefers collected deltas when done text is shorter", async () => {
+    const manager = new AudioManager();
+
+    const chunks = [
+      'data: {"type":"transcript.text.delta","delta":"Hello world"}\n\n',
+      'data: {"type":"transcript.text.done","text":"Hello"}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const response = makeResponseFromChunks(chunks);
+    const text = await manager.readTranscriptionStream(response as any);
+    expect(text).toBe("Hello world");
+
+    manager.cleanup();
+  });
+
+  it("saveDebugAudioCaptureIfEnabled calls ipc when debug is enabled", async () => {
+    const manager = new AudioManager();
+
+    const getDebugState = vi.fn(async () => ({ enabled: true, logPath: null, logLevel: "debug" }));
+    const debugSaveAudio = vi.fn(async () => ({
+      success: true,
+      filePath: "/tmp/openwhispr-audio.webm",
+      bytes: 4,
+      kept: 1,
+      deleted: 0,
+    }));
+
+    (window as any).electronAPI = { getDebugState, debugSaveAudio };
+
+    const fakeBlob = {
+      type: "audio/webm",
+      arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3, 4]).buffer),
+    };
+    await manager.saveDebugAudioCaptureIfEnabled(fakeBlob as any, {
+      sessionId: "test-session",
+      jobId: 123,
+      outputMode: "clipboard",
+      durationSeconds: 1.23,
+      stopReason: "manual",
+      stopSource: "manual",
+    });
+
+    expect(getDebugState).toHaveBeenCalledTimes(1);
+    expect(debugSaveAudio).toHaveBeenCalledTimes(1);
+
+    const payload = debugSaveAudio.mock.calls[0][0];
+    expect(payload.mimeType).toBe("audio/webm");
+    expect(payload.sessionId).toBe("test-session");
+    expect(payload.jobId).toBe(123);
+    expect(payload.outputMode).toBe("clipboard");
+    expect(payload.audioBuffer).toBeInstanceOf(ArrayBuffer);
+
+    manager.cleanup();
+  });
+
+  it("saveDebugAudioCaptureIfEnabled is a no-op when debug is disabled", async () => {
+    const manager = new AudioManager();
+
+    const getDebugState = vi.fn(async () => ({ enabled: false, logPath: null, logLevel: "info" }));
+    const debugSaveAudio = vi.fn(async () => ({ success: true }));
+
+    (window as any).electronAPI = { getDebugState, debugSaveAudio };
+
+    const fakeBlob = {
+      type: "audio/webm",
+      arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
+    };
+    await manager.saveDebugAudioCaptureIfEnabled(fakeBlob as any, { sessionId: "test-session" });
+
+    expect(getDebugState).toHaveBeenCalledTimes(1);
+    expect(debugSaveAudio).not.toHaveBeenCalled();
+
+    manager.cleanup();
+  });
+
   it("warmupMicrophoneDriver skips when permission is prompt", async () => {
     const manager = new AudioManager();
     localStorage.setItem("preferBuiltInMic", "false");

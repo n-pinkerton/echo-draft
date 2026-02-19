@@ -6,6 +6,7 @@ const https = require("https");
 const crypto = require("crypto");
 const AppUtils = require("../utils");
 const debugLogger = require("./debugLogger");
+const { saveDebugAudioCapture } = require("./debugAudioCapture");
 const GnomeShortcutManager = require("./gnomeShortcut");
 const AssemblyAiStreaming = require("./assemblyAiStreaming");
 
@@ -2069,6 +2070,41 @@ class IPCHandlers {
       } catch (error) {
         debugLogger.error("Failed to open logs folder:", error);
         return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("debug-save-audio", async (_event, payload = {}) => {
+      if (!debugLogger.isEnabled?.() || !debugLogger.isEnabled()) {
+        return { success: false, skipped: true, reason: "debug-disabled" };
+      }
+
+      try {
+        const logsDir = debugLogger.getLogsDir?.() || path.join(app.getPath("userData"), "logs");
+        const audioBuffer = payload?.audioBuffer;
+
+        if (!audioBuffer) {
+          return { success: false, error: "Missing audioBuffer" };
+        }
+
+        const result = saveDebugAudioCapture({
+          logsDir,
+          audioBuffer,
+          mimeType: payload?.mimeType,
+          sessionId: payload?.sessionId,
+          jobId: payload?.jobId,
+          outputMode: payload?.outputMode,
+          durationSeconds: payload?.durationSeconds,
+          stopReason: payload?.stopReason,
+          stopSource: payload?.stopSource,
+          maxCaptures: 10,
+        });
+
+        debugLogger.debug("Debug audio capture saved", result, "audio");
+
+        return { success: true, ...result };
+      } catch (error) {
+        debugLogger.error("Debug audio capture save failed:", error);
+        return { success: false, error: error?.message || String(error) };
       }
     });
 

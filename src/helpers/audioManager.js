@@ -317,6 +317,50 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
 
+  async saveDebugAudioCaptureIfEnabled(audioBlob, payload = {}) {
+    try {
+      const electronAPI = typeof window !== "undefined" ? window.electronAPI : null;
+      if (!electronAPI?.getDebugState || !electronAPI?.debugSaveAudio) {
+        return;
+      }
+
+      const debugState = await electronAPI.getDebugState().catch(() => null);
+      if (!debugState?.enabled) {
+        return;
+      }
+
+      const audioBuffer = await audioBlob.arrayBuffer();
+      const result = await electronAPI.debugSaveAudio({
+        audioBuffer,
+        mimeType: audioBlob?.type || payload?.mimeType,
+        ...payload,
+      });
+
+      if (result?.success && result?.filePath) {
+        logger.debug(
+          "Debug audio capture saved",
+          {
+            filePath: result.filePath,
+            bytes: result.bytes,
+            kept: result.kept,
+            deleted: result.deleted,
+          },
+          "audio"
+        );
+      } else if (result && result.skipped) {
+        logger.debug("Debug audio capture skipped", { reason: result.reason }, "audio");
+      } else if (result && result.error) {
+        logger.debug("Debug audio capture failed", { error: result.error }, "audio");
+      }
+    } catch (error) {
+      logger.debug(
+        "Debug audio capture failed",
+        { error: error?.message || String(error) },
+        "audio"
+      );
+    }
+  }
+
   getCleanupEnabledOverride() {
     const value = this.activeProcessingContext?.cleanupEnabled;
     return typeof value === "boolean" ? value : null;
@@ -613,6 +657,18 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
             },
             "audio"
           );
+
+          void this.saveDebugAudioCaptureIfEnabled(audioBlob, {
+            sessionId: recordingContext?.sessionId || null,
+            jobId: recordingContext?.jobId ?? null,
+            outputMode: recordingContext?.outputMode || null,
+            durationSeconds:
+              recordingStartedAt && stopRequestedAt
+                ? (stopRequestedAt - recordingStartedAt) / 1000
+                : null,
+            stopReason: stopContext.reason || null,
+            stopSource: stopContext.source || null,
+          });
 
           const durationSeconds = recordingStartedAt
             ? (Date.now() - recordingStartedAt) / 1000
@@ -1626,6 +1682,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           "Final transcript received",
           {
             textLength: payload.text.length,
+            collectedTextLength: collectedText.length,
           },
           "transcription"
         );
@@ -1651,6 +1708,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
             eventTypes,
             collectedTextLength: collectedText.length,
             hasFinalText: finalText !== null,
+            finalTextLength: finalText ? finalText.length : 0,
           },
           "transcription"
         );
@@ -1730,12 +1788,31 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       }
     }
 
-    const result = finalText ?? collectedText;
+    const collectedTextLength = collectedText.length;
+    const finalTextLength = finalText ? finalText.length : 0;
+    const shouldUseFinalText = Boolean(finalText) && finalTextLength >= collectedTextLength;
+    const result = shouldUseFinalText ? finalText : collectedText;
+    const lengthMismatch = Boolean(finalText) && finalTextLength !== collectedTextLength;
+    if (!shouldUseFinalText && finalText && finalTextLength > 0 && finalTextLength < collectedTextLength) {
+      logger.warn(
+        "OpenAI stream final text shorter than collected deltas; using collected text",
+        {
+          collectedTextLength,
+          finalTextLength,
+          eventCount,
+          eventTypes,
+        },
+        "transcription"
+      );
+    }
     logger.debug(
       "Stream processing complete",
       {
         resultLength: result.length,
-        usedFinalText: finalText !== null,
+        collectedTextLength,
+        finalTextLength,
+        usedFinalText: shouldUseFinalText,
+        lengthMismatch,
         eventCount,
         eventTypes,
       },
@@ -1747,7 +1824,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         {
           text: result,
           resultLength: result.length,
-          usedFinalText: finalText !== null,
+          collectedTextLength,
+          finalTextLength,
+          usedFinalText: shouldUseFinalText,
+          lengthMismatch,
           eventCount,
           eventTypes,
         },
