@@ -147,6 +147,19 @@ Now that the audio subsystem is split and well-instrumented, the next maintainab
   - Added unit tests for extracted pure utils (`dictionaryUtils`, `pathUtils`).
   - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
 
+- [x] Refactored clipboard/paste subsystem:
+  - Split `src/helpers/clipboard.js` (~1591 LoC) into a DI-friendly orchestrator (~316 LoC) plus focused modules under `src/helpers/clipboard/`.
+  - Added unit tests for clipboard snapshot restore, Linux session detection, Windows PowerShell parsing + insertion targeting, macOS accessibility helpers, and Linux paste error contracts.
+  - Shared env-flag parsing via `src/helpers/utils/flags.js` and reused it from `main.js`, `src/updater.js`, and IPC utils.
+  - Verified `npm test` after the split.
+
+- [x] Refactored reasoning service:
+  - Reduced `src/services/ReasoningService.ts` to ~365 LoC by extracting provider implementations into `src/services/reasoning/` modules.
+  - Centralized OpenAI endpoint base + `/responses` vs `/chat/completions` preference logic in `src/services/reasoning/openaiEndpoints.ts` + added unit tests.
+  - Extracted reasoning availability check into `src/services/reasoning/availability.ts` + added unit tests.
+  - Fixed a TS typecheck failure in `src/helpers/clipboard/macos/macosPaste.test.ts` (Vitest mock call arg typing).
+  - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
+
 ## Archived: EchoDraft Fix Plan (2026-02-16)
 
 Date: 2026-02-16

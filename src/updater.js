@@ -1,10 +1,6 @@
 const { autoUpdater } = require("electron-updater");
 
-function isTruthyFlag(value) {
-  if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-}
+const { isTruthyFlag } = require("./helpers/utils/flags");
 
 function getErrorMessage(err) {
   if (!err) return "";

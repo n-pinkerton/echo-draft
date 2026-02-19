@@ -12,11 +12,7 @@ const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
 const BASE_WINDOWS_APP_ID = "com.herotools.openwispr";
 const DEFAULT_AUTH_BRIDGE_PORT = 5199;
 
-function isTruthyFlag(value) {
-  if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-}
+const { isTruthyFlag } = require("./src/helpers/utils/flags");
 
 function isElectronBinaryExec() {
   const execPath = (process.execPath || "").toLowerCase();
