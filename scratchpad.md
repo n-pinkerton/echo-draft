@@ -160,6 +160,12 @@ Now that the audio subsystem is split and well-instrumented, the next maintainab
   - Fixed a TS typecheck failure in `src/helpers/clipboard/macos/macosPaste.test.ts` (Vitest mock call arg typing).
   - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
 
+- [x] Refactored hotkey→recording renderer pipeline:
+  - Split `src/hooks/useAudioRecording.js` (~1168 → ~356 LoC) into focused modules under `src/hooks/audioRecording/`.
+  - Added a new `starting` stage so the UI responds immediately while `getUserMedia`/recorder init is in-flight (reduces perceived hotkey delays).
+  - Added unit tests for trigger payload normalization, stage updates, start/stop handler ordering, and transcription-complete persistence.
+  - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
+
 ## Archived: EchoDraft Fix Plan (2026-02-16)
 
 Date: 2026-02-16

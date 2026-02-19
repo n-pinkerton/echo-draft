@@ -1,43 +1,13 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import AudioManager from "../helpers/audioManager";
-import logger from "../utils/logger";
 import { playStartCue, playStopCue } from "../utils/dictationCues";
-
-const STAGE_META = {
-  idle: { label: "Ready", overallProgress: 0 },
-  listening: { label: "Listening", overallProgress: 0.1 },
-  transcribing: { label: "Transcribing", overallProgress: 0.45 },
-  cleaning: { label: "Cleaning up", overallProgress: 0.7 },
-  inserting: { label: "Inserting", overallProgress: 0.85 },
-  saving: { label: "Saving", overallProgress: 0.93 },
-  done: { label: "Done", overallProgress: 1 },
-  error: { label: "Error", overallProgress: 1 },
-  cancelled: { label: "Cancelled", overallProgress: 1 },
-};
-
-const TERMINAL_STAGES = new Set(["done", "error", "cancelled"]);
-
-const INITIAL_PROGRESS = {
-  stage: "idle",
-  stageLabel: STAGE_META.idle.label,
-  stageProgress: null,
-  overallProgress: STAGE_META.idle.overallProgress,
-  elapsedMs: 0,
-  recordedMs: 0,
-  generatedChars: 0,
-  generatedWords: 0,
-  outputMode: "insert",
-  sessionId: null,
-  jobId: null,
-  provider: null,
-  model: null,
-  message: null,
-};
-
-const countWords = (text) => {
-  if (!text || typeof text !== "string") return 0;
-  return text.trim().split(/\s+/).filter(Boolean).length;
-};
+import { INITIAL_PROGRESS } from "./audioRecording/stages";
+import { createSessionId as createSessionIdBase, normalizeTriggerPayload as normalizeTriggerPayloadBase } from "./audioRecording/triggerPayload";
+import { createAudioManagerCallbacks } from "./audioRecording/audioManagerCallbacks";
+import { installE2EHelpers } from "./audioRecording/e2eHelpers";
+import { createStartRecordingHandler, createStopRecordingHandler } from "./audioRecording/recordingHandlers";
+import { createStageUpdater } from "./audioRecording/stageUpdater";
+import { createTranscriptionCompleteHandler } from "./audioRecording/transcriptionCompleteHandler";
 
 export const useAudioRecording = (toast, options = {}) => {
   const [isRecording, setIsRecording] = useState(false);
@@ -77,48 +47,11 @@ export const useAudioRecording = (toast, options = {}) => {
     setProgress(INITIAL_PROGRESS);
   }, [clearProgressResetTimer]);
 
-  const createSessionId = useCallback(() => {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-    return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  }, []);
-
   const normalizeTriggerPayload = useCallback(
     (payload = {}) => {
-      const outputMode = payload?.outputMode === "clipboard" ? "clipboard" : "insert";
-      const sessionId =
-        typeof payload?.sessionId === "string" && payload.sessionId.trim()
-          ? payload.sessionId
-          : createSessionId();
-      const triggeredAt =
-        typeof payload?.triggeredAt === "number" && Number.isFinite(payload.triggeredAt)
-          ? payload.triggeredAt
-          : Date.now();
-      const startedAt =
-        typeof payload?.startedAt === "number" && Number.isFinite(payload.startedAt)
-          ? payload.startedAt
-          : null;
-      const releasedAt =
-        typeof payload?.releasedAt === "number" && Number.isFinite(payload.releasedAt)
-          ? payload.releasedAt
-          : null;
-      const insertionTarget =
-        payload?.insertionTarget && typeof payload.insertionTarget === "object"
-          ? payload.insertionTarget
-          : null;
-      return {
-        outputMode,
-        sessionId,
-        triggeredAt,
-        startedAt,
-        releasedAt,
-        insertionTarget,
-        stopReason: typeof payload?.stopReason === "string" ? payload.stopReason.trim() : null,
-        stopSource: typeof payload?.stopSource === "string" ? payload.stopSource.trim() : null,
-      };
+      return normalizeTriggerPayloadBase(payload, { createSessionId: createSessionIdBase });
     },
-    [createSessionId]
+    []
   );
 
   const getNextJobId = useCallback(() => {
@@ -152,327 +85,51 @@ export const useAudioRecording = (toast, options = {}) => {
     [syncJobs]
   );
 
-  const updateStage = useCallback(
-    (stage, patch = {}) => {
-      const normalizedStage = STAGE_META[stage] ? stage : "idle";
-      const now = Date.now();
-
-      const previousSessionId = latestProgressRef.current?.sessionId;
-      const nextSessionId = patch.sessionId || previousSessionId;
-      const previousStage = latestProgressRef.current?.stage;
-      const nextJobId =
-        patch.jobId !== undefined ? patch.jobId : (latestProgressRef.current?.jobId ?? null);
-      const nextOutputMode = patch.outputMode || latestProgressRef.current?.outputMode || null;
-      const stageChanged =
-        previousStage !== normalizedStage || (nextSessionId && nextSessionId !== previousSessionId);
-
-      if (stageChanged) {
-        logger.trace(
-          "Stage transition",
-          {
-            fromStage: previousStage,
-            toStage: normalizedStage,
-            sessionId: nextSessionId,
-            jobId: nextJobId,
-            outputMode: nextOutputMode,
-            provider: patch.provider,
-            model: patch.model,
-            message: patch.message,
-          },
-          "pipeline"
-        );
-      }
-      if (nextSessionId && nextSessionId !== previousSessionId) {
-        sessionStartedAtRef.current = now;
-        recordingStartedAtRef.current = null;
-      } else if (!sessionStartedAtRef.current) {
-        sessionStartedAtRef.current = now;
-      }
-
-      if (normalizedStage === "listening" && !recordingStartedAtRef.current) {
-        recordingStartedAtRef.current = now;
-      } else if (normalizedStage !== "listening") {
-        recordingStartedAtRef.current = null;
-      }
-
-      clearProgressResetTimer();
-
-      setProgress((prev) => {
-        const defaultMeta = STAGE_META[normalizedStage] || STAGE_META.idle;
-        const elapsedMs = Math.max(0, now - (sessionStartedAtRef.current || now));
-        const nextStageProgress =
-          patch.stageProgress !== undefined
-            ? patch.stageProgress
-            : TERMINAL_STAGES.has(normalizedStage)
-              ? 1
-              : null;
-
-        return {
-          ...prev,
-          stage: normalizedStage,
-          stageLabel: patch.stageLabel || defaultMeta.label,
-          stageProgress: nextStageProgress,
-          overallProgress:
-            patch.overallProgress !== undefined
-              ? patch.overallProgress
-              : defaultMeta.overallProgress,
-          elapsedMs,
-          recordedMs:
-            patch.recordedMs !== undefined
-              ? patch.recordedMs
-              : normalizedStage === "listening" && recordingStartedAtRef.current
-                ? Math.max(0, now - recordingStartedAtRef.current)
-                : prev.recordedMs,
-          generatedChars:
-            patch.generatedChars !== undefined
-              ? patch.generatedChars
-              : normalizedStage === "transcribing"
-                ? prev.generatedChars
-                : 0,
-          generatedWords:
-            patch.generatedWords !== undefined
-              ? patch.generatedWords
-              : normalizedStage === "transcribing"
-                ? prev.generatedWords
-                : 0,
-          provider: patch.provider !== undefined ? patch.provider : prev.provider,
-          model: patch.model !== undefined ? patch.model : prev.model,
-          message: patch.message !== undefined ? patch.message : null,
-          outputMode: patch.outputMode || prev.outputMode,
-          sessionId: patch.sessionId || prev.sessionId,
-          jobId: patch.jobId !== undefined ? patch.jobId : prev.jobId,
-        };
-      });
-
-      if (TERMINAL_STAGES.has(normalizedStage)) {
-        progressResetTimerRef.current = setTimeout(() => {
-          const state = audioManagerRef.current?.getState?.();
-          if (state?.isRecording || state?.isProcessing || jobsBySessionIdRef.current.size > 0) {
-            return;
-          }
-          resetProgress();
-        }, 3000);
-      }
-    },
+  const updateStage = useMemo(
+    () =>
+      createStageUpdater({
+        audioManagerRef,
+        clearProgressResetTimer,
+        jobsBySessionIdRef,
+        latestProgressRef,
+        progressResetTimerRef,
+        recordingStartedAtRef,
+        resetProgress,
+        sessionStartedAtRef,
+        setProgress,
+      }),
     [clearProgressResetTimer, resetProgress]
   );
 
-  const performStartRecording = useCallback(
-    async (payload = {}) => {
-      if (!audioManagerRef.current) {
-        return false;
-      }
-
-      const currentState = audioManagerRef.current.getState();
-      const session = normalizeTriggerPayload(payload);
-      if (currentState.isRecording) {
-        return false;
-      }
-      if (currentState.isProcessing && session.outputMode !== "clipboard") {
-        return false;
-      }
-
-      logger.info(
-        "Dictation start requested",
-        {
-          sessionId: session.sessionId,
-          outputMode: session.outputMode,
-          triggeredAt: session.triggeredAt,
-          currentState,
-        },
-        "dictation"
-      );
-
-      const job = upsertJob(session.sessionId, {
-        outputMode: session.outputMode,
-        status: "recording",
-        startedAt: Date.now(),
-        recordedMs: null,
-        provider: null,
-        model: null,
-      });
-      sessionsByIdRef.current.set(session.sessionId, session);
-      recordingSessionIdRef.current = session.sessionId;
-
-      if (session.outputMode === "insert" && window.electronAPI?.captureInsertionTarget) {
-        try {
-          const captureResult = await window.electronAPI.captureInsertionTarget();
-          if (captureResult?.success && captureResult?.target?.hwnd) {
-            session.insertionTarget = captureResult.target;
-          }
-        } catch (error) {
-          logger.warn("Failed to capture insertion target", { error: error?.message }, "clipboard");
-        }
-      }
-
-      const shouldForceNonStreaming =
-        currentState.isProcessing && session.outputMode === "clipboard";
-      const recordingContext = {
-        sessionId: session.sessionId,
-        jobId: job.jobId,
-        outputMode: session.outputMode,
-        triggeredAt: session.triggeredAt,
-      };
-
-      const shouldUseStreaming =
-        !shouldForceNonStreaming && audioManagerRef.current.shouldUseStreaming();
-      logger.info(
-        "Dictation start routing",
-        {
-          sessionId: session.sessionId,
-          outputMode: session.outputMode,
-          shouldForceNonStreaming,
-          shouldUseStreaming,
-        },
-        "dictation"
-      );
-
-      const didStart = shouldUseStreaming
-        ? await audioManagerRef.current.startStreamingRecording(recordingContext)
-        : await audioManagerRef.current.startRecording(recordingContext);
-
-      if (didStart) {
-        activeSessionRef.current = session;
-        sessionStartedAtRef.current = Date.now();
-        recordingStartedAtRef.current = sessionStartedAtRef.current;
-        logger.info(
-          "Dictation recording started",
-          {
-            sessionId: session.sessionId,
-            outputMode: session.outputMode,
-            hotkeyToRecordingMs: Math.max(0, Date.now() - (session.triggeredAt || Date.now())),
-            method: shouldUseStreaming ? "streaming" : "non-streaming",
-          },
-          "dictation"
-        );
-        updateStage("listening", {
-          outputMode: session.outputMode,
-          sessionId: session.sessionId,
-          jobId: job.jobId,
-          generatedChars: 0,
-          generatedWords: 0,
-          message: session.outputMode === "clipboard" ? "Clipboard mode" : null,
-        });
-        void playStartCue();
-      } else {
-        sessionsByIdRef.current.delete(session.sessionId);
-        recordingSessionIdRef.current = null;
-        removeJob(session.sessionId);
-        logger.warn(
-          "Dictation start failed",
-          { sessionId: session.sessionId, outputMode: session.outputMode },
-          "dictation"
-        );
-      }
-
-      return didStart;
-    },
+  const performStartRecording = useMemo(
+    () =>
+      createStartRecordingHandler({
+        activeSessionRef,
+        audioManagerRef,
+        normalizeTriggerPayload,
+        recordingSessionIdRef,
+        recordingStartedAtRef,
+        removeJob,
+        sessionStartedAtRef,
+        sessionsByIdRef,
+        updateStage,
+        upsertJob,
+        playStartCue,
+      }),
     [normalizeTriggerPayload, removeJob, updateStage, upsertJob]
   );
 
-  const performStopRecording = useCallback(
-    async (payload = {}) => {
-      if (!audioManagerRef.current) {
-        return false;
-      }
-
-      const currentState = audioManagerRef.current.getState();
-      if (!currentState.isRecording) {
-        return false;
-      }
-
-      const normalizedPayload = normalizeTriggerPayload(payload);
-      const requestedSessionId =
-        typeof normalizedPayload?.sessionId === "string" && normalizedPayload.sessionId.trim()
-          ? normalizedPayload.sessionId.trim()
-          : null;
-      const activeSessionId = activeSessionRef.current?.sessionId || null;
-      const hasSessionMismatch = Boolean(
-        requestedSessionId && activeSessionId && requestedSessionId !== activeSessionId
-      );
-
-      if (hasSessionMismatch) {
-        logger.warn(
-          "Stop payload session mismatch",
-          {
-            requestedSessionId,
-            activeSessionId,
-            currentState,
-          },
-          "dictation"
-        );
-      }
-
-      if (!activeSessionRef.current) {
-        activeSessionRef.current = normalizedPayload;
-      } else if (
-        normalizedPayload?.sessionId &&
-        normalizedPayload.sessionId === activeSessionRef.current.sessionId
-      ) {
-        // Push-to-talk stop payload includes release timing; merge it into the active session.
-        activeSessionRef.current = { ...activeSessionRef.current, ...normalizedPayload };
-      }
-
-      const session = activeSessionRef.current;
-      const stopSource =
-        normalizedPayload?.stopSource ||
-        (normalizedPayload?.releasedAt ? "released" : "manual");
-      const stopReason =
-        normalizedPayload?.stopReason || (normalizedPayload?.releasedAt ? "release" : "manual");
-
-      logger.info(
-        "Dictation stop requested",
-        {
-          sessionId: session?.sessionId,
-          requestedSessionId,
-          activeSessionId,
-          stopSessionMismatch: hasSessionMismatch,
-          outputMode: session?.outputMode,
-          stopSource,
-          stopReason,
-          releasedAt: session?.releasedAt,
-          startedAt: session?.startedAt,
-          triggeredAt: session?.triggeredAt,
-          currentState,
-        },
-        "dictation"
-      );
-      if (session?.sessionId) {
-        const recordedMsSnapshot =
-          typeof latestProgressRef.current?.recordedMs === "number" &&
-          latestProgressRef.current.recordedMs > 0
-            ? Math.round(latestProgressRef.current.recordedMs)
-            : null;
-        upsertJob(session.sessionId, {
-          status:
-            currentState.isProcessing && session.outputMode === "clipboard"
-              ? "queued"
-              : "processing",
-          ...(stopSource ? { stopSource } : {}),
-          ...(stopReason ? { stopReason } : {}),
-          ...(recordedMsSnapshot !== null ? { recordedMs: recordedMsSnapshot } : {}),
-          stoppedAt: Date.now(),
-        });
-      }
-      recordingSessionIdRef.current = null;
-
-      if (currentState.isStreaming) {
-        void playStopCue();
-        return await audioManagerRef.current.stopStreamingRecording();
-      }
-
-      const didStop = audioManagerRef.current.stopRecording({
-        reason: stopReason,
-        source: stopSource,
-        sessionId: session?.sessionId,
-        outputMode: session?.outputMode,
-      });
-      if (didStop) {
-        void playStopCue();
-      }
-
-      return didStop;
-    },
+  const performStopRecording = useMemo(
+    () =>
+      createStopRecordingHandler({
+        activeSessionRef,
+        audioManagerRef,
+        latestProgressRef,
+        normalizeTriggerPayload,
+        recordingSessionIdRef,
+        upsertJob,
+        playStopCue,
+      }),
     [normalizeTriggerPayload, upsertJob]
   );
 
@@ -489,513 +146,48 @@ export const useAudioRecording = (toast, options = {}) => {
         }
       })();
 
-    const handleTranscriptionComplete = async (result) => {
-      const contextSessionId =
-        typeof result?.context?.sessionId === "string" && result.context.sessionId.trim()
-          ? result.context.sessionId.trim()
-          : null;
-
-      const fallbackSession = contextSessionId
-        ? normalizeTriggerPayload(result?.context || {})
-        : activeSessionRef.current || normalizeTriggerPayload(result?.context || {});
-      const resolvedSessionId = contextSessionId || fallbackSession.sessionId;
-      const storedSession = resolvedSessionId
-        ? sessionsByIdRef.current.get(resolvedSessionId)
-        : null;
-      const session = resolvedSessionId
-        ? { ...fallbackSession, ...storedSession, sessionId: resolvedSessionId }
-        : fallbackSession;
-
-      const job = resolvedSessionId ? jobsBySessionIdRef.current.get(resolvedSessionId) : null;
-      const jobId =
-        typeof result?.context?.jobId === "number" && Number.isFinite(result.context.jobId)
-          ? result.context.jobId
-          : (job?.jobId ?? null);
-
-      if (resolvedSessionId) {
-        sessionsByIdRef.current.delete(resolvedSessionId);
-      }
-      if (activeSessionRef.current?.sessionId === resolvedSessionId) {
-        activeSessionRef.current = null;
-      }
-
-      if (!result.success) {
-        if (!recordingSessionIdRef.current) {
-          updateStage("error", { message: "Transcription did not complete." });
-        }
-        if (resolvedSessionId) {
-          upsertJob(resolvedSessionId, { status: "error" });
-          setTimeout(() => removeJob(resolvedSessionId), 1500);
-        }
-        return;
-      }
-
-      const rawText = result.rawText || result.text;
-      logger.info(
-        "Dictation transcription complete",
-        {
-          sessionId: session.sessionId,
-          jobId,
-          outputMode: session.outputMode,
-          triggeredAt: session.triggeredAt,
-          startedAt: session.startedAt,
-          releasedAt: session.releasedAt,
-          hotkeyToDoneMs: session.triggeredAt
-            ? Math.max(0, Date.now() - session.triggeredAt)
-            : null,
-          source: result.source,
-          provider: job?.provider || null,
-          model: job?.model || null,
-          timings: result.timings || null,
-          rawLength: rawText.length,
-          cleanedLength: result.text.length,
-        },
-        "dictation"
-      );
-
-      if (typeof window !== "undefined" && window.__openwhisprLogLevel === "trace") {
-        logger.trace(
-          "Dictation transcript text",
-          {
-            sessionId: session.sessionId,
-            jobId,
-            source: result.source,
-            rawText,
-            cleanedText: result.text,
-          },
-          "dictation"
-        );
-      }
-
-      setTranscript(result.text);
-
-      let pasteSucceeded = false;
-      let pasteMs = null;
-      const isForegroundAvailable = !recordingSessionIdRef.current;
-
-      if (session.outputMode === "insert") {
-        if (isForegroundAvailable) {
-          updateStage("inserting", {
-            outputMode: session.outputMode,
-            sessionId: session.sessionId,
-            ...(jobId !== null ? { jobId } : {}),
-          });
-        }
-
-        const isResultStreaming = result.source?.includes("streaming");
-        const pasteStart = performance.now();
-        const pasteOptions = {};
-        if (isResultStreaming) {
-          pasteOptions.fromStreaming = true;
-        }
-        if (session.insertionTarget) {
-          pasteOptions.insertionTarget = session.insertionTarget;
-        }
-        logger.info(
-          "Paste attempt",
-          {
-            sessionId: session.sessionId,
-            jobId,
-            source: result.source,
-            textLength: result.text.length,
-            pasteOptions,
-          },
-          "paste"
-        );
-        pasteSucceeded = await audioManagerRef.current.safePaste(result.text, pasteOptions);
-        pasteMs = Math.round(performance.now() - pasteStart);
-
-        logger.info(
-          "Paste timing",
-          {
-            pasteMs,
-            source: result.source,
-            textLength: result.text.length,
-            outputMode: session.outputMode,
-            pasteSucceeded,
-          },
-          "streaming"
-        );
-      } else {
-        try {
-          await window.electronAPI?.writeClipboard?.(result.text);
-        } catch (error) {
-          logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
-        }
-        logger.info(
-          "Copied to clipboard",
-          {
-            sessionId: session.sessionId,
-            jobId,
-            source: result.source,
-            textLength: result.text.length,
-          },
-          "clipboard"
-        );
-
-        toast({
-          title: jobId !== null ? `Copied Job #${jobId}` : "Copied to Clipboard",
-          description: "Dictation finished. Paste where you want the text.",
-          duration: 2500,
-        });
-      }
-
-      if (isForegroundAvailable) {
-        updateStage("saving", {
-          outputMode: session.outputMode,
-          sessionId: session.sessionId,
-          ...(jobId !== null ? { jobId } : {}),
-        });
-      }
-
-      const saveStart = performance.now();
-      const recordDurationMs =
-        typeof job?.recordedMs === "number" && job.recordedMs > 0
-          ? Math.round(job.recordedMs)
-          : null;
-      const baseTimings = {
-        ...(result.timings || {}),
-        ...(recordDurationMs !== null ? { recordDurationMs } : {}),
-        pasteDurationMs: pasteMs,
-      };
-      const provider = job?.provider || result.source || "";
-      const model = job?.model || "";
-
-      const saveResult = await audioManagerRef.current.saveTranscription({
-        text: result.text,
-        rawText: result.rawText || result.text,
-        meta: {
-          sessionId: session.sessionId,
-          outputMode: session.outputMode,
-          status: "success",
-          source: result.source,
-          provider,
-          model,
-          insertionTarget: session.insertionTarget || null,
-          pasteSucceeded,
-          timings: baseTimings,
-        },
-      });
-      const saveSucceeded = Boolean(saveResult?.success);
-      const savedId = saveResult?.id || saveResult?.transcription?.id;
-      const saveMs = Math.round(performance.now() - saveStart);
-      const totalDurationMs =
-        typeof job?.startedAt === "number" && job.startedAt > 0
-          ? Math.max(0, Date.now() - job.startedAt)
-          : null;
-
-      if (saveSucceeded && savedId && window.electronAPI?.patchTranscriptionMeta) {
-        try {
-          await window.electronAPI.patchTranscriptionMeta(savedId, {
-            provider,
-            model,
-            timings: {
-              ...baseTimings,
-              saveDurationMs: saveMs,
-              totalDurationMs,
-            },
-          });
-        } catch (error) {
-          logger.warn(
-            "Failed to patch transcription metadata",
-            { error: error?.message, id: savedId },
-            "transcription"
-          );
-        }
-      }
-
-      if (!saveSucceeded) {
-        const fallbackDescription =
-          session.outputMode === "insert" && pasteSucceeded
-            ? "Text was inserted, but saving to history failed."
-            : "Text is copied to clipboard, but saving to history failed.";
-        toast({
-          title: "History Save Failed",
-          description: fallbackDescription,
-          variant: "destructive",
-          duration: 4000,
-        });
-      }
-
-      logger.info(
-        "History save result",
-        {
-          sessionId: session.sessionId,
-          jobId,
-          savedId: savedId || null,
-          saveSucceeded,
-          saveMs,
-        },
-        "history"
-      );
-
-      if (result.source === "openai" && localStorage.getItem("useLocalWhisper") === "true") {
-        toast({
-          title: "Fallback Mode",
-          description: "Local Whisper failed. Used OpenAI API instead.",
-          variant: "default",
-        });
-      }
-
-      if (result.source === "openwhispr" && result.limitReached) {
-        window.electronAPI?.notifyLimitReached?.({
-          wordsUsed: result.wordsUsed,
-          limit:
-            result.wordsRemaining !== undefined ? result.wordsUsed + result.wordsRemaining : 2000,
-        });
-      }
-
-      if (isForegroundAvailable) {
-        updateStage("done", {
-          outputMode: session.outputMode,
-          sessionId: session.sessionId,
-          ...(jobId !== null ? { jobId } : {}),
-          stageProgress: 1,
-          overallProgress: 1,
-          message: saveSucceeded
-            ? null
-            : session.outputMode === "insert" && pasteSucceeded
-              ? "Inserted, but history save failed."
-              : "Saved to clipboard, but history save failed.",
-          provider,
-          model,
-          generatedChars: result.text.length,
-          generatedWords: countWords(result.text),
-        });
-
-        setProgress((prev) => ({
-          ...prev,
-          message: saveSucceeded && saveMs > 0 ? `Saved in ${saveMs}ms` : prev.message,
-        }));
-      }
-
-      if (resolvedSessionId) {
-        upsertJob(resolvedSessionId, {
-          status: "done",
-          provider,
-          model,
-          outputMode: session.outputMode,
-        });
-        setTimeout(() => removeJob(resolvedSessionId), 1500);
-      }
-
-      audioManagerRef.current.warmupStreamingConnection();
-    };
-
-    audioManagerRef.current.setCallbacks({
-      onStateChange: ({ isRecording, isProcessing, isStreaming }) => {
-        setIsRecording(isRecording);
-        setIsProcessing(isProcessing);
-        setIsStreaming(isStreaming ?? false);
-
-        logger.trace(
-          "AudioManager state change",
-          { isRecording, isProcessing, isStreaming },
-          "dictation"
-        );
-
-        if (!isStreaming) {
-          setPartialTranscript("");
-        }
-      },
-      onError: (error) => {
-        activeSessionRef.current = null;
-        const wasRecording = Boolean(recordingSessionIdRef.current);
-        recordingSessionIdRef.current = null;
-        if (!wasRecording) {
-          updateStage("error", {
-            message: error.description || error.message || "An unknown error occurred",
-          });
-        }
-
-        logger.error("Dictation error", error, "dictation");
-
-        const title =
-          error.code === "AUTH_EXPIRED"
-            ? "Session Expired"
-            : error.code === "OFFLINE"
-              ? "You're Offline"
-              : error.code === "LIMIT_REACHED"
-                ? "Daily Limit Reached"
-                : error.title;
-
-        toast({
-          title,
-          description: error.description,
-          variant: "destructive",
-          duration: error.code === "AUTH_EXPIRED" ? 8000 : undefined,
-        });
-      },
-      onProgress: (event = {}) => {
-        if (!event || typeof event !== "object") {
-          return;
-        }
-
-        const contextSessionId =
-          typeof event?.context?.sessionId === "string" ? event.context.sessionId : null;
-        const jobIdFromEvent =
-          typeof event?.jobId === "number" && Number.isFinite(event.jobId) ? event.jobId : null;
-        if (contextSessionId) {
-          const nextStatus =
-            event.stage === "listening"
-              ? "recording"
-              : event.stage === "cancelled"
-                ? "cancelled"
-                : event.stage === "error"
-                  ? "error"
-                  : "processing";
-          const jobPatch = {
-            status: nextStatus,
-          };
-          if (jobIdFromEvent !== null) {
-            jobPatch.jobId = jobIdFromEvent;
-          }
-          if (event?.context?.outputMode) {
-            jobPatch.outputMode = event.context.outputMode;
-          }
-          if (event.provider) {
-            jobPatch.provider = event.provider;
-          }
-          if (event.model) {
-            jobPatch.model = event.model;
-          }
-          upsertJob(contextSessionId, jobPatch);
-        }
-
-        if (event.stage) {
-          const shouldUpdateForeground =
-            !recordingSessionIdRef.current ||
-            (contextSessionId && contextSessionId === recordingSessionIdRef.current);
-
-          if (shouldUpdateForeground) {
-            updateStage(event.stage, {
-              stageLabel: event.stageLabel,
-              stageProgress: event.stageProgress,
-              overallProgress: event.overallProgress,
-              generatedChars: event.generatedChars,
-              generatedWords: event.generatedWords,
-              provider: event.provider,
-              model: event.model,
-              message: event.message,
-              ...(contextSessionId ? { sessionId: contextSessionId } : {}),
-              ...(jobIdFromEvent !== null ? { jobId: jobIdFromEvent } : {}),
-              ...(event?.context?.outputMode ? { outputMode: event.context.outputMode } : {}),
-            });
-          }
-
-          if (contextSessionId && (event.stage === "error" || event.stage === "cancelled")) {
-            setTimeout(() => removeJob(contextSessionId), 3000);
-          }
-          logger.trace(
-            "Pipeline progress",
-            {
-              stage: event.stage,
-              stageLabel: event.stageLabel,
-              message: event.message,
-              provider: event.provider,
-              model: event.model,
-              generatedChars: event.generatedChars,
-              generatedWords: event.generatedWords,
-              sessionId: contextSessionId,
-              jobId: jobIdFromEvent,
-            },
-            "pipeline"
-          );
-          return;
-        }
-
-        const shouldUpdateProgressCounters =
-          !recordingSessionIdRef.current || audioManagerRef.current?.getState?.()?.isStreaming;
-        if (!shouldUpdateProgressCounters) {
-          return;
-        }
-
-        setProgress((prev) => ({
-          ...prev,
-          generatedChars:
-            event.generatedChars !== undefined ? event.generatedChars : prev.generatedChars,
-          generatedWords:
-            event.generatedWords !== undefined ? event.generatedWords : prev.generatedWords,
-          provider: event.provider !== undefined ? event.provider : prev.provider,
-          model: event.model !== undefined ? event.model : prev.model,
-          message: event.message !== undefined ? event.message : prev.message,
-        }));
-      },
-      onPartialTranscript: (text) => {
-        setPartialTranscript(text);
-        if (typeof window !== "undefined" && window.__openwhisprLogLevel === "trace") {
-          logger.trace(
-            "Partial transcript",
-            {
-              sessionId: recordingSessionIdRef.current,
-              textLength: text.length,
-              text,
-            },
-            "dictation"
-          );
-        }
-        setProgress((prev) => {
-          if (prev.stage !== "listening" && prev.stage !== "transcribing") {
-            return prev;
-          }
-          const stage = prev.stage === "listening" ? "listening" : "transcribing";
-          return {
-            ...prev,
-            stage,
-            stageLabel: STAGE_META[stage].label,
-            generatedChars: text.length,
-            generatedWords: countWords(text),
-          };
-        });
-      },
-      onTranscriptionComplete: handleTranscriptionComplete,
+    const handleTranscriptionComplete = createTranscriptionCompleteHandler({
+      activeSessionRef,
+      audioManagerRef,
+      jobsBySessionIdRef,
+      normalizeTriggerPayload,
+      recordingSessionIdRef,
+      removeJob,
+      sessionsByIdRef,
+      setProgress,
+      setTranscript,
+      toast,
+      updateStage,
+      upsertJob,
     });
 
-    if (isE2E && typeof window !== "undefined") {
-      window.__openwhisprE2E = {
-        getProgress: () => latestProgressRef.current,
-        setStage: (stage, patch = {}) => {
-          updateStage(stage, patch);
-          return latestProgressRef.current;
-        },
-        setActiveSession: (payload = {}) => {
-          activeSessionRef.current = normalizeTriggerPayload(payload);
-          return activeSessionRef.current;
-        },
-        simulateTranscriptionComplete: async (resultPatch = {}, sessionPatch = {}) => {
-          const session = normalizeTriggerPayload(sessionPatch);
-          activeSessionRef.current = session;
-          const text =
-            typeof resultPatch.text === "string"
-              ? resultPatch.text
-              : String(resultPatch.text ?? "");
-          const rawText =
-            typeof resultPatch.rawText === "string"
-              ? resultPatch.rawText
-              : resultPatch.rawText == null
-                ? null
-                : String(resultPatch.rawText);
+    audioManagerRef.current.setCallbacks(
+      createAudioManagerCallbacks({
+        activeSessionRef,
+        audioManagerRef,
+        recordingSessionIdRef,
+        removeJob,
+        setIsProcessing,
+        setIsRecording,
+        setIsStreaming,
+        setPartialTranscript,
+        setProgress,
+        toast,
+        updateStage,
+        upsertJob,
+        onTranscriptionComplete: handleTranscriptionComplete,
+      })
+    );
 
-          return handleTranscriptionComplete({
-            success: true,
-            text,
-            rawText: rawText || text,
-            source: resultPatch.source || "e2e",
-            timings: resultPatch.timings || {},
-            limitReached: Boolean(resultPatch.limitReached),
-            wordsUsed: resultPatch.wordsUsed,
-            wordsRemaining: resultPatch.wordsRemaining,
-          });
-        },
-        isLikelyDictionaryPromptEcho: (transcribedText = "", dictionaryEntries = []) => {
-          const manager = audioManagerRef.current;
-          if (!manager?.isLikelyDictionaryPromptEcho) {
-            return false;
-          }
-          return manager.isLikelyDictionaryPromptEcho(transcribedText, dictionaryEntries);
-        },
-      };
-    }
+    const disposeE2E = installE2EHelpers({
+      enabled: isE2E,
+      activeSessionRef,
+      audioManagerRef,
+      latestProgressRef,
+      normalizeTriggerPayload,
+      onTranscriptionComplete: handleTranscriptionComplete,
+      updateStage,
+    });
 
     audioManagerRef.current.warmupStreamingConnection();
 
@@ -1049,12 +241,10 @@ export const useAudioRecording = (toast, options = {}) => {
       disposeStart?.();
       disposeStop?.();
       disposeNoAudio?.();
+      disposeE2E?.();
       clearProgressResetTimer();
       if (audioManagerRef.current) {
         audioManagerRef.current.cleanup();
-      }
-      if (isE2E && typeof window !== "undefined" && window.__openwhisprE2E) {
-        delete window.__openwhisprE2E;
       }
     };
   }, [
