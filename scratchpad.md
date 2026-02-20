@@ -288,3 +288,23 @@ Status: In Progress
 - [x] Run `npm test`.
 - [x] Run `npm run lint` (warnings only; no errors).
 - [x] Run `npm run typecheck`.
+
+## Issue 5 — Windows release gate split (maintainability + tests)
+
+### A) Code changes
+- [x] Split `scripts/gate/windows_release_gate.js` into small modules under `scripts/gate/windowsReleaseGate/` (all <400 LoC).
+- [x] Keep `scripts/gate/windows_release_gate.js` as a thin CLI wrapper calling `runWindowsReleaseGate()`.
+- [x] Expanded Vitest include patterns to run `scripts/**/*.test.*`.
+
+### B) Tests
+- [x] Added unit tests for extracted pure helpers:
+  - `scripts/gate/windowsReleaseGate/utils.test.ts`
+  - `scripts/gate/windowsReleaseGate/powershell.test.ts`
+
+## Issue 6 — Hotkey validation split (SRP + tests)
+
+### A) Code changes
+- [x] Split `src/utils/hotkeyValidator.ts` into focused modules under `src/utils/hotkeyValidator/` and kept a thin compatibility re-export.
+
+### B) Tests
+- [x] Added `src/utils/hotkeyValidator.test.ts` covering normalization + key validation contracts.
