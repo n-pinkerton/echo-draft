@@ -308,3 +308,15 @@ Status: In Progress
 
 ### B) Tests
 - [x] Added `src/utils/hotkeyValidator.test.ts` covering normalization + key validation contracts.
+
+## Issue 7 — HotkeyManager split (SRP + tests)
+
+### A) Code changes
+- [x] Reduced `src/helpers/hotkeyManager.js` <400 LoC by extracting focused modules under `src/helpers/hotkey/`:
+  - `hotkeyPatterns.js`
+  - `hotkeySuggestions.js`
+  - `hotkeyFailureReason.js`
+  - `hotkeySetupShortcuts.js`
+
+### B) Tests
+- [x] Added `src/helpers/hotkey/hotkeyPatterns.test.ts` and `src/helpers/hotkey/hotkeySetupShortcuts.test.ts`.
