@@ -173,6 +173,18 @@ Now that the audio subsystem is split and well-instrumented, the next maintainab
   - Added `@testing-library/react` + `@testing-library/jest-dom` and Vitest setup (`src/test/setup.ts`) and covered the new UI components with component-level tests.
   - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
 
+- [x] Refactored SettingsPage UI:
+  - Reduced `src/components/SettingsPage.tsx` to a thin section router (<300 LoC).
+  - Extracted `account` and `general` sections into `src/components/settings/sections/` (all files <400 LoC).
+  - Split General into smaller sub-sections under `src/components/settings/sections/general/*` (Updates/Appearance/Language/Hotkeys/Startup/Microphone).
+  - Added component tests for extracted sections (mocking heavy UI widgets where needed).
+  - Added `@testing-library/user-event` for interaction-style component tests.
+
+- [x] Improved persisted transcription diagnostics:
+  - Persisted `stopReason`/`stopSource` and basic text metrics (`rawWords`, `cleanedWords`, `rawChars`, `cleanedChars`) into `meta_json`.
+  - Updated History item details to display extra diagnostics (stop reason/source, audio size/format, chunks, hotkey→rec timing) when present.
+  - Expanded JSON/CSV export to include these extra fields.
+
 ## Archived: EchoDraft Fix Plan (2026-02-16)
 
 Date: 2026-02-16

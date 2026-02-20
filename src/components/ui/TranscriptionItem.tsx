@@ -36,6 +36,24 @@ const formatDuration = (value?: unknown) => {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 };
 
+const formatBytes = (value?: unknown) => {
+  if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
+    return null;
+  }
+
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  const kb = value / 1024;
+  if (kb < 1024) {
+    return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  }
+
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+};
+
 const getStatusClass = (status: string) => {
   if (status === "error") {
     return "bg-destructive/10 text-destructive";
@@ -115,6 +133,50 @@ export default function TranscriptionItem({
       value: formatDuration(timings.totalDurationMs),
     },
   ].filter((entry) => Boolean(entry.value));
+
+  const stopReason =
+    typeof meta.stopReason === "string" && meta.stopReason.trim()
+      ? meta.stopReason
+      : typeof timings.stopReason === "string" && timings.stopReason.trim()
+        ? String(timings.stopReason)
+        : null;
+  const stopSource =
+    typeof meta.stopSource === "string" && meta.stopSource.trim()
+      ? meta.stopSource
+      : typeof timings.stopSource === "string" && timings.stopSource.trim()
+        ? String(timings.stopSource)
+        : null;
+  const audioSizeLabel = formatBytes(timings.audioSizeBytes);
+  const audioFormat =
+    typeof timings.audioFormat === "string" && timings.audioFormat.trim()
+      ? timings.audioFormat
+      : null;
+  const chunksCount =
+    typeof timings.chunksCount === "number" && Number.isFinite(timings.chunksCount)
+      ? timings.chunksCount
+      : null;
+  const hotkeyToRecorderStartLabel =
+    formatDuration(timings.hotkeyToRecorderStartMs) || formatDuration(timings.hotkeyToStartCallMs);
+
+  const extraDiagnosticsRows: Array<{ label: string; value: string }> = [];
+  if (stopReason) {
+    extraDiagnosticsRows.push({
+      label: "Stop",
+      value: stopSource ? `${stopReason} (${stopSource})` : stopReason,
+    });
+  }
+  if (audioSizeLabel) {
+    extraDiagnosticsRows.push({
+      label: "Audio",
+      value: audioFormat ? `${audioSizeLabel} • ${audioFormat}` : audioSizeLabel,
+    });
+  }
+  if (chunksCount !== null) {
+    extraDiagnosticsRows.push({ label: "Chunks", value: String(chunksCount) });
+  }
+  if (hotkeyToRecorderStartLabel) {
+    extraDiagnosticsRows.push({ label: "Hotkey→Rec", value: hotkeyToRecorderStartLabel });
+  }
 
   return (
     <div
@@ -246,6 +308,18 @@ export default function TranscriptionItem({
                     </div>
                   ))}
                 </div>
+                {extraDiagnosticsRows.length > 0 ? (
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                    {extraDiagnosticsRows.map((row) => (
+                      <div key={row.label} className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">{row.label}</span>
+                        <span className="tabular-nums text-foreground break-words text-right">
+                          {row.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 {meta.error ? (
                   <p className="mt-1 text-[11px] text-destructive break-words">
                     {String(meta.error)}

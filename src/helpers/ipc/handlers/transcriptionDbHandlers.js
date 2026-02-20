@@ -67,6 +67,15 @@ function registerTranscriptionDbHandlers(
         pasteSucceeded:
           meta.pasteSucceeded === true ? "true" : meta.pasteSucceeded === false ? "false" : "",
         error: meta.error || "",
+        stopReason: meta.stopReason || timings.stopReason || "",
+        stopSource: meta.stopSource || timings.stopSource || "",
+        audioSizeBytes: timings.audioSizeBytes ?? "",
+        audioFormat: timings.audioFormat ?? "",
+        chunksCount: timings.chunksCount ?? "",
+        hotkeyToStartCallMs: timings.hotkeyToStartCallMs ?? "",
+        hotkeyToRecorderStartMs: timings.hotkeyToRecorderStartMs ?? "",
+        rawWords: meta.textMetrics?.rawWords ?? "",
+        cleanedWords: meta.textMetrics?.cleanedWords ?? "",
         recordMs: timings.recordDurationMs ?? timings.recordMs ?? "",
         transcribeMs:
           timings.transcriptionProcessingDurationMs ?? timings.transcribeDurationMs ?? "",
@@ -136,4 +145,3 @@ function registerTranscriptionDbHandlers(
 }
 
 module.exports = { registerTranscriptionDbHandlers };
-

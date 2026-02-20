@@ -81,6 +81,21 @@ describe("createTranscriptionCompleteHandler", () => {
 
     expect(electronAPI.writeClipboard).toHaveBeenCalledWith("hello world");
     expect(audioManagerRef.current.saveTranscription).toHaveBeenCalled();
+    const savePayload = (audioManagerRef.current.saveTranscription as any).mock.calls[0][0];
+    expect(savePayload.meta).toMatchObject({
+      sessionId: "s-1",
+      outputMode: "clipboard",
+      status: "success",
+      provider: "openai",
+      model: "gpt-4o-mini",
+      textMetrics: {
+        rawWords: 2,
+        cleanedWords: 2,
+        rawChars: 11,
+        cleanedChars: 11,
+      },
+      timings: expect.objectContaining({ recordDurationMs: 500 }),
+    });
     expect(updateStage).toHaveBeenCalledWith("saving", expect.objectContaining({ sessionId: "s-1" }));
     expect(updateStage).toHaveBeenCalledWith("done", expect.objectContaining({ sessionId: "s-1" }));
     expect(audioManagerRef.current.warmupStreamingConnection).toHaveBeenCalled();
@@ -164,6 +179,18 @@ describe("createTranscriptionCompleteHandler", () => {
       expect.objectContaining({ fromStreaming: true, insertionTarget: { hwnd: 99 } })
     );
     expect(audioManagerRef.current.saveTranscription).toHaveBeenCalled();
+    const savePayload = (audioManagerRef.current.saveTranscription as any).mock.calls[0][0];
+    expect(savePayload.meta).toMatchObject({
+      sessionId: "s-1",
+      outputMode: "insert",
+      status: "success",
+      textMetrics: {
+        rawWords: 2,
+        cleanedWords: 2,
+        rawChars: 9,
+        cleanedChars: 9,
+      },
+    });
     expect(updateStage).toHaveBeenCalledWith(
       "inserting",
       expect.objectContaining({ sessionId: "s-1", jobId: 1 })
@@ -172,4 +199,3 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(updateStage).toHaveBeenCalledWith("done", expect.objectContaining({ sessionId: "s-1" }));
   });
 });
-

@@ -66,6 +66,8 @@ export const createTranscriptionCompleteHandler = (deps) => {
     }
 
     const rawText = result.rawText || result.text;
+    const rawWords = countWords(rawText);
+    const cleanedWords = countWords(result.text);
     logger.info(
       "Dictation transcription complete",
       {
@@ -184,10 +186,24 @@ export const createTranscriptionCompleteHandler = (deps) => {
     const saveStart = performance.now();
     const recordDurationMs =
       typeof job?.recordedMs === "number" && job.recordedMs > 0 ? Math.round(job.recordedMs) : null;
+    const stopReason =
+      typeof job?.stopReason === "string" && job.stopReason.trim()
+        ? job.stopReason.trim()
+        : typeof result?.timings?.stopReason === "string" && result.timings.stopReason.trim()
+          ? result.timings.stopReason.trim()
+          : null;
+    const stopSource =
+      typeof job?.stopSource === "string" && job.stopSource.trim()
+        ? job.stopSource.trim()
+        : typeof result?.timings?.stopSource === "string" && result.timings.stopSource.trim()
+          ? result.timings.stopSource.trim()
+          : null;
     const baseTimings = {
       ...(result.timings || {}),
       ...(recordDurationMs !== null ? { recordDurationMs } : {}),
       pasteDurationMs: pasteMs,
+      ...(stopReason ? { stopReason } : {}),
+      ...(stopSource ? { stopSource } : {}),
     };
     const provider = job?.provider || result.source || "";
     const model = job?.model || "";
@@ -204,6 +220,14 @@ export const createTranscriptionCompleteHandler = (deps) => {
         model,
         insertionTarget: session.insertionTarget || null,
         pasteSucceeded,
+        ...(stopReason ? { stopReason } : {}),
+        ...(stopSource ? { stopSource } : {}),
+        textMetrics: {
+          rawWords,
+          cleanedWords,
+          rawChars: rawText.length,
+          cleanedChars: result.text.length,
+        },
         timings: baseTimings,
       },
     });
@@ -310,4 +334,3 @@ export const createTranscriptionCompleteHandler = (deps) => {
     audioManager.warmupStreamingConnection();
   };
 };
-
