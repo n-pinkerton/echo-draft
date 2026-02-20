@@ -1,22 +1,18 @@
 # EchoDraft Scratchpad
 
-Date: 2026-02-19
+Date: 2026-02-20
 Status: In Progress
+
+## Current Focus (2026-02-20)
+- The “I have also provided…” incident was **not a UI truncation**: the stored DB record shows ~34.4s of audio and 9 words raw/clean (see progress log).
+- Audio subsystem refactors from earlier in the week are already landed (AudioManager is now ~399 LoC and composes focused modules).
+- Current work is continuing the same best-practice approach across remaining oversized modules (hotkeys/window routing, release gate, UI hotkey capture, then the remaining >400 LoC files) while expanding tests/contracts.
 
 ## AudioManager Refactor (SOLID + Maintainability)
 
 ### Context / Why this work matters
-- `src/helpers/audioManager.js` is ~3.3k lines and currently mixes responsibilities:
-  - microphone constraints + warmup + permission heuristics
-  - non-streaming recording (MediaRecorder)
-  - streaming recording (AudioWorklet + AssemblyAI websocket via IPC)
-  - transcription provider routing (local Whisper/Parakeet, EchoDraft Cloud, BYOK OpenAI/Groq/Mistral/custom)
-  - OpenAI SSE parsing for streaming STT
-  - audio optimization + WAV conversion helpers
-  - reasoning/cleanup orchestration
-  - persistence helpers (safe paste, save history)
-  - debug-only instrumentation (trace logs, debug audio capture)
-- This makes changes risky, increases bug surface area (hidden coupling), and makes contract-style testing difficult.
+- This refactor has been completed: `src/helpers/audioManager.js` is now a small orchestrator (~399 LoC) that composes focused modules under `src/helpers/audio/`.
+- The same approach (SRP/DI + contract tests) is now being applied across the rest of the application.
 
 ### Goals (acceptance criteria)
 - Split responsibilities into focused modules (single responsibility, clear boundaries, dependency injection where helpful).
@@ -31,8 +27,7 @@ Status: In Progress
 - Add JSDoc on module boundaries and cross references to make intent obvious.
 
 ### Non-goals (explicitly out of scope unless needed)
-- Full repo-wide 100% coverage (this is a large Electron app; we focus on the audio subsystem contract + pure logic).
-- Rewriting the UI stage machine in `useAudioRecording` (we’ll keep its contract stable).
+- None — continue expanding contract coverage while refactoring, and don’t weaken tests to “make things pass”.
 
 ### Proposed module split (target structure)
 - `src/helpers/audio/`
@@ -195,6 +190,16 @@ Now that the audio subsystem is split and well-instrumented, the next maintainab
   - Persisted `stopReason`/`stopSource` and basic text metrics (`rawWords`, `cleanedWords`, `rawChars`, `cleanedChars`) into `meta_json`.
   - Updated History item details to display extra diagnostics (stop reason/source, audio size/format, chunks, hotkey→rec timing) when present.
   - Expanded JSON/CSV export to include these extra fields.
+
+- [x] Refactored hotkey + window orchestration for maintainability and testability:
+  - Split `src/helpers/windowManager.js` into focused modules under `src/helpers/windowManager/` + added unit tests.
+  - Split `src/helpers/hotkeyManager.js` helper logic into `src/helpers/hotkey/*` + added unit tests.
+  - Split `src/utils/hotkeyValidator.ts` into modules under `src/utils/hotkeyValidator/` + added unit tests.
+  - Split `src/components/ui/HotkeyInput.tsx` capture logic into `src/components/ui/hotkeyInput/*` + added unit tests.
+
+- [x] Refactored Windows release gate into modules + tests:
+  - Split `scripts/gate/windows_release_gate.js` into a thin wrapper + focused modules under `scripts/gate/windowsReleaseGate/`.
+  - Added unit tests for shared helpers and PowerShell parsing.
 
 ## Archived: EchoDraft Fix Plan (2026-02-16)
 
