@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 export default defineConfig({
   test: {
     environment: "jsdom",
-    include: ["src/**/*.test.{js,jsx,ts,tsx}"],
+    include: ["src/**/*.test.{js,jsx,ts,tsx}", "scripts/**/*.test.{js,jsx,ts,tsx}"],
     setupFiles: ["src/test/setup.ts"],
   },
   resolve: {
