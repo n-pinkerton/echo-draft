@@ -1,12 +1,4 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Download, Trash2, Cloud, Lock, X } from "lucide-react";
-import { ProviderIcon } from "./ui/ProviderIcon";
-import { ProviderTabs } from "./ui/ProviderTabs";
-import ModelCardList from "./ui/ModelCardList";
-import { DownloadProgressBar } from "./ui/DownloadProgressBar";
-import ApiKeyInput from "./ui/ApiKeyInput";
 import { ConfirmDialog } from "./ui/dialog";
 import { useDialogs } from "../hooks/useDialogs";
 import { useModelDownload } from "../hooks/useModelDownload";
@@ -22,160 +14,19 @@ import {
   type ModelPickerStyles,
 } from "../utils/modelPickerStyles";
 import { getProviderIcon, isMonochromeProvider } from "../utils/providerIcons";
-import { API_ENDPOINTS } from "../config/constants";
-import { createExternalLinkHandler } from "../utils/externalLinks";
+import { API_ENDPOINTS, normalizeBaseUrl } from "../config/constants";
+import { ModeToggle } from "./transcriptionModelPicker/ModeToggle";
+import {
+  LOCAL_PROVIDER_TABS,
+  VALID_CLOUD_PROVIDER_IDS,
+} from "./transcriptionModelPicker/constants";
+import CloudModePanel from "./transcriptionModelPicker/cloud/CloudModePanel";
+import LocalModePanel from "./transcriptionModelPicker/local/LocalModePanel";
 
 interface LocalModel {
   model: string;
   size_mb?: number;
   downloaded?: boolean;
-}
-
-interface LocalModelCardProps {
-  modelId: string;
-  name: string;
-  description: string;
-  size: string;
-  actualSizeMb?: number;
-  isSelected: boolean;
-  isDownloaded: boolean;
-  isDownloading: boolean;
-  isCancelling: boolean;
-  recommended?: boolean;
-  provider: string;
-  languageLabel?: string;
-  onSelect: () => void;
-  onDelete: () => void;
-  onDownload: () => void;
-  onCancel: () => void;
-  styles: ModelPickerStyles;
-}
-
-function LocalModelCard({
-  modelId,
-  name,
-  description,
-  size,
-  actualSizeMb,
-  isSelected,
-  isDownloaded,
-  isDownloading,
-  isCancelling,
-  recommended,
-  provider,
-  languageLabel,
-  onSelect,
-  onDelete,
-  onDownload,
-  onCancel,
-  styles: cardStyles,
-}: LocalModelCardProps) {
-  // Click to select if downloaded
-  const handleClick = () => {
-    if (isDownloaded && !isSelected) {
-      onSelect();
-    }
-  };
-
-  return (
-    <div
-      onClick={handleClick}
-      className={`relative w-full text-left overflow-hidden rounded-md border transition-all duration-200 group ${
-        isSelected ? cardStyles.modelCard.selected : cardStyles.modelCard.default
-      } ${isDownloaded && !isSelected ? "cursor-pointer" : ""}`}
-    >
-      {/* Left accent bar for selected model */}
-      {isSelected && (
-        <div className="absolute left-0 top-0 bottom-0 w-1 bg-linear-to-b from-primary via-primary to-primary/80 rounded-l-md" />
-      )}
-      <div className="flex items-center gap-1.5 p-2 pl-2.5">
-        {/* Status dot with LED glow */}
-        <div className="shrink-0">
-          {isDownloaded ? (
-            <div
-              className={`w-1.5 h-1.5 rounded-full ${
-                isSelected
-                  ? "bg-primary shadow-[0_0_6px_oklch(0.62_0.22_260/0.6)] animate-[pulse-glow_2s_ease-in-out_infinite]"
-                  : "bg-success shadow-[0_0_4px_rgba(34,197,94,0.5)]"
-              }`}
-            />
-          ) : isDownloading ? (
-            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.5)] animate-[spinner-rotate_1s_linear_infinite]" />
-          ) : (
-            <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground/20" />
-          )}
-        </div>
-
-        {/* Model info - single line, no description */}
-        <div className="flex-1 min-w-0 flex items-center gap-1.5">
-          <ProviderIcon provider={provider} className="w-3.5 h-3.5 shrink-0" />
-          <span className="font-semibold text-sm text-foreground truncate tracking-tight">
-            {name}
-          </span>
-          <span className="text-[11px] text-muted-foreground/50 tabular-nums shrink-0">
-            {actualSizeMb ? `${actualSizeMb}MB` : size}
-          </span>
-          {recommended && <span className={cardStyles.badges.recommended}>Recommended</span>}
-          {languageLabel && (
-            <span className="text-[11px] text-muted-foreground/50 font-medium shrink-0">
-              {languageLabel}
-            </span>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {isDownloaded ? (
-            <>
-              {isSelected && (
-                <span className="text-[10px] font-medium text-primary px-2 py-0.5 bg-primary/10 rounded-sm">
-                  Active
-                </span>
-              )}
-              <Button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete();
-                }}
-                size="sm"
-                variant="ghost"
-                className="h-6 w-6 p-0 text-muted-foreground/40 hover:text-destructive opacity-0 group-hover:opacity-100 transition-all active:scale-95"
-              >
-                <Trash2 size={12} />
-              </Button>
-            </>
-          ) : isDownloading ? (
-            <Button
-              onClick={(e) => {
-                e.stopPropagation();
-                onCancel();
-              }}
-              disabled={isCancelling}
-              size="sm"
-              variant="outline"
-              className="h-6 px-2.5 text-[11px] text-destructive border-destructive/25 hover:bg-destructive/8"
-            >
-              <X size={11} className="mr-0.5" />
-              {isCancelling ? "..." : "Cancel"}
-            </Button>
-          ) : (
-            <Button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDownload();
-              }}
-              size="sm"
-              variant="default"
-              className="h-6 px-2.5 text-[11px]"
-            >
-              <Download size={11} className="mr-1" />
-              Download
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 interface TranscriptionModelPickerProps {
@@ -201,57 +52,6 @@ interface TranscriptionModelPickerProps {
   setCloudTranscriptionBaseUrl?: (url: string) => void;
   className?: string;
   variant?: "onboarding" | "settings";
-}
-
-const CLOUD_PROVIDER_TABS = [
-  { id: "openai", name: "OpenAI" },
-  { id: "groq", name: "Groq", recommended: true },
-  { id: "mistral", name: "Mistral" },
-  { id: "custom", name: "Custom" },
-];
-
-const VALID_CLOUD_PROVIDER_IDS = CLOUD_PROVIDER_TABS.map((p) => p.id);
-
-const LOCAL_PROVIDER_TABS: Array<{ id: string; name: string; disabled?: boolean }> = [
-  { id: "whisper", name: "OpenAI Whisper" },
-  { id: "nvidia", name: "NVIDIA Parakeet" },
-];
-
-// Mode toggle component - defined outside to prevent recreation on every render
-interface ModeToggleProps {
-  useLocalWhisper: boolean;
-  onModeChange: (useLocal: boolean) => void;
-}
-
-function ModeToggle({ useLocalWhisper, onModeChange }: ModeToggleProps) {
-  return (
-    <div className="relative flex p-0.5 rounded-lg bg-surface-1/80 backdrop-blur-xl dark:bg-surface-1 border border-border/60 dark:border-white/8 shadow-(--shadow-metallic-light) dark:shadow-(--shadow-metallic-dark)">
-      {/* Sliding indicator */}
-      <div
-        className={`absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] rounded-md bg-card border border-border/60 dark:border-border-subtle shadow-(--shadow-metallic-light) dark:shadow-(--shadow-metallic-dark) transition-transform duration-200 ease-out ${
-          useLocalWhisper ? "translate-x-[calc(100%)]" : "translate-x-0"
-        }`}
-      />
-      <button
-        onClick={() => onModeChange(false)}
-        className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md transition-colors duration-150 ${
-          !useLocalWhisper ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-        }`}
-      >
-        <Cloud className="w-3.5 h-3.5" />
-        <span className="text-xs font-medium">Cloud</span>
-      </button>
-      <button
-        onClick={() => onModeChange(true)}
-        className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md transition-colors duration-150 ${
-          useLocalWhisper ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-        }`}
-      >
-        <Lock className="w-3.5 h-3.5" />
-        <span className="text-xs font-medium">Local</span>
-      </button>
-    </div>
-  );
 }
 
 export default function TranscriptionModelPicker({
@@ -286,9 +86,7 @@ export default function TranscriptionModelPicker({
 
   // Sync internal state with prop when it changes externally
   useEffect(() => {
-    if (selectedLocalProvider !== internalLocalProvider) {
-      setInternalLocalProvider(selectedLocalProvider);
-    }
+    setInternalLocalProvider(selectedLocalProvider);
   }, [selectedLocalProvider]);
   const isLoadingRef = useRef(false);
   const isLoadingParakeetRef = useRef(false);
@@ -360,7 +158,9 @@ export default function TranscriptionModelPicker({
   }, []);
 
   const ensureValidCloudSelection = useCallback(() => {
-    const isValidProvider = VALID_CLOUD_PROVIDER_IDS.includes(selectedCloudProvider);
+    const isValidProvider = (VALID_CLOUD_PROVIDER_IDS as readonly string[]).includes(
+      selectedCloudProvider
+    );
 
     if (!isValidProvider) {
       // Check if we have a custom URL that differs from known providers
@@ -531,8 +331,6 @@ export default function TranscriptionModelPicker({
     const trimmed = (cloudTranscriptionBaseUrl || "").trim();
     if (!trimmed) return;
 
-    // Normalize the URL using the existing util from constants
-    const { normalizeBaseUrl } = require("../config/constants");
     const normalized = normalizeBaseUrl(trimmed);
 
     if (normalized && normalized !== cloudTranscriptionBaseUrl) {
@@ -596,90 +394,6 @@ export default function TranscriptionModelPicker({
     }));
   }, [currentCloudProvider, selectedCloudProvider]);
 
-  const progressDisplay = useMemo(() => {
-    if (!useLocalWhisper) return null;
-
-    if (downloadingModel && internalLocalProvider === "whisper") {
-      const modelInfo = WHISPER_MODEL_INFO[downloadingModel];
-      return (
-        <DownloadProgressBar
-          modelName={modelInfo?.name || downloadingModel}
-          progress={downloadProgress}
-          isInstalling={isInstalling}
-        />
-      );
-    }
-
-    if (downloadingParakeetModel && internalLocalProvider === "nvidia") {
-      const modelInfo = PARAKEET_MODEL_INFO[downloadingParakeetModel];
-      return (
-        <DownloadProgressBar
-          modelName={modelInfo?.name || downloadingParakeetModel}
-          progress={parakeetDownloadProgress}
-          isInstalling={isInstallingParakeet}
-        />
-      );
-    }
-
-    return null;
-  }, [
-    downloadingModel,
-    downloadProgress,
-    isInstalling,
-    downloadingParakeetModel,
-    parakeetDownloadProgress,
-    isInstallingParakeet,
-    useLocalWhisper,
-    internalLocalProvider,
-  ]);
-
-  const renderLocalModels = () => {
-    const modelsToRender =
-      localModels.length === 0
-        ? Object.entries(WHISPER_MODEL_INFO).map(([modelId, info]) => ({
-            model: modelId,
-            downloaded: false,
-            size_mb: info.sizeMb,
-          }))
-        : localModels;
-
-    return (
-      <div className="space-y-0.5">
-        {modelsToRender.map((model) => {
-          const modelId = model.model;
-          const info = WHISPER_MODEL_INFO[modelId] ?? {
-            name: modelId,
-            description: "Model",
-            size: "Unknown",
-            recommended: false,
-          };
-
-          return (
-            <LocalModelCard
-              key={modelId}
-              modelId={modelId}
-              name={info.name}
-              description={info.description}
-              size={info.size}
-              actualSizeMb={model.size_mb}
-              isSelected={modelId === selectedLocalModel}
-              isDownloaded={model.downloaded ?? false}
-              isDownloading={isDownloadingModel(modelId)}
-              isCancelling={isCancelling}
-              recommended={info.recommended}
-              provider="whisper"
-              onSelect={() => handleWhisperModelSelect(modelId)}
-              onDelete={() => handleDelete(modelId)}
-              onDownload={() => downloadModel(modelId, handleWhisperModelSelect)}
-              onCancel={cancelDownload}
-              styles={styles}
-            />
-          );
-        })}
-      </div>
-    );
-  };
-
   const handleParakeetDelete = useCallback(
     (modelId: string) => {
       showConfirmDialog({
@@ -700,180 +414,61 @@ export default function TranscriptionModelPicker({
     [showConfirmDialog, deleteParakeetModel]
   );
 
-  // Helper to get language label for Parakeet models
-  const getParakeetLanguageLabel = (language: string) => {
-    return language === "multilingual" ? "25 languages" : "English";
-  };
-
-  const renderParakeetModels = () => {
-    // When no models are loaded yet, show all available models from registry
-    const modelsToRender =
-      parakeetModels.length === 0
-        ? Object.entries(PARAKEET_MODEL_INFO).map(([modelId, info]) => ({
-            model: modelId,
-            downloaded: false,
-            size_mb: info.sizeMb,
-          }))
-        : parakeetModels;
-
-    return (
-      <div className="space-y-0.5">
-        {modelsToRender.map((model) => {
-          const modelId = model.model;
-          const info = PARAKEET_MODEL_INFO[modelId] ?? {
-            name: modelId,
-            description: "NVIDIA Parakeet Model",
-            size: "Unknown",
-            language: "en",
-            recommended: false,
-          };
-
-          return (
-            <LocalModelCard
-              key={modelId}
-              modelId={modelId}
-              name={info.name}
-              description={info.description}
-              size={info.size}
-              actualSizeMb={model.size_mb}
-              isSelected={modelId === selectedLocalModel}
-              isDownloaded={model.downloaded ?? false}
-              isDownloading={isDownloadingParakeetModel(modelId)}
-              isCancelling={isCancellingParakeet}
-              recommended={info.recommended}
-              provider="nvidia"
-              languageLabel={getParakeetLanguageLabel(info.language)}
-              onSelect={() => handleParakeetModelSelect(modelId)}
-              onDelete={() => handleParakeetDelete(modelId)}
-              onDownload={() => downloadParakeetModel(modelId, handleParakeetModelSelect)}
-              onCancel={cancelParakeetDownload}
-              styles={styles}
-            />
-          );
-        })}
-      </div>
-    );
-  };
-
   return (
     <div className={`space-y-2 ${className}`}>
       {/* Integrated mode toggle - always visible */}
       <ModeToggle useLocalWhisper={useLocalWhisper} onModeChange={handleModeChange} />
 
       {!useLocalWhisper ? (
-        <div className={styles.container}>
-          <div className="p-2 pb-0">
-            <ProviderTabs
-              providers={CLOUD_PROVIDER_TABS}
-              selectedId={selectedCloudProvider}
-              onSelect={handleCloudProviderChange}
-              colorScheme={colorScheme === "purple" ? "purple" : "indigo"}
-              scrollable
-            />
-          </div>
-
-          <div className="p-2">
-            {selectedCloudProvider === "custom" ? (
-              <div className="space-y-2">
-                {/* Endpoint URL */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-foreground">Endpoint URL</label>
-                  <Input
-                    value={cloudTranscriptionBaseUrl}
-                    onChange={(e) => setCloudTranscriptionBaseUrl?.(e.target.value)}
-                    onBlur={handleBaseUrlBlur}
-                    placeholder="https://your-api.example.com/v1"
-                    className="h-8 text-sm"
-                  />
-                </div>
-
-                {/* API Key */}
-                <ApiKeyInput
-                  apiKey={customTranscriptionApiKey}
-                  setApiKey={setCustomTranscriptionApiKey || (() => {})}
-                  label="API Key (Optional)"
-                  helpText=""
-                />
-
-                {/* Model Name */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-foreground">Model</label>
-                  <Input
-                    value={selectedCloudModel}
-                    onChange={(e) => onCloudModelSelect(e.target.value)}
-                    placeholder="whisper-1"
-                    className="h-8 text-sm"
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {/* API Key with inline link */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-medium text-foreground">API Key</label>
-                    <button
-                      type="button"
-                      onClick={createExternalLinkHandler(
-                        {
-                          groq: "https://console.groq.com/keys",
-                          mistral: "https://console.mistral.ai/api-keys",
-                          openai: "https://platform.openai.com/api-keys",
-                        }[selectedCloudProvider] || "https://platform.openai.com/api-keys"
-                      )}
-                      className="text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer"
-                    >
-                      Get key →
-                    </button>
-                  </div>
-                  <ApiKeyInput
-                    apiKey={
-                      { groq: groqApiKey, mistral: mistralApiKey, openai: openaiApiKey }[
-                        selectedCloudProvider
-                      ] || openaiApiKey
-                    }
-                    setApiKey={
-                      { groq: setGroqApiKey, mistral: setMistralApiKey, openai: setOpenaiApiKey }[
-                        selectedCloudProvider
-                      ] || setOpenaiApiKey
-                    }
-                    label=""
-                    helpText=""
-                  />
-                </div>
-
-                {/* Model Selection */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-foreground">Model</label>
-                  <ModelCardList
-                    models={cloudModelOptions}
-                    selectedModel={selectedCloudModel}
-                    onModelSelect={onCloudModelSelect}
-                    colorScheme={colorScheme === "purple" ? "purple" : "indigo"}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <CloudModePanel
+          styles={styles}
+          tabColorScheme={colorScheme === "purple" ? "purple" : "indigo"}
+          selectedCloudProvider={selectedCloudProvider}
+          selectedCloudModel={selectedCloudModel}
+          onCloudProviderChange={handleCloudProviderChange}
+          onCloudModelSelect={onCloudModelSelect}
+          cloudModelOptions={cloudModelOptions}
+          cloudTranscriptionBaseUrl={cloudTranscriptionBaseUrl}
+          setCloudTranscriptionBaseUrl={setCloudTranscriptionBaseUrl}
+          onBaseUrlBlur={handleBaseUrlBlur}
+          openaiApiKey={openaiApiKey}
+          setOpenaiApiKey={setOpenaiApiKey}
+          groqApiKey={groqApiKey}
+          setGroqApiKey={setGroqApiKey}
+          mistralApiKey={mistralApiKey}
+          setMistralApiKey={setMistralApiKey}
+          customTranscriptionApiKey={customTranscriptionApiKey}
+          setCustomTranscriptionApiKey={setCustomTranscriptionApiKey}
+        />
       ) : (
-        <div className={styles.container}>
-          <div className="p-2 pb-0">
-            <ProviderTabs
-              providers={LOCAL_PROVIDER_TABS}
-              selectedId={internalLocalProvider}
-              onSelect={handleLocalProviderChange}
-              colorScheme={colorScheme === "purple" ? "purple" : "indigo"}
-            />
-          </div>
-
-          {progressDisplay}
-
-          <div className="p-2">
-            {internalLocalProvider === "whisper" && renderLocalModels()}
-            {internalLocalProvider === "nvidia" && renderParakeetModels()}
-          </div>
-        </div>
+        <LocalModePanel
+          styles={styles}
+          tabColorScheme={colorScheme === "purple" ? "purple" : "indigo"}
+          internalLocalProvider={internalLocalProvider}
+          onLocalProviderChange={handleLocalProviderChange}
+          useLocalWhisper={useLocalWhisper}
+          selectedLocalModel={selectedLocalModel}
+          localModels={localModels}
+          parakeetModels={parakeetModels}
+          downloadingModel={downloadingModel}
+          downloadProgress={downloadProgress}
+          isInstalling={isInstalling}
+          downloadingParakeetModel={downloadingParakeetModel}
+          parakeetDownloadProgress={parakeetDownloadProgress}
+          isInstallingParakeet={isInstallingParakeet}
+          isDownloadingModel={isDownloadingModel}
+          isCancelling={isCancelling}
+          downloadModel={downloadModel}
+          cancelDownload={cancelDownload}
+          isDownloadingParakeetModel={isDownloadingParakeetModel}
+          isCancellingParakeet={isCancellingParakeet}
+          downloadParakeetModel={downloadParakeetModel}
+          cancelParakeetDownload={cancelParakeetDownload}
+          onWhisperModelSelect={handleWhisperModelSelect}
+          onWhisperModelDelete={handleDelete}
+          onParakeetModelSelect={handleParakeetModelSelect}
+          onParakeetModelDelete={handleParakeetDelete}
+        />
       )}
 
       <ConfirmDialog

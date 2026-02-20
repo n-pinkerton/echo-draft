@@ -180,6 +180,11 @@ Now that the audio subsystem is split and well-instrumented, the next maintainab
   - Added component tests for extracted sections (mocking heavy UI widgets where needed).
   - Added `@testing-library/user-event` for interaction-style component tests.
 
+- [x] Refactored TranscriptionModelPicker UI:
+  - Split `src/components/TranscriptionModelPicker.tsx` into focused modules under `src/components/transcriptionModelPicker/` (`ModeToggle`, `CloudModePanel`, `LocalModePanel`, `LocalModelCard`, constants).
+  - Added component tests for new modules.
+  - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
+
 - [x] Improved persisted transcription diagnostics:
   - Persisted `stopReason`/`stopSource` and basic text metrics (`rawWords`, `cleanedWords`, `rawChars`, `cleanedChars`) into `meta_json`.
   - Updated History item details to display extra diagnostics (stop reason/source, audio size/format, chunks, hotkey→rec timing) when present.
