@@ -325,3 +325,83 @@ Status: In Progress
 
 ### B) Tests
 - [x] Added `src/helpers/hotkey/hotkeyPatterns.test.ts` and `src/helpers/hotkey/hotkeySetupShortcuts.test.ts`.
+
+## Issue 8 — Parakeet helpers split (SRP + tests)
+
+### A) Code changes
+- [x] Replaced `src/helpers/parakeet.js` with a thin wrapper that re-exports `ParakeetManager`.
+- [x] Extracted focused modules under `src/helpers/parakeet/`:
+  - `ParakeetManager.js` (orchestrator)
+  - `ParakeetModelStore.js` (persistence)
+  - `modelRegistry.js`, `modelFiles.js` (model metadata + file naming)
+  - `resultParser.js` (provider-specific response parsing)
+
+### B) Tests
+- [x] Added unit tests for the extracted contracts:
+  - `src/helpers/parakeet/ParakeetManager.test.ts`
+  - `src/helpers/parakeet/modelRegistry.test.ts`
+  - `src/helpers/parakeet/resultParser.test.ts`
+
+## Issue 9 — AssemblyAI streaming split (SRP + tests)
+
+### A) Code changes
+- [x] Replaced `src/helpers/assemblyAiStreaming.js` with a thin wrapper exporting `AssemblyAiStreaming`.
+- [x] Extracted focused modules under `src/helpers/assemblyAiStreaming/`:
+  - `constants.js`, `urlBuilder.js`
+  - `tokenCache.js` (cache + refresh)
+  - `audioStats.js` (bytes/chunks timing)
+  - `turns.js` (turn accounting)
+  - `warmConnection.js` / `sessionConnection.js` (lifecycle)
+
+### B) Tests
+- [x] Added unit tests for extracted helpers (`urlBuilder`, `tokenCache`, `audioStats`).
+
+## Issue 10 — ModelManager bridge split (SRP + tests)
+
+### A) Code changes
+- [x] Replaced `src/helpers/modelManagerBridge.js` with a thin wrapper exporting `ModelManager`.
+- [x] Extracted focused modules under `src/helpers/modelManagerBridge/`:
+  - `ModelManager.js` (orchestrator)
+  - `errors.js` (typed errors)
+  - `modelRegistry.js` (model definitions)
+  - `fileValidation.js` (path + existence checks)
+
+### B) Tests
+- [x] Added unit tests for error + registry contracts.
+
+## Issue 11 — PromptStudio split (UI SRP + tests)
+
+### A) Code changes
+- [x] Reduced `src/components/ui/PromptStudio.tsx` to a controller (~150 LoC).
+- [x] Extracted tabs into `src/components/ui/promptStudio/`:
+  - `PromptStudioViewTab.tsx`
+  - `PromptStudioEditTab.tsx`
+  - `PromptStudioTestTab.tsx`
+
+### B) Tests
+- [x] Added `src/components/ui/PromptStudio.test.tsx`.
+
+## Issue 12 — TranscriptionModelPicker hooks extraction (UI SRP + tests)
+
+### A) Code changes
+- [x] Extracted hooks/types into `src/components/transcriptionModelPicker/hooks/`:
+  - `modelTypes.ts`
+  - `useWhisperModels.ts`
+  - `useParakeetModels.ts`
+
+### B) Tests
+- [x] Added hook tests for Whisper + Parakeet model selection logic.
+
+## Next — Remaining oversized files (2026-02-20)
+
+Goal: continue applying SRP/DI + contract tests across the biggest remaining files until everything is consistently reviewable (<~400 LoC) and well covered.
+
+Backlog (largest first):
+- [ ] `src/components/OnboardingFlow.tsx` (~805)
+- [ ] `src/components/ReasoningModelSelector.tsx` (~787)
+- [ ] `src/types/electron.ts` (~692)
+- [ ] `src/components/AuthenticationStep.tsx` (~596)
+- [ ] `src/main.jsx` (~492)
+- [ ] `src/App.jsx` (~490)
+- [ ] `src/helpers/audio/recording/nonStreamingRecording.js` (~418)
+- [ ] `src/helpers/__tests__/audioManager.test.ts` (~500) (split into focused test files, keep coverage)

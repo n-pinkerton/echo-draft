@@ -1,13 +1,8 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { ConfirmDialog } from "./ui/dialog";
 import { useDialogs } from "../hooks/useDialogs";
 import { useModelDownload } from "../hooks/useModelDownload";
-import {
-  getTranscriptionProviders,
-  TranscriptionProviderData,
-  WHISPER_MODEL_INFO,
-  PARAKEET_MODEL_INFO,
-} from "../models/ModelRegistry";
+import { getTranscriptionProviders, TranscriptionProviderData } from "../models/ModelRegistry";
 import {
   MODEL_PICKER_COLORS,
   type ColorScheme,
@@ -22,12 +17,8 @@ import {
 } from "./transcriptionModelPicker/constants";
 import CloudModePanel from "./transcriptionModelPicker/cloud/CloudModePanel";
 import LocalModePanel from "./transcriptionModelPicker/local/LocalModePanel";
-
-interface LocalModel {
-  model: string;
-  size_mb?: number;
-  downloaded?: boolean;
-}
+import { useParakeetModels } from "./transcriptionModelPicker/hooks/useParakeetModels";
+import { useWhisperModels } from "./transcriptionModelPicker/hooks/useWhisperModels";
 
 interface TranscriptionModelPickerProps {
   selectedCloudProvider: string;
@@ -78,84 +69,30 @@ export default function TranscriptionModelPicker({
   className = "",
   variant = "settings",
 }: TranscriptionModelPickerProps) {
-  const [localModels, setLocalModels] = useState<LocalModel[]>([]);
-  const [parakeetModels, setParakeetModels] = useState<LocalModel[]>([]);
   const [internalLocalProvider, setInternalLocalProvider] = useState(selectedLocalProvider);
-  const hasLoadedRef = useRef(false);
-  const hasLoadedParakeetRef = useRef(false);
 
   // Sync internal state with prop when it changes externally
   useEffect(() => {
     setInternalLocalProvider(selectedLocalProvider);
   }, [selectedLocalProvider]);
-  const isLoadingRef = useRef(false);
-  const isLoadingParakeetRef = useRef(false);
-  const loadLocalModelsRef = useRef<(() => Promise<void>) | null>(null);
-  const loadParakeetModelsRef = useRef<(() => Promise<void>) | null>(null);
-  const ensureValidCloudSelectionRef = useRef<(() => void) | null>(null);
-  const selectedLocalModelRef = useRef(selectedLocalModel);
-  const onLocalModelSelectRef = useRef(onLocalModelSelect);
+
+  const whisperModelsEnabled = useLocalWhisper && internalLocalProvider === "whisper";
+  const parakeetModelsEnabled = useLocalWhisper && internalLocalProvider === "nvidia";
+
+  const { models: localModels, reload: loadLocalModels } = useWhisperModels({
+    enabled: whisperModelsEnabled,
+    selectedModel: selectedLocalModel,
+    onSelectModel: onLocalModelSelect,
+  });
+
+  const { models: parakeetModels, reload: loadParakeetModels } = useParakeetModels({
+    enabled: parakeetModelsEnabled,
+  });
 
   const { confirmDialog, showConfirmDialog, hideConfirmDialog } = useDialogs();
   const colorScheme: ColorScheme = variant === "settings" ? "purple" : "blue";
   const styles = useMemo(() => MODEL_PICKER_COLORS[colorScheme], [colorScheme]);
   const cloudProviders = useMemo(() => getTranscriptionProviders(), []);
-
-  useEffect(() => {
-    selectedLocalModelRef.current = selectedLocalModel;
-  }, [selectedLocalModel]);
-  useEffect(() => {
-    onLocalModelSelectRef.current = onLocalModelSelect;
-  }, [onLocalModelSelect]);
-
-  const validateAndSelectModel = useCallback((loadedModels: LocalModel[]) => {
-    const current = selectedLocalModelRef.current;
-    if (!current) return;
-
-    const downloaded = loadedModels.filter((m) => m.downloaded);
-    const isCurrentDownloaded = loadedModels.find((m) => m.model === current)?.downloaded;
-
-    if (!isCurrentDownloaded && downloaded.length > 0) {
-      onLocalModelSelectRef.current(downloaded[0].model);
-    } else if (!isCurrentDownloaded && downloaded.length === 0) {
-      onLocalModelSelectRef.current("");
-    }
-  }, []);
-
-  const loadLocalModels = useCallback(async () => {
-    if (isLoadingRef.current) return;
-    isLoadingRef.current = true;
-
-    try {
-      const result = await window.electronAPI?.listWhisperModels();
-      if (result?.success) {
-        setLocalModels(result.models);
-        validateAndSelectModel(result.models);
-      }
-    } catch (error) {
-      console.error("[TranscriptionModelPicker] Failed to load models:", error);
-      setLocalModels([]);
-    } finally {
-      isLoadingRef.current = false;
-    }
-  }, [validateAndSelectModel]);
-
-  const loadParakeetModels = useCallback(async () => {
-    if (isLoadingParakeetRef.current) return;
-    isLoadingParakeetRef.current = true;
-
-    try {
-      const result = await window.electronAPI?.listParakeetModels();
-      if (result?.success) {
-        setParakeetModels(result.models);
-      }
-    } catch (error) {
-      console.error("[TranscriptionModelPicker] Failed to load Parakeet models:", error);
-      setParakeetModels([]);
-    } finally {
-      isLoadingParakeetRef.current = false;
-    }
-  }, []);
 
   const ensureValidCloudSelection = useCallback(() => {
     const isValidProvider = (VALID_CLOUD_PROVIDER_IDS as readonly string[]).includes(
@@ -198,43 +135,9 @@ export default function TranscriptionModelPicker({
   ]);
 
   useEffect(() => {
-    loadLocalModelsRef.current = loadLocalModels;
-  }, [loadLocalModels]);
-  useEffect(() => {
-    loadParakeetModelsRef.current = loadParakeetModels;
-  }, [loadParakeetModels]);
-  useEffect(() => {
-    ensureValidCloudSelectionRef.current = ensureValidCloudSelection;
-  }, [ensureValidCloudSelection]);
-
-  // Handle local model loading when in local mode
-  useEffect(() => {
-    if (!useLocalWhisper) return;
-
-    if (internalLocalProvider === "whisper" && !hasLoadedRef.current) {
-      hasLoadedRef.current = true;
-      loadLocalModelsRef.current?.();
-    } else if (internalLocalProvider === "nvidia" && !hasLoadedParakeetRef.current) {
-      hasLoadedParakeetRef.current = true;
-      loadParakeetModelsRef.current?.();
-    }
-  }, [useLocalWhisper, internalLocalProvider]);
-
-  // Handle cloud mode initialization - only when switching to cloud mode
-  useEffect(() => {
     if (useLocalWhisper) return;
-
-    // Reset local model load flags when switching to cloud
-    hasLoadedRef.current = false;
-    hasLoadedParakeetRef.current = false;
-    ensureValidCloudSelectionRef.current?.();
-  }, [useLocalWhisper]);
-
-  useEffect(() => {
-    const handleModelsCleared = () => loadLocalModels();
-    window.addEventListener("openwhispr-models-cleared", handleModelsCleared);
-    return () => window.removeEventListener("openwhispr-models-cleared", handleModelsCleared);
-  }, [loadLocalModels]);
+    ensureValidCloudSelection();
+  }, [ensureValidCloudSelection, useLocalWhisper]);
 
   const {
     downloadingModel,
@@ -247,7 +150,7 @@ export default function TranscriptionModelPicker({
     isCancelling,
   } = useModelDownload({
     modelType: "whisper",
-    onDownloadComplete: loadLocalModels,
+    onDownloadComplete: () => void loadLocalModels(),
   });
 
   const {
@@ -261,7 +164,7 @@ export default function TranscriptionModelPicker({
     isCancelling: isCancellingParakeet,
   } = useModelDownload({
     modelType: "parakeet",
-    onDownloadComplete: loadParakeetModels,
+    onDownloadComplete: () => void loadParakeetModels(),
   });
 
   const handleModeChange = useCallback(
@@ -364,18 +267,12 @@ export default function TranscriptionModelPicker({
         description:
           "Are you sure you want to delete this model? You'll need to re-download it if you want to use it again.",
         onConfirm: async () => {
-          await deleteModel(modelId, async () => {
-            const result = await window.electronAPI?.listWhisperModels();
-            if (result?.success) {
-              setLocalModels(result.models);
-              validateAndSelectModel(result.models);
-            }
-          });
+          await deleteModel(modelId, () => void loadLocalModels());
         },
         variant: "destructive",
       });
     },
-    [showConfirmDialog, deleteModel, validateAndSelectModel]
+    [showConfirmDialog, deleteModel, loadLocalModels]
   );
 
   const currentCloudProvider = useMemo<TranscriptionProviderData | undefined>(
@@ -401,17 +298,12 @@ export default function TranscriptionModelPicker({
         description:
           "Are you sure you want to delete this model? You'll need to re-download it if you want to use it again.",
         onConfirm: async () => {
-          await deleteParakeetModel(modelId, async () => {
-            const result = await window.electronAPI?.listParakeetModels();
-            if (result?.success) {
-              setParakeetModels(result.models);
-            }
-          });
+          await deleteParakeetModel(modelId, () => void loadParakeetModels());
         },
         variant: "destructive",
       });
     },
-    [showConfirmDialog, deleteParakeetModel]
+    [showConfirmDialog, deleteParakeetModel, loadParakeetModels]
   );
 
   return (
