@@ -1,107 +1,27 @@
 const { app, globalShortcut, BrowserWindow, dialog, ipcMain, session } = require("electron");
 const path = require("path");
-const http = require("http");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
-const VALID_CHANNELS = new Set(["development", "staging", "production"]);
-const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
-  development: "openwhispr-dev",
-  staging: "openwhispr-staging",
-  production: "openwhispr",
-};
-const BASE_WINDOWS_APP_ID = "com.herotools.openwispr";
-const DEFAULT_AUTH_BRIDGE_PORT = 5199;
-
-const { isTruthyFlag } = require("./src/helpers/utils/flags");
-
-function isElectronBinaryExec() {
-  const execPath = (process.execPath || "").toLowerCase();
-  return (
-    execPath.includes("/electron.app/contents/macos/electron") ||
-    execPath.endsWith("/electron") ||
-    execPath.endsWith("\\electron.exe")
-  );
-}
-
-function inferDefaultChannel() {
-  if (process.env.NODE_ENV === "development" || process.defaultApp || isElectronBinaryExec()) {
-    return "development";
-  }
-  return "production";
-}
-
-function resolveAppChannel() {
-  const rawChannel = (process.env.OPENWHISPR_CHANNEL || process.env.VITE_OPENWHISPR_CHANNEL || "")
-    .trim()
-    .toLowerCase();
-
-  if (VALID_CHANNELS.has(rawChannel)) {
-    return rawChannel;
-  }
-
-  return inferDefaultChannel();
-}
+const {
+  getOAuthProtocol,
+  parseAuthBridgePort,
+  resolveAppChannel,
+  shouldRegisterProtocolWithAppArg,
+} = require("./src/helpers/app/appConfig");
+const { applyPlatformPreReadySetup } = require("./src/helpers/app/platformSetup");
+const { startAuthBridgeServer, DEFAULT_AUTH_BRIDGE_HOST, DEFAULT_AUTH_BRIDGE_PATH } = require("./src/helpers/app/authBridgeServer");
+const { handleOAuthDeepLink, navigateControlPanelWithVerifier } = require("./src/helpers/app/oauthDeepLink");
+const { bootstrapManagers } = require("./src/helpers/app/managerBootstrap");
+const { installNeonAuthOriginFix } = require("./src/helpers/app/neonAuthOriginFix");
+const { isLiveWindow } = require("./src/helpers/app/windowUtils");
+const { registerMacOsGlobeHotkeys } = require("./src/helpers/app/platformHotkeys/macosGlobeHotkeys");
+const { registerWindowsPushToTalk } = require("./src/helpers/app/platformHotkeys/windowsPushToTalk");
 
 const APP_CHANNEL = resolveAppChannel();
 process.env.OPENWHISPR_CHANNEL = APP_CHANNEL;
+applyPlatformPreReadySetup({ app, channel: APP_CHANNEL });
 
-function configureChannelUserDataPath() {
-  if (APP_CHANNEL === "production") {
-    return;
-  }
-
-  const e2eRunId = (process.env.OPENWHISPR_E2E_RUN_ID || "").trim();
-  const e2eSuffix = isTruthyFlag(process.env.OPENWHISPR_E2E)
-    ? `-e2e${e2eRunId ? `-${e2eRunId}` : ""}`
-    : "";
-
-  const isolatedPath = path.join(app.getPath("appData"), `EchoDraft-${APP_CHANNEL}${e2eSuffix}`);
-  app.setPath("userData", isolatedPath);
-}
-
-configureChannelUserDataPath();
-
-// Fix transparent window flickering on Linux: --enable-transparent-visuals requires
-// the compositor to set up an ARGB visual before any windows are created.
-// --disable-gpu-compositing prevents GPU compositing conflicts with the compositor.
-if (process.platform === "linux") {
-  app.commandLine.appendSwitch("enable-transparent-visuals");
-  app.commandLine.appendSwitch("disable-gpu-compositing");
-}
-
-// Enable native Wayland support: Ozone platform for native rendering,
-// and GlobalShortcutsPortal for global shortcuts via xdg-desktop-portal
-if (process.platform === "linux" && process.env.XDG_SESSION_TYPE === "wayland") {
-  app.commandLine.appendSwitch("ozone-platform-hint", "auto");
-  app.commandLine.appendSwitch("enable-features", "UseOzonePlatform,WaylandWindowDecorations,GlobalShortcutsPortal");
-}
-
-// Group all windows under single taskbar entry on Windows
-if (process.platform === "win32") {
-  const windowsAppId =
-    APP_CHANNEL === "production"
-      ? BASE_WINDOWS_APP_ID
-      : `${BASE_WINDOWS_APP_ID}.${APP_CHANNEL}`;
-  app.setAppUserModelId(windowsAppId);
-}
-
-function getOAuthProtocol() {
-  const fromEnv = (process.env.VITE_OPENWHISPR_PROTOCOL || process.env.OPENWHISPR_PROTOCOL || "")
-    .trim()
-    .toLowerCase();
-
-  if (/^[a-z][a-z0-9+.-]*$/.test(fromEnv)) {
-    return fromEnv;
-  }
-
-  return DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL[APP_CHANNEL] || DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL.production;
-}
-
-const OAUTH_PROTOCOL = getOAuthProtocol();
-
-function shouldRegisterProtocolWithAppArg() {
-  return Boolean(process.defaultApp) || isElectronBinaryExec();
-}
+const OAUTH_PROTOCOL = getOAuthProtocol({ channel: APP_CHANNEL });
 
 // Register custom protocol for OAuth callbacks.
 // In development, always include the app path argument so macOS/Windows/Linux
@@ -128,8 +48,6 @@ if (!gotSingleInstanceLock) {
   app.exit(0);
 }
 
-const isLiveWindow = (window) => window && !window.isDestroyed();
-
 // Ensure macOS menus use the proper casing for the app name
 if (process.platform === "darwin" && app.getName() !== "EchoDraft") {
   app.setName("EchoDraft");
@@ -150,26 +68,11 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 
-// Import helper module classes (but don't instantiate yet - wait for app.whenReady())
-const EnvironmentManager = require("./src/helpers/environment");
-const WindowManager = require("./src/helpers/windowManager");
-const DatabaseManager = require("./src/helpers/database");
-const ClipboardManager = require("./src/helpers/clipboard");
-const WhisperManager = require("./src/helpers/whisper");
-const ParakeetManager = require("./src/helpers/parakeet");
-const TrayManager = require("./src/helpers/tray");
-const IPCHandlers = require("./src/helpers/ipcHandlers");
-const UpdateManager = require("./src/updater");
-const GlobeKeyManager = require("./src/helpers/globeKeyManager");
-const DevServerManager = require("./src/helpers/devServerManager");
-const WindowsKeyManager = require("./src/helpers/windowsKeyManager");
-
 // Manager instances - initialized after app.whenReady()
 let debugLogger = null;
 let environmentManager = null;
 let windowManager = null;
 let hotkeyManager = null;
-let databaseManager = null;
 let clipboardManager = null;
 let whisperManager = null;
 let parakeetManager = null;
@@ -177,119 +80,23 @@ let trayManager = null;
 let updateManager = null;
 let globeKeyManager = null;
 let windowsKeyManager = null;
-let globeKeyAlertShown = false;
 let authBridgeServer = null;
 
-function parseAuthBridgePort() {
-  const raw = (process.env.OPENWHISPR_AUTH_BRIDGE_PORT || "").trim();
-  if (!raw) return DEFAULT_AUTH_BRIDGE_PORT;
-
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    return DEFAULT_AUTH_BRIDGE_PORT;
-  }
-
-  return parsed;
-}
-
-const AUTH_BRIDGE_HOST = "127.0.0.1";
+const AUTH_BRIDGE_HOST = DEFAULT_AUTH_BRIDGE_HOST;
 const AUTH_BRIDGE_PORT = parseAuthBridgePort();
-const AUTH_BRIDGE_PATH = "/oauth/callback";
+const AUTH_BRIDGE_PATH = DEFAULT_AUTH_BRIDGE_PATH;
 
-// Set up PATH for production builds to find system tools (whisper.cpp, ffmpeg)
-function setupProductionPath() {
-  if (process.platform === "darwin" && process.env.NODE_ENV !== "development") {
-    const commonPaths = [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ];
-
-    const currentPath = process.env.PATH || "";
-    const pathsToAdd = commonPaths.filter((p) => !currentPath.includes(p));
-
-    if (pathsToAdd.length > 0) {
-      process.env.PATH = `${currentPath}:${pathsToAdd.join(":")}`;
-    }
-  }
-}
-
-// Initialize all managers - called after app.whenReady()
-function initializeManagers() {
-  // Set up PATH before initializing managers
-  setupProductionPath();
-
-  // Now it's safe to call app.getPath() and initialize managers
-  debugLogger = require("./src/helpers/debugLogger");
-  // Ensure file logging is initialized now that app is ready
-  debugLogger.ensureFileLogging();
-
-  environmentManager = new EnvironmentManager();
-  debugLogger.refreshLogLevel();
-
-  windowManager = new WindowManager();
-  hotkeyManager = windowManager.hotkeyManager;
-  databaseManager = new DatabaseManager();
-  clipboardManager = new ClipboardManager();
-  clipboardManager.preWarmAccessibility();
-  whisperManager = new WhisperManager();
-  parakeetManager = new ParakeetManager();
-  trayManager = new TrayManager();
-  updateManager = new UpdateManager();
-  globeKeyManager = new GlobeKeyManager();
-  windowsKeyManager = new WindowsKeyManager();
-
-  // Set up Globe key error handler on macOS
-  if (process.platform === "darwin") {
-    globeKeyManager.on("error", (error) => {
-      if (globeKeyAlertShown) {
-        return;
-      }
-      globeKeyAlertShown = true;
-
-      const detailLines = [
-        error?.message || "Unknown error occurred while starting the Globe listener.",
-        "The Globe key shortcut will remain disabled; existing keyboard shortcuts continue to work.",
-      ];
-
-      if (process.env.NODE_ENV === "development") {
-        detailLines.push(
-          "Run `npm run compile:globe` and rebuild the app to regenerate the listener binary."
-        );
-      } else {
-        detailLines.push("Try reinstalling EchoDraft or contact support if the issue persists.");
-      }
-
-      dialog.showMessageBox({
-        type: "warning",
-        title: "Globe Hotkey Unavailable",
-        message: "EchoDraft could not activate the Globe key hotkey.",
-        detail: detailLines.join("\n\n"),
-      });
-    });
-  }
-
-  // Initialize IPC handlers with all managers
-  const _ipcHandlers = new IPCHandlers({
-    environmentManager,
-    databaseManager,
-    clipboardManager,
-    whisperManager,
-    parakeetManager,
-    windowManager,
-    updateManager,
-    windowsKeyManager,
-  });
-}
-
-app.on('open-url', (event, url) => {
+app.on("open-url", (event, url) => {
   event.preventDefault();
   if (!url.startsWith(`${OAUTH_PROTOCOL}://`)) return;
 
-  handleOAuthDeepLink(url);
+  handleOAuthDeepLink({
+    deepLinkUrl: url,
+    windowManager,
+    appChannel: APP_CHANNEL,
+    oauthProtocol: OAUTH_PROTOCOL,
+    debugLogger,
+  });
 
   if (windowManager && isLiveWindow(windowManager.controlPanelWindow)) {
     windowManager.controlPanelWindow.show();
@@ -297,151 +104,40 @@ app.on('open-url', (event, url) => {
   }
 });
 
-// Extract the session verifier from the deep link and navigate the control
-// panel to its app URL with the verifier param so the Neon Auth SDK can
-// read it from window.location.search and complete authentication.
-function navigateControlPanelWithVerifier(verifier) {
-  if (!verifier) return;
-  if (!isLiveWindow(windowManager?.controlPanelWindow)) return;
-
-  const appUrl = DevServerManager.getAppUrl(true);
-
-  if (appUrl) {
-    const separator = appUrl.includes('?') ? '&' : '?';
-    const urlWithVerifier = `${appUrl}${separator}neon_auth_session_verifier=${encodeURIComponent(verifier)}`;
-    windowManager.controlPanelWindow.loadURL(urlWithVerifier);
-  } else {
-    const fileInfo = DevServerManager.getAppFilePath(true);
-    if (!fileInfo) return;
-    fileInfo.query.neon_auth_session_verifier = verifier;
-    windowManager.controlPanelWindow.loadFile(fileInfo.path, { query: fileInfo.query });
-  }
-
-  if (debugLogger) {
-    debugLogger.debug("Navigating control panel with OAuth verifier", {
-      appChannel: APP_CHANNEL,
-      oauthProtocol: OAUTH_PROTOCOL,
-    });
-  }
-  windowManager.controlPanelWindow.show();
-  windowManager.controlPanelWindow.focus();
-}
-
-function handleOAuthDeepLink(deepLinkUrl) {
-  try {
-    const parsed = new URL(deepLinkUrl);
-    const verifier = parsed.searchParams.get('neon_auth_session_verifier');
-    if (!verifier) return;
-    navigateControlPanelWithVerifier(verifier);
-  } catch (err) {
-    if (debugLogger) debugLogger.error('Failed to handle OAuth deep link:', err);
-  }
-}
-
-function parseJsonBody(req) {
-  return new Promise((resolve, reject) => {
-    let raw = "";
-    req.on("data", (chunk) => {
-      raw += chunk;
-      if (raw.length > 32 * 1024) {
-        reject(new Error("Request body too large"));
-        req.destroy();
-      }
-    });
-    req.on("end", () => {
-      if (!raw) return resolve({});
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(new Error("Invalid JSON payload"));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
-function writeCorsHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-}
-
-function startAuthBridgeServer() {
-  if (APP_CHANNEL !== "development" || authBridgeServer) {
-    return;
-  }
-
-  authBridgeServer = http.createServer(async (req, res) => {
-    writeCorsHeaders(res);
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    const requestUrl = new URL(req.url || "/", `http://${AUTH_BRIDGE_HOST}:${AUTH_BRIDGE_PORT}`);
-    if (requestUrl.pathname !== AUTH_BRIDGE_PATH) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Not found");
-      return;
-    }
-
-    let verifier = requestUrl.searchParams.get("neon_auth_session_verifier");
-    if (!verifier && req.method === "POST") {
-      try {
-        const body = await parseJsonBody(req);
-        verifier = body?.neon_auth_session_verifier || body?.verifier || null;
-      } catch (error) {
-        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end(error.message || "Invalid request");
-        return;
-      }
-    }
-
-    if (!verifier) {
-      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Missing neon_auth_session_verifier");
-      return;
-    }
-
-    navigateControlPanelWithVerifier(verifier);
-
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end("<html><body><h3>EchoDraft sign-in complete.</h3><p>You can close this tab.</p></body></html>");
-  });
-
-  authBridgeServer.on("error", (error) => {
-    if (debugLogger) {
-      debugLogger.error("OAuth auth bridge server failed:", error);
-    }
-  });
-
-  authBridgeServer.listen(AUTH_BRIDGE_PORT, AUTH_BRIDGE_HOST, () => {
-    if (debugLogger) {
-      debugLogger.debug("OAuth auth bridge server started", {
-        url: `http://${AUTH_BRIDGE_HOST}:${AUTH_BRIDGE_PORT}${AUTH_BRIDGE_PATH}`,
-      });
-    }
-  });
-}
-
 // Main application startup
 async function startApp() {
   // Initialize all managers now that app is ready
-  initializeManagers();
-  startAuthBridgeServer();
+  const managers = bootstrapManagers();
+  debugLogger = managers.debugLogger;
+  environmentManager = managers.environmentManager;
+  windowManager = managers.windowManager;
+  hotkeyManager = managers.hotkeyManager;
+  clipboardManager = managers.clipboardManager;
+  whisperManager = managers.whisperManager;
+  parakeetManager = managers.parakeetManager;
+  trayManager = managers.trayManager;
+  updateManager = managers.updateManager;
+  globeKeyManager = managers.globeKeyManager;
+  windowsKeyManager = managers.windowsKeyManager;
+  if (!authBridgeServer) {
+    authBridgeServer = startAuthBridgeServer({
+      channel: APP_CHANNEL,
+      host: AUTH_BRIDGE_HOST,
+      port: AUTH_BRIDGE_PORT,
+      path: AUTH_BRIDGE_PATH,
+      debugLogger,
+      onVerifier: (verifier) =>
+        navigateControlPanelWithVerifier({
+          windowManager,
+          verifier,
+          appChannel: APP_CHANNEL,
+          oauthProtocol: OAUTH_PROTOCOL,
+          debugLogger,
+        }),
+    });
+  }
 
-  // Electron's file:// sends no Origin header, which Neon Auth rejects.
-  // Inject the request's own origin at the Chromium network layer.
-  session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ["https://*.neon.tech/*"] },
-    (details, callback) => {
-      try {
-        details.requestHeaders["Origin"] = new URL(details.url).origin;
-      } catch { /* malformed URL — leave Origin as-is */ }
-      callback({ requestHeaders: details.requestHeaders });
-    }
-  );
+  installNeonAuthOriginFix(session);
 
   // Initialize activation mode cache from persisted .env value
   windowManager.setActivationModeCache(environmentManager.getActivationMode());
@@ -522,347 +218,14 @@ async function startApp() {
   updateManager.setWindows(windowManager.mainWindow, windowManager.controlPanelWindow);
   updateManager.checkForUpdatesOnStartup();
 
-  if (process.platform === "darwin") {
-    let globeKeyDownTime = 0;
-    let globeKeyIsRecording = false;
-    let globeSessionPayload = null;
-    const MIN_HOLD_DURATION_MS = 150; // Minimum hold time to trigger push-to-talk
-
-    globeKeyManager.on("globe-down", async () => {
-      // Forward to control panel for hotkey capture
-      if (isLiveWindow(windowManager.controlPanelWindow)) {
-        windowManager.controlPanelWindow.webContents.send("globe-key-pressed");
-      }
-
-      // Handle dictation if Globe is the current hotkey
-      if (hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey() === "GLOBE") {
-        if (isLiveWindow(windowManager.mainWindow)) {
-          const activationMode = await windowManager.getActivationMode();
-          windowManager.showDictationPanel();
-          if (activationMode === "push") {
-            // Track when key was pressed for push-to-talk
-            globeKeyDownTime = Date.now();
-            globeKeyIsRecording = false;
-            globeSessionPayload = windowManager.createSessionPayload("insert");
-            // Start recording after a brief delay to distinguish tap from hold
-            setTimeout(async () => {
-              // Only start if key is still being held
-              if (globeKeyDownTime > 0 && !globeKeyIsRecording) {
-                globeKeyIsRecording = true;
-                windowManager.sendStartDictation(globeSessionPayload);
-              }
-            }, MIN_HOLD_DURATION_MS);
-          } else {
-            windowManager.sendToggleDictation(windowManager.createSessionPayload("insert"));
-          }
-        }
-      }
-    });
-
-    globeKeyManager.on("globe-up", async () => {
-      // Forward to control panel for hotkey capture (Fn key released)
-      if (isLiveWindow(windowManager.controlPanelWindow)) {
-        windowManager.controlPanelWindow.webContents.send("globe-key-released");
-      }
-
-      // Handle push-to-talk release if Globe is the current hotkey
-      if (hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey() === "GLOBE") {
-        const activationMode = await windowManager.getActivationMode();
-        if (activationMode === "push") {
-          globeKeyDownTime = 0;
-          // Only stop if we actually started recording
-          if (globeKeyIsRecording) {
-            globeKeyIsRecording = false;
-            windowManager.sendStopDictation(globeSessionPayload);
-          }
-          globeSessionPayload = null;
-          // If released too quickly, don't do anything (tap is ignored in push mode)
-        }
-      }
-
-      // Fn release also stops compound push-to-talk for Fn+F-key hotkeys
-      windowManager.handleMacPushModifierUp("fn");
-    });
-
-    globeKeyManager.on("modifier-up", (modifier) => {
-      if (windowManager?.handleMacPushModifierUp) {
-        windowManager.handleMacPushModifierUp(modifier);
-      }
-    });
-
-    // Right-side single modifier handling (e.g., RightOption as hotkey)
-    let rightModDownTime = 0;
-    let rightModIsRecording = false;
-    let rightModSessionPayload = null;
-
-    globeKeyManager.on("right-modifier-down", async (modifier) => {
-      const insertHotkey = hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey();
-      const clipboardHotkey = windowManager.getCurrentClipboardHotkey
-        ? windowManager.getCurrentClipboardHotkey()
-        : null;
-      const outputMode =
-        clipboardHotkey === modifier ? "clipboard" : insertHotkey === modifier ? "insert" : null;
-      if (!outputMode) return;
-      if (!isLiveWindow(windowManager.mainWindow)) return;
-
-      const activationMode = await windowManager.getActivationMode();
-      windowManager.showDictationPanel();
-      if (activationMode === "push") {
-        rightModDownTime = Date.now();
-        rightModIsRecording = false;
-        rightModSessionPayload = windowManager.createSessionPayload(outputMode);
-        setTimeout(() => {
-          if (rightModDownTime > 0 && !rightModIsRecording) {
-            rightModIsRecording = true;
-            windowManager.sendStartDictation(rightModSessionPayload);
-          }
-        }, MIN_HOLD_DURATION_MS);
-      } else {
-        windowManager.sendToggleDictation(windowManager.createSessionPayload(outputMode));
-      }
-    });
-
-    globeKeyManager.on("right-modifier-up", async (modifier) => {
-      const insertHotkey = hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey();
-      const clipboardHotkey = windowManager.getCurrentClipboardHotkey
-        ? windowManager.getCurrentClipboardHotkey()
-        : null;
-      if (modifier !== insertHotkey && modifier !== clipboardHotkey) return;
-      if (!isLiveWindow(windowManager.mainWindow)) return;
-
-      const activationMode = await windowManager.getActivationMode();
-      if (activationMode === "push") {
-        rightModDownTime = 0;
-        if (rightModIsRecording) {
-          rightModIsRecording = false;
-          windowManager.sendStopDictation(rightModSessionPayload);
-        } else {
-          windowManager.hideDictationPanel();
-        }
-        rightModSessionPayload = null;
-      }
-    });
-
-    globeKeyManager.start();
-
-    // Reset native key state when hotkey changes
-    ipcMain.on("hotkey-changed", (_event, _newHotkey) => {
-      globeKeyDownTime = 0;
-      globeKeyIsRecording = false;
-      globeSessionPayload = null;
-      rightModDownTime = 0;
-      rightModIsRecording = false;
-      rightModSessionPayload = null;
-    });
-
-    ipcMain.on("clipboard-hotkey-changed", (_event, _newHotkey) => {
-      rightModDownTime = 0;
-      rightModIsRecording = false;
-      rightModSessionPayload = null;
-    });
-  }
-
-  // Set up Windows Push-to-Talk handling
-  if (process.platform === "win32") {
-    debugLogger.debug("[Push-to-Talk] Windows Push-to-Talk setup starting");
-
-    // Minimum duration (ms) the key must be held before starting recording.
-    // This distinguishes a "tap" (ignored in push mode) from a "hold" (starts recording).
-    // 150ms is short enough to feel instant but long enough to detect intent.
-    const WIN_MIN_HOLD_DURATION_MS = 150;
-
-    const keyStates = {
-      insert: { downTime: 0, isRecording: false, payload: null },
-      clipboard: { downTime: 0, isRecording: false, payload: null },
-    };
-
-    const getRouteState = (hotkeyId = "insert") =>
-      hotkeyId === "clipboard" ? keyStates.clipboard : keyStates.insert;
-    const getOutputMode = (hotkeyId = "insert") => (hotkeyId === "clipboard" ? "clipboard" : "insert");
-    const resetRouteState = (hotkeyId = "insert") => {
-      const state = getRouteState(hotkeyId);
-      state.downTime = 0;
-      state.isRecording = false;
-      state.payload = null;
-    };
-
-    const refreshWindowsKeyListeners = async (modeOverride = null) => {
-      if (!isLiveWindow(windowManager.mainWindow)) return;
-
-      const activationMode = modeOverride || (await windowManager.getActivationMode());
-      const insertHotkey = hotkeyManager.getCurrentHotkey();
-      const clipboardHotkey = windowManager.getCurrentClipboardHotkey
-        ? windowManager.getCurrentClipboardHotkey()
-        : null;
-      const startedHotkeys = new Set();
-
-      windowsKeyManager.stop();
-      windowManager.setWindowsPushToTalkAvailable(false);
-
-      const maybeStartRoute = (hotkey, routeId) => {
-        if (!hotkey || hotkey === "GLOBE" || startedHotkeys.has(hotkey)) {
-          return;
-        }
-        if (!windowManager.shouldUseWindowsNativeListener(hotkey, activationMode)) {
-          return;
-        }
-        debugLogger.debug("[Push-to-Talk] Starting Windows key listener route", {
-          routeId,
-          hotkey,
-          activationMode,
-        });
-        windowsKeyManager.start(hotkey, routeId);
-        startedHotkeys.add(hotkey);
-      };
-
-      maybeStartRoute(insertHotkey, "insert");
-      maybeStartRoute(clipboardHotkey, "clipboard");
-
-      if (startedHotkeys.size === 0) {
-        debugLogger.debug("[Push-to-Talk] Native listeners not required for current hotkeys", {
-          activationMode,
-          insertHotkey,
-          clipboardHotkey,
-        });
-      }
-    };
-
-    windowsKeyManager.on("key-down", async (key, hotkeyId = "insert") => {
-      debugLogger.debug("[Push-to-Talk] Key DOWN received", { key, hotkeyId });
-      if (!isLiveWindow(windowManager.mainWindow)) return;
-
-      const activationMode = await windowManager.getActivationMode();
-      const routeState = getRouteState(hotkeyId);
-      const outputMode = getOutputMode(hotkeyId);
-      debugLogger.debug("[Push-to-Talk] Activation mode check", { activationMode, hotkeyId, outputMode });
-      if (activationMode === "push") {
-        debugLogger.debug("[Push-to-Talk] Starting recording sequence", { hotkeyId, outputMode });
-        windowManager.showDictationPanel();
-        routeState.downTime = Date.now();
-        routeState.isRecording = false;
-        routeState.payload = windowManager.createSessionPayload(outputMode);
-        debugLogger.debug("[Push-to-Talk] Session payload created", {
-          hotkeyId,
-          outputMode,
-          sessionId: routeState.payload?.sessionId,
-          payload: routeState.payload,
-        });
-        setTimeout(async () => {
-          if (routeState.downTime > 0 && !routeState.isRecording) {
-            routeState.isRecording = true;
-            const startPayload = { ...routeState.payload, startedAt: Date.now() };
-            routeState.payload = startPayload;
-            debugLogger.debug("[Push-to-Talk] Sending start dictation command", {
-              hotkeyId,
-              outputMode,
-              sessionId: startPayload?.sessionId,
-              holdMs: Math.max(0, Date.now() - routeState.downTime),
-            });
-            windowManager.sendStartDictation(startPayload);
-          }
-        }, WIN_MIN_HOLD_DURATION_MS);
-      } else if (activationMode === "tap") {
-        windowManager.showDictationPanel();
-        windowManager.sendToggleDictation(windowManager.createSessionPayload(outputMode));
-      }
-    });
-
-    windowsKeyManager.on("key-up", async (key, hotkeyId = "insert") => {
-      debugLogger.debug("[Push-to-Talk] Key UP received", { key, hotkeyId });
-      if (!isLiveWindow(windowManager.mainWindow)) return;
-
-      const activationMode = await windowManager.getActivationMode();
-      if (activationMode === "push") {
-        const routeState = getRouteState(hotkeyId);
-        const wasRecording = routeState.isRecording;
-        const payload = routeState.payload
-          ? { ...routeState.payload, releasedAt: Date.now() }
-          : null;
-        resetRouteState(hotkeyId);
-        if (wasRecording) {
-          debugLogger.debug("[Push-to-Talk] Sending stop dictation command", {
-            hotkeyId,
-            sessionId: payload?.sessionId,
-          });
-          if (payload) {
-            windowManager.sendStopDictation(payload);
-          }
-        } else {
-          debugLogger.debug("[Push-to-Talk] Short tap detected, hiding panel", {
-            hotkeyId,
-            sessionId: payload?.sessionId,
-          });
-          windowManager.hideDictationPanel();
-        }
-      }
-    });
-
-    windowsKeyManager.on("error", (error) => {
-      debugLogger.warn("[Push-to-Talk] Windows key listener error", { error: error.message });
-      windowManager.setWindowsPushToTalkAvailable(false);
-      const payload = {
-        reason: "error",
-        message: error.message,
-      };
-      if (isLiveWindow(windowManager.mainWindow)) {
-        windowManager.mainWindow.webContents.send("windows-ptt-unavailable", payload);
-      }
-      if (isLiveWindow(windowManager.controlPanelWindow)) {
-        windowManager.controlPanelWindow.webContents.send("windows-ptt-unavailable", payload);
-      }
-    });
-
-    windowsKeyManager.on("unavailable", () => {
-      debugLogger.debug("[Push-to-Talk] Windows key listener not available - falling back to toggle mode");
-      windowManager.setWindowsPushToTalkAvailable(false);
-      const payload = {
-        reason: "binary_not_found",
-        message: "Push-to-Talk native listener not available",
-      };
-      if (isLiveWindow(windowManager.mainWindow)) {
-        windowManager.mainWindow.webContents.send("windows-ptt-unavailable", payload);
-      }
-      if (isLiveWindow(windowManager.controlPanelWindow)) {
-        windowManager.controlPanelWindow.webContents.send("windows-ptt-unavailable", payload);
-      }
-    });
-
-    windowsKeyManager.on("ready", (info) => {
-      debugLogger.debug("[Push-to-Talk] WindowsKeyManager route ready", info);
-      windowManager.setWindowsPushToTalkAvailable(true);
-    });
-
-    const STARTUP_DELAY_MS = 3000;
-    debugLogger.debug("[Push-to-Talk] Scheduling listener startup refresh", {
-      delayMs: STARTUP_DELAY_MS,
-    });
-    setTimeout(() => {
-      refreshWindowsKeyListeners().catch((error) => {
-        debugLogger.warn("[Push-to-Talk] Failed to refresh listeners on startup", {
-          error: error.message,
-        });
-      });
-    }, STARTUP_DELAY_MS);
-
-    // Listen for activation mode changes from renderer
-    ipcMain.on("activation-mode-changed", async (_event, mode) => {
-      debugLogger.debug("[Push-to-Talk] IPC: Activation mode changed", { mode });
-      await refreshWindowsKeyListeners(mode);
-    });
-
-    // Listen for hotkey changes from renderer
-    ipcMain.on("hotkey-changed", async (_event, hotkey) => {
-      debugLogger.debug("[Push-to-Talk] IPC: Hotkey changed", { hotkey });
-      resetRouteState("insert");
-      await refreshWindowsKeyListeners();
-    });
-
-    ipcMain.on("clipboard-hotkey-changed", async (_event, hotkey) => {
-      debugLogger.debug("[Push-to-Talk] IPC: Clipboard hotkey changed", { hotkey });
-      resetRouteState("clipboard");
-      await refreshWindowsKeyListeners();
-    });
-  }
+  registerMacOsGlobeHotkeys({ ipcMain, windowManager, hotkeyManager, globeKeyManager });
+  registerWindowsPushToTalk({
+    ipcMain,
+    windowManager,
+    hotkeyManager,
+    windowsKeyManager,
+    debugLogger,
+  });
 }
 
 // Listen for usage limit reached from dictation overlay, forward to control panel
@@ -897,9 +260,15 @@ if (gotSingleInstanceLock) {
     }
 
     // Check for OAuth protocol URL in command line arguments (Windows/Linux)
-    const url = commandLine.find(arg => arg.startsWith(`${OAUTH_PROTOCOL}://`));
+    const url = commandLine.find((arg) => arg.startsWith(`${OAUTH_PROTOCOL}://`));
     if (url) {
-      handleOAuthDeepLink(url);
+      handleOAuthDeepLink({
+        deepLinkUrl: url,
+        windowManager,
+        appChannel: APP_CHANNEL,
+        oauthProtocol: OAUTH_PROTOCOL,
+        debugLogger,
+      });
     }
   });
 

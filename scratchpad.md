@@ -185,6 +185,12 @@ Now that the audio subsystem is split and well-instrumented, the next maintainab
   - Added component tests for new modules.
   - Verified `npm test`, `npm run lint`, and `npm run typecheck`.
 
+- [x] Refactored `main.js` (main process) for maintainability:
+  - Extracted channel/protocol parsing and platform setup into `src/helpers/app/*`.
+  - Extracted macOS Globe hotkeys + Windows push-to-talk wiring into `src/helpers/app/platformHotkeys/*` and removed unnecessary `await` on sync activation-mode reads (reduces hotkey latency variance).
+  - Added unit tests for the extracted config helpers (`src/helpers/app/appConfig.test.ts`).
+  - Reduced `main.js` from ~1007 → ~376 LoC; verified `npm test` and `npm run lint`.
+
 - [x] Improved persisted transcription diagnostics:
   - Persisted `stopReason`/`stopSource` and basic text metrics (`rawWords`, `cleanedWords`, `rawChars`, `cleanedChars`) into `meta_json`.
   - Updated History item details to display extra diagnostics (stop reason/source, audio size/format, chunks, hotkey→rec timing) when present.
