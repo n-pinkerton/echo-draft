@@ -269,3 +269,22 @@ Status: In Progress
 ### C) Final pass completion
 - [x] Copy latest Windows installer to `C:\Users\NigelPinkerton\Downloads`.
   - Confirmed `EchoDraft Setup 1.4.5.exe` exists at: `/mnt/c/Users/NigelPinkerton/Downloads/EchoDraft Setup 1.4.5.exe` (131139262 bytes, timestamp 2026-02-16 11:04).
+
+## Issue 4 — WindowManager refactor (SRP + hotkey reliability)
+
+### A) Code changes
+- [x] Split `src/helpers/windowManager.js` into focused modules under `src/helpers/windowManager/`:
+  - `windowContentLoader.js` (dev/prod renderer loading)
+  - `mainWindow.js` (dictation overlay creation + resize + always-on-top)
+  - `controlPanelWindow.js` (control panel creation + external URL hardening)
+  - `hotkeyRouting.js` (hotkey callback + mac compound PTT routing)
+  - `clipboardHotkeys.js` (clipboard hotkey registration/persistence, DI-friendly)
+- [x] Removed unused imports from `src/helpers/windowManager.js` and kept it as a thin orchestrator (~288 LoC).
+- [x] Added unit tests for extracted pure logic:
+  - `src/helpers/windowManager/hotkeyRouting.test.ts`
+  - `src/helpers/windowManager/clipboardHotkeys.test.ts`
+
+### B) Validation
+- [x] Run `npm test`.
+- [x] Run `npm run lint` (warnings only; no errors).
+- [x] Run `npm run typecheck`.
