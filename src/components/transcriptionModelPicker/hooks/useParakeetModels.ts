@@ -19,7 +19,6 @@ export function useParakeetModels({ enabled }: UseParakeetModelsOptions) {
         setModels(result.models);
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error("[useParakeetModels] Failed to load models:", error);
       setModels([]);
     } finally {
@@ -40,4 +39,3 @@ export function useParakeetModels({ enabled }: UseParakeetModelsOptions) {
 
   return { models, reload };
 }
-

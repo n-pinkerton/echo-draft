@@ -8,13 +8,13 @@ import {
   type SocialProvider,
 } from "../lib/neonAuth";
 import { OPENWHISPR_API_URL } from "../config/constants";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { AlertCircle, ArrowRight, Check, Loader2, ChevronLeft } from "lucide-react";
-import logoIcon from "../assets/icon.png";
 import logger from "../utils/logger";
 import ForgotPasswordView from "./ForgotPasswordView";
 import ResetPasswordView from "./ResetPasswordView";
+import { AuthNotConfiguredView } from "./authenticationStep/AuthNotConfiguredView";
+import { PasswordFormView } from "./authenticationStep/PasswordFormView";
+import { SignedInView } from "./authenticationStep/SignedInView";
+import { WelcomeView } from "./authenticationStep/WelcomeView";
 
 interface AuthenticationStepProps {
   onContinueWithoutAccount: () => void;
@@ -24,27 +24,6 @@ interface AuthenticationStepProps {
 
 type AuthMode = "sign-in" | "sign-up" | null;
 type PasswordResetView = "forgot" | "reset" | null;
-
-const GoogleIcon = ({ className }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path
-      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-      fill="#4285F4"
-    />
-    <path
-      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-      fill="#34A853"
-    />
-    <path
-      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-      fill="#FBBC05"
-    />
-    <path
-      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-      fill="#EA4335"
-    />
-  </svg>
-);
 
 export default function AuthenticationStep({
   onContinueWithoutAccount,
@@ -106,7 +85,7 @@ export default function AuthenticationStep({
       }
       onAuthComplete();
     }
-  }, [isLoaded, isSignedIn, onAuthComplete]);
+  }, [isLoaded, isSignedIn, onAuthComplete, user?.email, user?.id, user?.name]);
 
   useEffect(() => {
     if (isSocialLoading === null) return;
@@ -258,7 +237,7 @@ export default function AuthenticationStep({
         setIsSubmitting(false);
       }
     },
-    [authMode, email, password, onAuthComplete, onNeedsVerification]
+    [authMode, email, fullName, password, onAuthComplete, onNeedsVerification]
   );
 
   const handleBack = useCallback(() => {
@@ -292,62 +271,12 @@ export default function AuthenticationStep({
 
   // Auth not configured state
   if (!NEON_AUTH_URL || !authClient) {
-    return (
-      <div className="space-y-3">
-        <div className="text-center mb-4">
-          <img
-            src={logoIcon}
-            alt="EchoDraft"
-            className="w-12 h-12 mx-auto mb-2.5 rounded-lg shadow-sm"
-          />
-          <p className="text-lg font-semibold text-foreground tracking-tight leading-tight">
-            Welcome to EchoDraft
-          </p>
-          <p className="text-muted-foreground text-sm mt-1 leading-tight">
-            Dictate anywhere using your voice
-          </p>
-        </div>
-
-        <div className="bg-warning/5 p-2.5 rounded border border-warning/20">
-          <p className="text-[10px] text-warning text-center leading-snug">
-            Cloud features not configured. You can still use EchoDraft locally.
-          </p>
-        </div>
-
-        <Button onClick={onContinueWithoutAccount} className="w-full h-9">
-          <span className="text-sm font-medium">Get Started</span>
-          <ArrowRight className="w-3.5 h-3.5" />
-        </Button>
-      </div>
-    );
+    return <AuthNotConfiguredView onContinueWithoutAccount={onContinueWithoutAccount} />;
   }
 
   // Already signed in state
   if (isLoaded && isSignedIn) {
-    return (
-      <div className="space-y-3">
-        <div className="text-center mb-4">
-          <img
-            src={logoIcon}
-            alt="EchoDraft"
-            className="w-12 h-12 mx-auto mb-2.5 rounded-lg shadow-sm"
-          />
-          <div className="w-5 h-5 mx-auto bg-success/10 rounded-full flex items-center justify-center mb-2">
-            <Check className="w-3 h-3 text-success" />
-          </div>
-          <p className="text-lg font-semibold text-foreground tracking-tight leading-tight">
-            Welcome back{user?.name ? `, ${user.name}` : ""}
-          </p>
-          <p className="text-muted-foreground text-sm mt-1 leading-tight">
-            You're signed in and ready to go.
-          </p>
-        </div>
-        <Button onClick={onAuthComplete} className="w-full h-9">
-          <span className="text-sm font-medium">Continue</span>
-          <ArrowRight className="w-3.5 h-3.5" />
-        </Button>
-      </div>
-    );
+    return <SignedInView userName={user?.name} onContinue={onAuthComplete} />;
   }
 
   // Password reset flow - show reset form if we have a token
@@ -369,228 +298,33 @@ export default function AuthenticationStep({
   // Password form (after email is entered)
   if (authMode !== null) {
     return (
-      <div className="space-y-3">
-        <button
-          type="button"
-          onClick={handleBack}
-          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-0.5"
-        >
-          <ChevronLeft className="w-3 h-3" />
-          Back
-        </button>
-
-        <div className="text-center mb-4">
-          <p className="text-sm text-muted-foreground/70 mb-2 leading-tight">{email}</p>
-          <p className="text-lg font-semibold text-foreground tracking-tight leading-tight">
-            {authMode === "sign-in" ? "Welcome back" : "Create your account"}
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-2">
-          {authMode === "sign-up" && (
-            <Input
-              type="text"
-              placeholder="Enter your full name"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="h-9 text-xs"
-              disabled={isSubmitting}
-              autoFocus
-            />
-          )}
-          <Input
-            type="password"
-            placeholder={authMode === "sign-up" ? "Create a password" : "Enter your password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="h-9 text-xs"
-            required
-            minLength={authMode === "sign-up" ? 8 : undefined}
-            disabled={isSubmitting}
-            autoFocus={authMode === "sign-in"}
-          />
-
-          {authMode === "sign-up" && (
-            <p className="text-[9px] text-muted-foreground/70 leading-tight">
-              Password must be at least 8 characters
-            </p>
-          )}
-
-          {authMode === "sign-in" && (
-            <button
-              type="button"
-              onClick={handleForgotPassword}
-              className="text-[10px] text-primary hover:text-primary/80 transition-colors text-left"
-              disabled={isSubmitting}
-            >
-              Forgot password?
-            </button>
-          )}
-
-          {error && (
-            <div className="px-2.5 py-1.5 rounded bg-destructive/5 border border-destructive/20 flex items-center gap-1.5">
-              <AlertCircle className="w-3 h-3 text-destructive shrink-0" />
-              <p className="text-[10px] text-destructive leading-snug">{error}</p>
-            </div>
-          )}
-
-          <Button type="submit" disabled={isSubmitting || !password} className="w-full h-9">
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span className="text-sm font-medium">
-                  {authMode === "sign-in" ? "Signing in..." : "Creating account..."}
-                </span>
-              </>
-            ) : (
-              <span className="text-sm font-medium">
-                {authMode === "sign-in" ? "Sign In" : "Create Account"}
-              </span>
-            )}
-          </Button>
-        </form>
-
-        <div className="text-center">
-          <button
-            type="button"
-            onClick={toggleAuthMode}
-            className="text-[10px] text-muted-foreground/70 hover:text-foreground transition-colors"
-            disabled={isSubmitting}
-          >
-            {authMode === "sign-in" ? (
-              <>
-                New here? <span className="font-medium text-primary">Create account</span>
-              </>
-            ) : (
-              <>
-                Have an account? <span className="font-medium text-primary">Sign in</span>
-              </>
-            )}
-          </button>
-        </div>
-      </div>
+      <PasswordFormView
+        email={email}
+        authMode={authMode}
+        fullName={fullName}
+        setFullName={(value) => setFullName(value)}
+        password={password}
+        setPassword={(value) => setPassword(value)}
+        isSubmitting={isSubmitting}
+        error={error}
+        onSubmit={handleSubmit}
+        onBack={handleBack}
+        onForgotPassword={handleForgotPassword}
+        onToggleAuthMode={toggleAuthMode}
+      />
     );
   }
 
-  // Main welcome view
   return (
-    <div className="space-y-3">
-      <div className="text-center mb-4">
-        <img
-          src={logoIcon}
-          alt="EchoDraft"
-          className="w-12 h-12 mx-auto mb-2.5 rounded-lg shadow-sm"
-        />
-        <p className="text-lg font-semibold text-foreground tracking-tight leading-tight">
-          Welcome to EchoDraft
-        </p>
-        <p className="text-muted-foreground text-sm mt-1 leading-tight">
-          Dictate anywhere using your voice
-        </p>
-      </div>
-
-      <Button
-        type="button"
-        variant="social"
-        onClick={() => handleSocialSignIn("google")}
-        disabled={isSocialLoading !== null || isCheckingEmail}
-        className="w-full h-9"
-      >
-        {isSocialLoading === "google" ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-            <span className="text-sm font-medium text-muted-foreground">
-              Complete sign-in in your browser...
-            </span>
-          </>
-        ) : (
-          <>
-            <GoogleIcon className="w-4 h-4" />
-            <span className="text-sm font-medium">Continue with Google</span>
-          </>
-        )}
-      </Button>
-
-      <div className="flex items-center gap-2">
-        <div className="flex-1 h-px bg-border/50" />
-        <span className="text-[9px] font-medium text-muted-foreground/40 uppercase tracking-widest px-1">
-          or
-        </span>
-        <div className="flex-1 h-px bg-border/50" />
-      </div>
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleEmailContinue();
-        }}
-        className="space-y-2"
-      >
-        <Input
-          type="email"
-          placeholder="Enter your email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="h-9 text-sm"
-          required
-          disabled={isSocialLoading !== null || isCheckingEmail}
-        />
-        <Button
-          type="submit"
-          variant="outline"
-          disabled={!email.trim() || isSocialLoading !== null || isCheckingEmail}
-          className="w-full h-9"
-        >
-          {isCheckingEmail ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <>
-              <span className="text-sm font-medium">Continue with Email</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </>
-          )}
-        </Button>
-      </form>
-
-      {error && (
-        <div className="px-3 py-2 rounded-md bg-destructive/5 border border-destructive/20 flex items-center gap-2">
-          <AlertCircle className="w-3.5 h-3.5 text-destructive shrink-0" />
-          <p className="text-xs text-destructive">{error}</p>
-        </div>
-      )}
-
-      <div className="pt-1">
-        <button
-          type="button"
-          onClick={onContinueWithoutAccount}
-          className="w-full text-center text-xs text-muted-foreground/85 hover:text-foreground transition-colors py-1.5 rounded hover:bg-muted/30"
-          disabled={isSocialLoading !== null || isCheckingEmail}
-        >
-          Continue without an account
-        </button>
-      </div>
-
-      <p className="text-[10px] text-muted-foreground/80 leading-tight text-center">
-        By continuing, you agree to our{" "}
-        <a
-          href="https://openwhispr.com/terms"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-link underline decoration-link/30 hover:decoration-link/60 transition-colors"
-        >
-          Terms of Service
-        </a>{" "}
-        and{" "}
-        <a
-          href="https://openwhispr.com/privacy"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-link underline decoration-link/30 hover:decoration-link/60 transition-colors"
-        >
-          Privacy Policy
-        </a>
-        .
-      </p>
-    </div>
+    <WelcomeView
+      email={email}
+      setEmail={(value) => setEmail(value)}
+      error={error}
+      isSocialLoading={isSocialLoading}
+      isCheckingEmail={isCheckingEmail}
+      onSocialSignIn={() => handleSocialSignIn("google")}
+      onEmailContinue={() => void handleEmailContinue()}
+      onContinueWithoutAccount={onContinueWithoutAccount}
+    />
   );
 }

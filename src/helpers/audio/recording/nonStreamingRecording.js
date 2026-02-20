@@ -1,31 +1,6 @@
 import logger from "../../../utils/logger";
-
-const NON_STREAMING_STOP_FLUSH_MS = 60;
-
-const sleep = (ms = 0) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
-const waitForStopFlush = async (manager, stopContext = null) => {
-  const stopRequestedAt =
-    typeof stopContext?.requestedAt === "number" ? stopContext.requestedAt : null;
-  const now = Date.now();
-  const stopLatencyToFlushStartMs = stopRequestedAt ? Math.max(0, now - stopRequestedAt) : null;
-
-  const flushStartedAt = Date.now();
-  if (NON_STREAMING_STOP_FLUSH_MS > 0) {
-    await sleep(NON_STREAMING_STOP_FLUSH_MS);
-  }
-  const stopFlushMs = Date.now() - flushStartedAt;
-
-  return {
-    stopLatencyToFlushStartMs,
-    stopFlushMs,
-    chunksAtStopStart: manager.audioChunks.length,
-    chunksAfterStopWait: manager.audioChunks.length,
-  };
-};
+import { describeRecordingStartError } from "./nonStreamingRecordingErrors";
+import { waitForNonStreamingStopFlush } from "./nonStreamingStopFlush";
 
 export async function startNonStreamingRecording(manager, context = null) {
   try {
@@ -156,7 +131,7 @@ export async function startNonStreamingRecording(manager, context = null) {
     mediaRecorder.onstop = async () => {
       const stopContext =
         manager.pendingNonStreamingStopContext || manager.pendingStopContext || {};
-      const flushContext = await waitForStopFlush(manager, stopContext);
+      const flushContext = await waitForNonStreamingStopFlush(manager, stopContext);
       const startTimings = manager.pendingNonStreamingStartTimings || null;
 
       try {
@@ -278,34 +253,13 @@ export async function startNonStreamingRecording(manager, context = null) {
 
     return true;
   } catch (error) {
-    const errorMessage =
-      error?.message ??
-      (typeof error === "string"
-        ? error
-        : typeof error?.toString === "function"
-          ? error.toString()
-          : String(error));
-    const errorName = error?.name;
-    let errorTitle = "Recording Error";
-    let errorDescription = `Failed to access microphone: ${errorMessage}`;
-
-    if (errorName === "NotAllowedError" || errorName === "PermissionDeniedError") {
-      errorTitle = "Microphone Access Denied";
-      errorDescription = "Please grant microphone permission in your system settings and try again.";
-    } else if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
-      errorTitle = "No Microphone Found";
-      errorDescription = "No microphone was detected. Please connect a microphone and try again.";
-    } else if (errorName === "NotReadableError" || errorName === "TrackStartError") {
-      errorTitle = "Microphone In Use";
-      errorDescription =
-        "The microphone is being used by another application. Please close other apps and try again.";
-    }
+    const errorInfo = describeRecordingStartError(error);
 
     logger.error(
       "Failed to start recording",
       {
-        error: error?.message || String(error),
-        name: error?.name,
+        error: errorInfo.errorMessage,
+        name: errorInfo.errorName,
         stack: error?.stack,
         context,
       },
@@ -313,8 +267,8 @@ export async function startNonStreamingRecording(manager, context = null) {
     );
     manager.emitError(
       {
-        title: errorTitle,
-        description: errorDescription,
+        title: errorInfo.title,
+        description: errorInfo.description,
       },
       error
     );

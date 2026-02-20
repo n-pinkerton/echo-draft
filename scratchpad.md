@@ -392,16 +392,99 @@ Status: In Progress
 ### B) Tests
 - [x] Added hook tests for Whisper + Parakeet model selection logic.
 
+## Issue 13 — `Window.electronAPI` type split (SRP + maintainability)
+
+### A) Code changes
+- [x] Split `src/types/electron.ts` to keep it reviewable (<400 LoC) and move the massive global `Window.electronAPI` typing into focused modules:
+  - `src/types/windowElectron.ts` (global `Window` declaration)
+  - `src/types/electronApi/*` (domain-grouped `ElectronAPI*` interfaces)
+  - `src/types/electronApi/ElectronAPI.ts` (composed `ElectronAPI`)
+- [x] Kept the existing renderer import surface stable (`import \"../types/electron\"` still registers globals).
+
+## Issue 14 — ReasoningModelSelector split (SRP + tests)
+
+### A) Code changes
+- [x] Reduced `src/components/ReasoningModelSelector.tsx` below 400 LoC by extracting:
+  - `src/components/reasoningModelSelector/customEndpointModels.ts` (custom endpoint fetch + mapping + state)
+  - `src/components/reasoningModelSelector/CustomEndpointPanel.tsx` (custom endpoint UI)
+  - `src/components/reasoningModelSelector/CloudApiKeySection.tsx` (provider API key UI)
+
+### B) Tests
+- [x] Added `src/components/reasoningModelSelector/customEndpointModels.test.ts`.
+
+## Issue 15 — Renderer bootstrap split (`main.jsx`) + tests
+
+### A) Code changes
+- [x] Reduced `src/main.jsx` below 400 LoC by extracting:
+  - `src/bootstrap/debugTelemetry.ts` (debug telemetry bootstrap + localStorage redaction)
+  - `src/bootstrap/oauthBrowserRedirect.ts` (OAuth browser redirect + premium interim page)
+
+### B) Tests
+- [x] Added `src/bootstrap/debugTelemetry.test.ts` and `src/bootstrap/oauthBrowserRedirect.test.ts`.
+
+## Issue 16 — Dictation panel split (`App.jsx`) + tests
+
+### A) Code changes
+- [x] Reduced `src/App.jsx` below 400 LoC by extracting dictation UI helpers into `src/components/dictationPanel/`:
+  - `Indicators.tsx` (`SoundWaveIcon`, `VoiceWaveIndicator`)
+  - `DictationTooltip.tsx` (tooltip UI)
+  - `micButtonUtils.ts` (mic state + button props)
+
+### B) Tests
+- [x] Added `src/components/dictationPanel/micButtonUtils.test.ts`.
+
+## Issue 17 — AuthenticationStep split (SRP + tests)
+
+### A) Code changes
+- [x] Reduced `src/components/AuthenticationStep.tsx` below 400 LoC by extracting view components into `src/components/authenticationStep/`.
+
+### B) Tests
+- [x] Added `src/components/authenticationStep/views.test.tsx`.
+
+## Issue 18 — OnboardingFlow split (SRP + tests)
+
+### A) Code changes
+- [x] Reduced `src/components/OnboardingFlow.tsx` below 400 LoC by extracting focused onboarding modules into `src/components/onboardingFlow/`:
+  - `OnboardingStepContent.tsx` (step router)
+  - `canProceed.ts` + `onboardingSteps.ts`
+  - `useAutoRegisterDefaultHotkey.ts`, `useGnomeHotkeyMode.ts`, `useLocalModelDownloadedStatus.ts`, `useGoogleFont.ts`
+  - `useGuestTranscriptionPickerProps.ts` (stable prop construction via `useMemo`)
+
+### B) Tests
+- [x] Added onboarding unit tests for the extracted modules:
+  - `src/components/onboardingFlow/*test.ts(x)`
+
+## Issue 19 — Non-streaming recorder split (SRP + tests)
+
+### A) Code changes
+- [x] Reduced `src/helpers/audio/recording/nonStreamingRecording.js` below 400 LoC by extracting:
+  - `src/helpers/audio/recording/nonStreamingStopFlush.js`
+  - `src/helpers/audio/recording/nonStreamingRecordingErrors.js`
+
+### B) Tests
+- [x] Added `src/helpers/audio/recording/nonStreamingStopFlush.test.ts` and `src/helpers/audio/recording/nonStreamingRecordingErrors.test.ts`.
+
+## Issue 20 — AudioManager test suite split (maintainability)
+
+### A) Code changes
+- [x] Split `src/helpers/__tests__/audioManager.test.ts` into focused test files:
+  - `src/helpers/__tests__/audioManagerTranscriptionStream.test.ts`
+  - `src/helpers/__tests__/audioManagerProcessAudio.test.ts`
+  - `src/helpers/__tests__/audioManagerDebugAudioCapture.test.ts`
+  - `src/helpers/__tests__/audioManagerMicrophoneWarmup.test.ts`
+  - `src/helpers/__tests__/audioManagerReasoningCleanup.test.ts`
+  - `src/helpers/__tests__/audioManagerStreamingStop.test.ts`
+
 ## Next — Remaining oversized files (2026-02-20)
 
 Goal: continue applying SRP/DI + contract tests across the biggest remaining files until everything is consistently reviewable (<~400 LoC) and well covered.
 
 Backlog (largest first):
-- [ ] `src/components/OnboardingFlow.tsx` (~805)
-- [ ] `src/components/ReasoningModelSelector.tsx` (~787)
-- [ ] `src/types/electron.ts` (~692)
-- [ ] `src/components/AuthenticationStep.tsx` (~596)
-- [ ] `src/main.jsx` (~492)
-- [ ] `src/App.jsx` (~490)
-- [ ] `src/helpers/audio/recording/nonStreamingRecording.js` (~418)
-- [ ] `src/helpers/__tests__/audioManager.test.ts` (~500) (split into focused test files, keep coverage)
+- [x] `src/components/OnboardingFlow.tsx` (~805 → ~371) (split step rendering + canProceed + onboarding hooks + tests)
+- [x] `src/components/ReasoningModelSelector.tsx` (~787 → ~364) (extract custom endpoint model loading + panels + tests)
+- [x] `src/types/electron.ts` (~692 → ~241) (split `Window.electronAPI` typing into `src/types/electronApi/*` + `src/types/windowElectron.ts`)
+- [x] `src/components/AuthenticationStep.tsx` (~596 → ~330) (extract view components + tests)
+- [x] `src/main.jsx` (~492 → ~95) (extract debug telemetry + OAuth redirect bootstrap + tests)
+- [x] `src/App.jsx` (~490 → ~394) (extract dictation panel indicators/tooltip/utils + tests)
+- [x] `src/helpers/audio/recording/nonStreamingRecording.js` (~418 → ~372) (extract stop flush + error mapping helpers + tests)
+- [x] `src/helpers/__tests__/audioManager.test.ts` (~500 → split) (split into focused test files, keep coverage)

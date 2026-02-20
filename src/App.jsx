@@ -4,69 +4,12 @@ import { X } from "lucide-react";
 import { useToast } from "./components/ui/Toast";
 import { LoadingDots } from "./components/ui/LoadingDots";
 import DictationStatusBar from "./components/ui/DictationStatusBar";
+import { DictationTooltip } from "./components/dictationPanel/DictationTooltip";
+import { SoundWaveIcon, VoiceWaveIndicator } from "./components/dictationPanel/Indicators";
+import { getMicButtonProps, getMicState } from "./components/dictationPanel/micButtonUtils";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useAuth } from "./hooks/useAuth";
-
-// Sound Wave Icon Component (for idle/hover states)
-const SoundWaveIcon = ({ size = 16 }) => {
-  return (
-    <div className="flex items-center justify-center gap-1">
-      <div
-        className={`bg-white rounded-full`}
-        style={{ width: size * 0.25, height: size * 0.6 }}
-      ></div>
-      <div className={`bg-white rounded-full`} style={{ width: size * 0.25, height: size }}></div>
-      <div
-        className={`bg-white rounded-full`}
-        style={{ width: size * 0.25, height: size * 0.6 }}
-      ></div>
-    </div>
-  );
-};
-
-// Voice Wave Animation Component (for processing state)
-const VoiceWaveIndicator = ({ isListening }) => {
-  return (
-    <div className="flex items-center justify-center gap-0.5">
-      {[...Array(4)].map((_, i) => (
-        <div
-          key={i}
-          className={`w-0.5 bg-white rounded-full transition-all duration-150 ${
-            isListening ? "animate-pulse h-4" : "h-2"
-          }`}
-          style={{
-            animationDelay: isListening ? `${i * 0.1}s` : "0s",
-            animationDuration: isListening ? `${0.6 + i * 0.1}s` : "0s",
-          }}
-        />
-      ))}
-    </div>
-  );
-};
-
-// Enhanced Tooltip Component
-const Tooltip = ({ children, content, emoji }) => {
-  const [isVisible, setIsVisible] = useState(false);
-
-  return (
-    <div className="relative inline-block">
-      <div onMouseEnter={() => setIsVisible(true)} onMouseLeave={() => setIsVisible(false)}>
-        {children}
-      </div>
-      {isVisible && (
-        <div
-          className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-1 py-1 text-popover-foreground bg-popover border border-border rounded-md whitespace-nowrap z-10 transition-opacity duration-150 shadow-lg"
-          style={{ fontSize: "9.7px", maxWidth: "96px" }}
-        >
-          {emoji && <span className="mr-1">{emoji}</span>}
-          {content}
-          <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-2 border-r-2 border-t-2 border-transparent border-t-popover"></div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 export default function App() {
   const [isHovered, setIsHovered] = useState(false);
@@ -216,47 +159,8 @@ export default function App() {
     return () => document.removeEventListener("keydown", handleKeyPress);
   }, [isCommandMenuOpen]);
 
-  // Determine current mic state
-  const getMicState = () => {
-    if (isRecording) return "recording";
-    if (isProcessing) return "processing";
-    if (isHovered && !isRecording && !isProcessing) return "hover";
-    return "idle";
-  };
-
-  const micState = getMicState();
-
-  const getMicButtonProps = () => {
-    const baseClasses =
-      "rounded-full w-10 h-10 flex items-center justify-center relative overflow-hidden border-2 border-white/70 cursor-pointer";
-
-    switch (micState) {
-      case "idle":
-      case "hover":
-        return {
-          className: `${baseClasses} bg-black/50 cursor-pointer`,
-          tooltip: "Click to speak (Clipboard)",
-        };
-      case "recording":
-        return {
-          className: `${baseClasses} bg-primary cursor-pointer`,
-          tooltip: "Recording...",
-        };
-      case "processing":
-        return {
-          className: `${baseClasses} bg-accent cursor-pointer`,
-          tooltip: "Processing… (click to queue)",
-        };
-      default:
-        return {
-          className: `${baseClasses} bg-black/50 cursor-pointer`,
-          style: { transform: "scale(0.8)" },
-          tooltip: "Click to speak",
-        };
-    }
-  };
-
-  const micProps = getMicButtonProps();
+  const micState = getMicState({ isRecording, isProcessing, isHovered });
+  const micProps = getMicButtonProps(micState);
   const visibleJobs = Array.isArray(jobs)
     ? jobs.filter((job) => job && typeof job === "object" && job.status !== "done")
     : [];
@@ -372,7 +276,7 @@ export default function App() {
                 ) : null}
               </div>
             ) : null}
-            <Tooltip content={micProps.tooltip}>
+            <DictationTooltip content={micProps.tooltip}>
               <button
                 ref={buttonRef}
                 onMouseDown={(e) => {
@@ -447,7 +351,7 @@ export default function App() {
                   <div className="absolute inset-0 rounded-full border-2 border-primary/30 opacity-50"></div>
                 )}
               </button>
-            </Tooltip>
+            </DictationTooltip>
             {isCommandMenuOpen && (
               <div
                 ref={commandMenuRef}

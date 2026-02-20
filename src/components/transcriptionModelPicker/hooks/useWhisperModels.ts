@@ -38,7 +38,6 @@ export function useWhisperModels({ enabled, selectedModel, onSelectModel }: UseW
         validateAndSelectModel(result.models);
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error("[useWhisperModels] Failed to load models:", error);
       setModels([]);
     } finally {
@@ -59,4 +58,3 @@ export function useWhisperModels({ enabled, selectedModel, onSelectModel }: UseW
 
   return { models, reload };
 }
-
