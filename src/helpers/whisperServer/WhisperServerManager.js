@@ -6,6 +6,7 @@ const http = require("http");
 const debugLogger = require("../debugLogger");
 const { killProcess } = require("../../utils/process");
 const { convertToWav, getFFmpegPath } = require("../ffmpegUtils");
+const { getSafeTempDir } = require("../safeTempDir");
 const { findAvailablePort } = require("./portUtils");
 const { getWhisperServerBinaryPath } = require("./serverBinary");
 const { buildWhisperMultipartBody } = require("./multipartBody");
@@ -64,6 +65,12 @@ class WhisperServerManager {
     const ffmpegPath = getFFmpegPath();
     const spawnEnv = { ...process.env };
     const pathSep = process.platform === "win32" ? ";" : ":";
+
+    if (process.platform === "win32") {
+      const safeTmp = getSafeTempDir();
+      spawnEnv.TEMP = safeTmp;
+      spawnEnv.TMP = safeTmp;
+    }
 
     const serverBinaryDir = path.dirname(serverBinary);
     spawnEnv.PATH = serverBinaryDir + pathSep + (process.env.PATH || "");
@@ -355,4 +362,3 @@ class WhisperServerManager {
 }
 
 module.exports = WhisperServerManager;
-
