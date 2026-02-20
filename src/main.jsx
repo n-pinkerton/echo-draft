@@ -17,7 +17,7 @@ if (!handleOAuthBrowserRedirect()) {
   mountApp();
 }
 
-function AppRouter() {
+export function AppRouter() {
   // Initialize theme system
   useTheme();
 
@@ -34,9 +34,14 @@ function AppRouter() {
   useEffect(() => {
     // Check if onboarding has been completed
     const onboardingCompleted = localStorage.getItem("onboardingCompleted") === "true";
-    // Clamp step to valid range (0-5) for current 6-step onboarding
+    const skipAuth =
+      localStorage.getItem("skipAuth") === "true" ||
+      localStorage.getItem("authenticationSkipped") === "true";
+    const signedIn = localStorage.getItem("isSignedIn") === "true";
+    const activationStepIndex = signedIn && !skipAuth ? 2 : 3;
+
     const rawStep = parseInt(localStorage.getItem("onboardingCurrentStep") || "0");
-    const currentStep = Math.max(0, Math.min(rawStep, 5));
+    const currentStep = Math.max(0, Math.min(rawStep, activationStepIndex));
 
     if (isControlPanel && !onboardingCompleted) {
       // Show onboarding for control panel if not completed
@@ -44,7 +49,7 @@ function AppRouter() {
     }
 
     // Hide dictation panel window unless onboarding is complete or we're past the permissions step
-    if (isDictationPanel && !onboardingCompleted && currentStep < 4) {
+    if (isDictationPanel && !onboardingCompleted && currentStep < activationStepIndex) {
       window.electronAPI?.hideWindow?.();
     }
 
@@ -92,4 +97,3 @@ function mountApp() {
 if (import.meta.hot) {
   import.meta.hot.accept();
 }
-

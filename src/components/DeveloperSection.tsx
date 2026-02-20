@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import { FolderOpen, Copy, Check } from "lucide-react";
-import { useToast } from "./ui/Toast";
+import { useToast } from "./ui/toastContext";
 import { Toggle } from "./ui/toggle";
 import logger from "../utils/logger";
 
@@ -17,11 +17,7 @@ export default function DeveloperSection() {
   const [copiedPath, setCopiedPath] = useState(false);
   const { toast } = useToast();
 
-  useEffect(() => {
-    loadDebugState();
-  }, []);
-
-  const loadDebugState = async () => {
+  const loadDebugState = useCallback(async () => {
     try {
       setIsLoading(true);
       const state = await window.electronAPI.getDebugState();
@@ -38,15 +34,19 @@ export default function DeveloperSection() {
       );
     } catch (error) {
       console.error("Failed to load debug state:", error);
-        toast({
-          title: "Error loading debug state",
-          description: `Could not retrieve debug logging status: ${error}`,
-          variant: "destructive",
-        });
+      toast({
+        title: "Error loading debug state",
+        description: `Could not retrieve debug logging status: ${error}`,
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    void loadDebugState();
+  }, [loadDebugState]);
 
   const handleToggleDebug = async () => {
     if (isToggling) return;

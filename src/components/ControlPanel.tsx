@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { SettingsSectionType } from "./SettingsModal";
 import { useDialogs } from "../hooks/useDialogs";
 import { useHotkey } from "../hooks/useHotkey";
-import { useToast } from "./ui/Toast";
+import { useToast } from "./ui/toastContext";
 import { useUpdater } from "../hooks/useUpdater";
 import { useSettings } from "../hooks/useSettings";
 import { useAuth } from "../hooks/useAuth";
@@ -73,9 +73,23 @@ export default function ControlPanel() {
     hideAlertDialog,
   } = useDialogs();
 
+  const loadTranscriptions = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      await initializeTranscriptions(250);
+    } catch {
+      showAlertDialog({
+        title: "Unable to load history",
+        description: "Please try again in a moment.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [showAlertDialog]);
+
   useEffect(() => {
-    loadTranscriptions();
-  }, []);
+    void loadTranscriptions();
+  }, [loadTranscriptions]);
 
   useEffect(() => {
     if (updateStatus.updateDownloaded && !isDownloading) {
@@ -151,20 +165,6 @@ export default function ControlPanel() {
     localStorage.removeItem("pendingCloudMigration");
     setShowCloudMigrationBanner(true);
   }, [authLoaded, isSignedIn, setUseLocalWhisper, setCloudTranscriptionMode]);
-
-  const loadTranscriptions = async () => {
-    try {
-      setIsLoading(true);
-      await initializeTranscriptions(250);
-    } catch (error) {
-      showAlertDialog({
-        title: "Unable to load history",
-        description: "Please try again in a moment.",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const copyToClipboard = async (
     text: string,

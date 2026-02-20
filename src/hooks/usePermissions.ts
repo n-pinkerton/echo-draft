@@ -206,7 +206,7 @@ export const usePermissions = (
         alert(message);
       }
     }
-  }, [showAlertDialog]);
+  }, [setMicPermissionError, setMicPermissionGranted, showAlertDialog]);
 
   const checkPasteToolsAvailability = useCallback(async (): Promise<PasteToolsResult | null> => {
     setIsCheckingPasteTools(true);
@@ -321,7 +321,7 @@ export const usePermissions = (
         setAccessibilityPermissionGranted(true);
       }
     }
-  }, [showAlertDialog, checkPasteToolsAvailability]);
+  }, [showAlertDialog, checkPasteToolsAvailability, setAccessibilityPermissionGranted]);
 
   return {
     micPermissionGranted,

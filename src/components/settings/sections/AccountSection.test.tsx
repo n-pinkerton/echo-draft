@@ -17,7 +17,7 @@ async function loadSubject(neonAuthUrl: string) {
     useUsage: () => useUsageMock(),
   }));
 
-  vi.doMock("../../ui/Toast", () => ({
+  vi.doMock("../../ui/toastContext", () => ({
     useToast: () => useToastMock(),
   }));
 
@@ -73,4 +73,3 @@ describe("AccountSection", () => {
     expect(screen.getByRole("button", { name: "Sign Out" })).toBeInTheDocument();
   });
 });
-

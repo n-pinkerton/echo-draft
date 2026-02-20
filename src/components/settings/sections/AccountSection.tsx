@@ -8,7 +8,7 @@ import { Sparkles, LogOut, UserCircle } from "lucide-react";
 
 import { useAuth } from "../../../hooks/useAuth";
 import { useUsage } from "../../../hooks/useUsage";
-import { useToast } from "../../ui/Toast";
+import { useToast } from "../../ui/toastContext";
 import type { AlertDialogState } from "../../../hooks/useDialogs";
 import { NEON_AUTH_URL, signOut } from "../../../lib/neonAuth";
 import { cn } from "../../lib/utils";
@@ -272,4 +272,3 @@ export default function AccountSection(props: Props) {
     </div>
   );
 }
-

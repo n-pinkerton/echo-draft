@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useDialogs } from "./useDialogs";
-import { useToast } from "../components/ui/Toast";
+import { useToast } from "../components/ui/toastContext";
 import type { WhisperDownloadProgressData } from "../types/electron";
 import "../types/electron";
 

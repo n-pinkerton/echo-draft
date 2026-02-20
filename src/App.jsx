@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./index.css";
 import { X } from "lucide-react";
-import { useToast } from "./components/ui/Toast";
+import { useToast } from "./components/ui/toastContext";
 import { LoadingDots } from "./components/ui/LoadingDots";
 import DictationStatusBar from "./components/ui/DictationStatusBar";
 import { DictationTooltip } from "./components/dictationPanel/DictationTooltip";

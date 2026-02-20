@@ -475,6 +475,18 @@ Status: In Progress
   - `src/helpers/__tests__/audioManagerReasoningCleanup.test.ts`
   - `src/helpers/__tests__/audioManagerStreamingStop.test.ts`
 
+## Issue 21 — Lint cleanup + onboarding gate alignment
+
+### A) Code changes
+- [x] Removed remaining lint warnings by addressing hook dependencies and export patterns:
+  - Fixed stale-hook dependency warnings in `src/components/ControlPanel.tsx` and `src/components/DeveloperSection.tsx`.
+  - Split `useToast` into `src/components/ui/toastContext.ts` so `src/components/ui/Toast.tsx` exports only the provider/component.
+  - Removed unused exports (`badgeVariants`, `buttonVariants`, and unused `toast` helpers) to satisfy `react-refresh/only-export-components`.
+  - Updated `src/main.jsx` onboarding gating logic to match the new 3/4-step onboarding flow (activation step index is now 2 or 3 depending on auth) and exported `AppRouter` to satisfy fast-refresh rules.
+
+### B) Tests
+- [x] Re-ran `npm test`, `npm run typecheck`, and `npm run lint` (no eslint warnings).
+
 ## Next — Remaining oversized files (2026-02-20)
 
 Goal: continue applying SRP/DI + contract tests across the biggest remaining files until everything is consistently reviewable (<~400 LoC) and well covered.

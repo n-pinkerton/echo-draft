@@ -5,7 +5,7 @@ import { useClipboard } from "../hooks/useClipboard";
 import { useDialogs } from "../hooks/useDialogs";
 import { usePermissions } from "../hooks/usePermissions";
 import { useSettings } from "../hooks/useSettings";
-import { useToast } from "./ui/Toast";
+import { useToast } from "./ui/toastContext";
 import { AlertDialog, ConfirmDialog } from "./ui/dialog";
 import { useAgentName } from "../utils/agentName";
 
@@ -253,4 +253,3 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     </>
   );
 }
-
