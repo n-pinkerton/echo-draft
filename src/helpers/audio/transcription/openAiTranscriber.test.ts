@@ -161,5 +161,51 @@ describe("OpenAiTranscriber", () => {
     expect(result.text).toBe("Real transcription");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
-});
 
+  it("retries once when the transcript looks truncated for a long recording", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
+
+    const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
+    const t = new OpenAiTranscriber({ logger });
+
+    const fetchMock = vi.fn(async (_url: any, init: any) => {
+      const formData = init?.body as FormData;
+      const hasStream = typeof formData?.has === "function" ? formData.has("stream") : null;
+
+      if (fetchMock.mock.calls.length === 1) {
+        expect(hasStream).toBe(true);
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: { get: () => "application/json" },
+          text: async () => JSON.stringify({ text: "Hello" }),
+        } as any;
+      }
+
+      expect(hasStream).toBe(false);
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => "application/json" },
+        text: async () =>
+          JSON.stringify({
+            text: "Hello world this is a longer retry transcript that should be preferred",
+          }),
+      } as any;
+    });
+
+    globalThis.fetch = fetchMock as any;
+
+    const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
+    const result = await t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 45 });
+
+    expect(result.rawText).toMatch(/longer retry transcript/);
+    expect(result.text).toMatch(/longer retry transcript/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.timings.transcriptionAttemptCount).toBe(2);
+    expect(result.timings.transcriptionRetried).toBe(true);
+  });
+});

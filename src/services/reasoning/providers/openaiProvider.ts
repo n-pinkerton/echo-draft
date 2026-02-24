@@ -106,7 +106,12 @@ export async function processWithOpenAiProvider({
             if (isOlderModel) {
               requestBody.temperature = config.temperature || 0.3;
             }
-            requestBody.max_tokens = maxOutputTokens;
+            const usesMaxCompletionTokens = model.startsWith("gpt-5");
+            if (usesMaxCompletionTokens) {
+              requestBody.max_completion_tokens = maxOutputTokens;
+            } else {
+              requestBody.max_tokens = maxOutputTokens;
+            }
           }
 
           logger.logReasoning("OPENAI_REQUEST", {
@@ -333,4 +338,3 @@ export async function processWithOpenAiProvider({
     throw error;
   }
 }
-
