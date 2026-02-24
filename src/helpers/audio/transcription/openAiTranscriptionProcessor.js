@@ -1,11 +1,156 @@
 import { getBaseLanguageCode } from "../../../utils/languageSupport";
-import { getCustomDictionaryArray } from "./customDictionary";
+import {
+  buildCustomDictionaryPromptForTranscription,
+  getCustomDictionaryArray,
+} from "./customDictionary";
 import { isLikelyDictionaryPromptEcho } from "./dictionaryPromptEcho";
 import { countWords } from "../utils/wordCount";
 
 const SHORT_CLIP_DURATION_SECONDS = 2.5;
 const TRUNCATION_RETRY_MIN_DURATION_SECONDS = 12;
 const TRUNCATION_RETRY_MAX_WORDS_PER_SECOND = 0.6;
+const TRUNCATION_REJECT_MIN_WORDS_PER_SECOND = 0.2;
+const PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS = 2;
+const PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS = 6;
+const ASSISTANT_STYLE_RETRY_MIN_DURATION_SECONDS = 20;
+const ASSISTANT_STYLE_RETRY_MIN_WORDS = 80;
+
+const ASSISTANT_PREFIX_PATTERNS = [
+  /^certainly[,.!\s]/i,
+  /^absolutely[,.!\s]/i,
+  /^sure[,.!\s]/i,
+  /^of course[,.!\s]/i,
+  /^here(?:'s| is)\b/i,
+];
+
+const ASSISTANT_CONTENT_PATTERNS = [
+  /\n#{1,6}\s/m,
+  /\*\*[^*]{2,}\*\*/,
+  /(?:^|\n)\d+\.\s+/m,
+  /\byour task is to\b/i,
+  /\bclarifications?\b/i,
+  /\brecommendations?\b/i,
+  /\blet's break down\b/i,
+];
+
+const hasOnlyPunctuation = (text = "") => /^[\s\p{P}\p{S}]+$/u.test(text);
+
+const analyzeCandidate = (text, { durationSeconds = null, promptEchoDetected = false } = {}) => {
+  const rawText = typeof text === "string" ? text : "";
+  const trimmed = rawText.trim();
+  const words = countWords(trimmed);
+  const chars = trimmed.length;
+  const wordsPerSecond =
+    typeof durationSeconds === "number" && durationSeconds > 0 ? words / durationSeconds : null;
+
+  const assistantStyleSignals = [
+    ASSISTANT_PREFIX_PATTERNS.some((pattern) => pattern.test(trimmed)),
+    ...ASSISTANT_CONTENT_PATTERNS.map((pattern) => pattern.test(trimmed)),
+  ];
+  const assistantStyleScore = assistantStyleSignals.filter(Boolean).length;
+  const looksAssistantStyle =
+    assistantStyleScore >= 3 &&
+    words >= ASSISTANT_STYLE_RETRY_MIN_WORDS &&
+    typeof durationSeconds === "number" &&
+    durationSeconds >= ASSISTANT_STYLE_RETRY_MIN_DURATION_SECONDS;
+
+  const reasons = [];
+  if (!trimmed) reasons.push("empty");
+  if (hasOnlyPunctuation(trimmed)) reasons.push("punctuation-only");
+  if (looksAssistantStyle) reasons.push("assistant-style-output");
+  if (
+    wordsPerSecond !== null &&
+    typeof durationSeconds === "number" &&
+    durationSeconds >= TRUNCATION_RETRY_MIN_DURATION_SECONDS &&
+    words > 0 &&
+    wordsPerSecond < TRUNCATION_RETRY_MAX_WORDS_PER_SECOND
+  ) {
+    reasons.push("suspiciously-short-for-duration");
+  }
+  if (
+    promptEchoDetected &&
+    wordsPerSecond === null &&
+    (words < PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS || chars < PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS)
+  ) {
+    reasons.push("too-short-after-prompt-echo-retry");
+  }
+
+  let score = Math.min(words, 400);
+  if (!trimmed) score -= 1000;
+  if (hasOnlyPunctuation(trimmed)) score -= 300;
+  if (looksAssistantStyle) score -= 500;
+  if (
+    wordsPerSecond !== null &&
+    typeof durationSeconds === "number" &&
+    durationSeconds >= TRUNCATION_RETRY_MIN_DURATION_SECONDS &&
+    words > 0
+  ) {
+    if (wordsPerSecond < TRUNCATION_RETRY_MAX_WORDS_PER_SECOND) score -= 180;
+    if (wordsPerSecond < TRUNCATION_REJECT_MIN_WORDS_PER_SECOND) score -= 220;
+  }
+  if (
+    promptEchoDetected &&
+    wordsPerSecond === null &&
+    (words < PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS || chars < PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS)
+  ) {
+    score -= 220;
+  }
+
+  return {
+    trimmed,
+    words,
+    chars,
+    wordsPerSecond,
+    assistantStyleScore,
+    looksAssistantStyle,
+    reasons,
+    score,
+  };
+};
+
+const isHardReject = (analysis, { durationSeconds = null, promptEchoDetected = false } = {}) => {
+  if (!analysis.trimmed || hasOnlyPunctuation(analysis.trimmed)) {
+    return true;
+  }
+
+  if (
+    analysis.wordsPerSecond !== null &&
+    typeof durationSeconds === "number" &&
+    durationSeconds >= TRUNCATION_RETRY_MIN_DURATION_SECONDS &&
+    analysis.words > 0 &&
+    analysis.wordsPerSecond < TRUNCATION_REJECT_MIN_WORDS_PER_SECOND
+  ) {
+    return true;
+  }
+
+  if (
+    promptEchoDetected &&
+    analysis.wordsPerSecond === null &&
+    (analysis.words < PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS ||
+      analysis.chars < PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS)
+  ) {
+    return true;
+  }
+
+  if (analysis.looksAssistantStyle) {
+    return true;
+  }
+
+  return false;
+};
+
+const choosePreferredResult = (primaryResult, retryResult, context = {}) => {
+  const primaryText = typeof primaryResult?.rawText === "string" ? primaryResult.rawText : "";
+  const retryText = typeof retryResult?.rawText === "string" ? retryResult.rawText : "";
+  const primaryAnalysis = analyzeCandidate(primaryText, context);
+  const retryAnalysis = analyzeCandidate(retryText, context);
+
+  if (retryAnalysis.score > primaryAnalysis.score) {
+    return { selected: retryResult, selectedName: "retry", primaryAnalysis, retryAnalysis };
+  }
+
+  return { selected: primaryResult, selectedName: "primary", primaryAnalysis, retryAnalysis };
+};
 
 export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}, options = {}) {
   const skipDictionaryPrompt = options.skipDictionaryPrompt === true;
@@ -78,7 +223,12 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
                 : "webm";
 
       const dictionaryEntries = attemptSkipDictionaryPrompt ? [] : getCustomDictionaryArray();
-      const dictionaryPrompt = dictionaryEntries.length > 0 ? dictionaryEntries.join(", ") : null;
+      const dictionaryPromptPlan = buildCustomDictionaryPromptForTranscription({
+        model,
+        entries: dictionaryEntries,
+      });
+      const dictionaryPrompt = dictionaryPromptPlan.prompt;
+      const dictionaryEntriesUsed = dictionaryPromptPlan.entriesUsed;
       const shouldAttachDictionaryPrompt = Boolean(dictionaryPrompt);
 
       const shouldStream =
@@ -94,8 +244,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           hasApiKey: !!apiKey,
           shouldStream,
           forceNoStream: attemptForceNoStream,
-          dictionaryEntriesCount: dictionaryEntries.length,
+          dictionaryEntriesCount: dictionaryEntriesUsed.length,
           dictionaryPromptLength: dictionaryPrompt ? dictionaryPrompt.length : 0,
+          dictionaryPromptMode: dictionaryPromptPlan.mode,
         },
         "transcription"
       );
@@ -144,7 +295,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           rawText: proxyText,
           source: "mistral",
           timings: { transcriptionProcessingDurationMs: attemptDurationMs },
-          dictionaryEntries,
+          dictionaryEntries: dictionaryEntriesUsed,
           shouldAttachDictionaryPrompt,
         };
       }
@@ -231,7 +382,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           rawText: result.text,
           source: "openai",
           timings: { transcriptionProcessingDurationMs: attemptDurationMs },
-          dictionaryEntries,
+          dictionaryEntries: dictionaryEntriesUsed,
           shouldAttachDictionaryPrompt,
         };
       }
@@ -281,7 +432,12 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
             attemptSkipDictionaryPrompt: true,
             attemptForceNoStream,
           });
-          return { attempts: [firstAttempt, retryAttempt], result: retryAttempt, skipDictionaryPrompt: true };
+          return {
+            attempts: [firstAttempt, retryAttempt],
+            result: retryAttempt,
+            skipDictionaryPrompt: true,
+            dictionaryPromptEchoDetected: true,
+          };
         }
 
         throw new Error(
@@ -289,7 +445,12 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         );
       }
 
-      return { attempts: [firstAttempt], result: firstAttempt, skipDictionaryPrompt: attemptSkipDictionaryPrompt };
+      return {
+        attempts: [firstAttempt],
+        result: firstAttempt,
+        skipDictionaryPrompt: attemptSkipDictionaryPrompt,
+        dictionaryPromptEchoDetected: false,
+      };
     };
 
     const attempts = [];
@@ -302,9 +463,80 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
 
     let activeResult = primary.result;
     let effectiveSkipDictionaryPrompt = primary.skipDictionaryPrompt;
+    let promptEchoDetected = primary.dictionaryPromptEchoDetected === true;
+
+    const primaryText = typeof activeResult.rawText === "string" ? activeResult.rawText : "";
+    const primaryAnalysis = analyzeCandidate(primaryText, {
+      durationSeconds,
+      promptEchoDetected,
+    });
+
+    const shouldRetryAssistantStyle =
+      !forceNoStream &&
+      primaryAnalysis.looksAssistantStyle &&
+      allowTruncationRetry;
+
+    if (shouldRetryAssistantStyle) {
+      transcriber.logger?.warn?.(
+        "Transcription looks like assistant-generated text; retrying without prompt and without streaming",
+        {
+          model,
+          provider,
+          durationSeconds,
+          words: primaryAnalysis.words,
+          assistantStyleScore: primaryAnalysis.assistantStyleScore,
+          preview: primaryText.slice(0, 160),
+        },
+        "transcription"
+      );
+
+      try {
+        const retry = await transcribeWithDictionaryRetry({
+          attemptLabel: "retry-assistant-style",
+          attemptSkipDictionaryPrompt: true,
+          attemptForceNoStream: true,
+        });
+        attempts.push(...retry.attempts);
+        promptEchoDetected = promptEchoDetected || retry.dictionaryPromptEchoDetected === true;
+
+        const selection = choosePreferredResult(activeResult, retry.result, {
+          durationSeconds,
+          promptEchoDetected,
+        });
+        if (selection.selectedName === "retry") {
+          transcriber.logger?.warn?.(
+            "Using assistant-style retry result",
+            {
+              primaryScore: selection.primaryAnalysis.score,
+              retryScore: selection.retryAnalysis.score,
+              primaryReasons: selection.primaryAnalysis.reasons,
+              retryReasons: selection.retryAnalysis.reasons,
+            },
+            "transcription"
+          );
+          activeResult = retry.result;
+        } else {
+          transcriber.logger?.warn?.(
+            "Keeping primary result after assistant-style retry",
+            {
+              primaryScore: selection.primaryAnalysis.score,
+              retryScore: selection.retryAnalysis.score,
+              primaryReasons: selection.primaryAnalysis.reasons,
+              retryReasons: selection.retryAnalysis.reasons,
+            },
+            "transcription"
+          );
+        }
+      } catch (retryError) {
+        transcriber.logger?.warn?.(
+          "Assistant-style retry failed; continuing with current transcription",
+          { error: retryError?.message || String(retryError) },
+          "transcription"
+        );
+      }
+    }
 
     const rawText = typeof activeResult.rawText === "string" ? activeResult.rawText : "";
-
     const words = countWords(rawText);
     const wordsPerSecond =
       typeof durationSeconds === "number" && durationSeconds > 0 ? words / durationSeconds : null;
@@ -339,19 +571,33 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           attemptForceNoStream: true,
         });
         attempts.push(...retry.attempts);
+        promptEchoDetected = promptEchoDetected || retry.dictionaryPromptEchoDetected === true;
 
-        const retryText = typeof retry.result.rawText === "string" ? retry.result.rawText : "";
-        if (retryText.trim().length > rawText.trim().length) {
+        const selection = choosePreferredResult(activeResult, retry.result, {
+          durationSeconds,
+          promptEchoDetected,
+        });
+        if (selection.selectedName === "retry") {
           transcriber.logger?.warn?.(
-            "Using retry transcription result because it is longer",
-            { primaryLength: rawText.trim().length, retryLength: retryText.trim().length },
+            "Using retry transcription result",
+            {
+              primaryScore: selection.primaryAnalysis.score,
+              retryScore: selection.retryAnalysis.score,
+              primaryReasons: selection.primaryAnalysis.reasons,
+              retryReasons: selection.retryAnalysis.reasons,
+            },
             "transcription"
           );
           activeResult = retry.result;
         } else {
           transcriber.logger?.warn?.(
-            "Keeping primary transcription result (retry was not longer)",
-            { primaryLength: rawText.trim().length, retryLength: retryText.trim().length },
+            "Keeping primary transcription result after retry",
+            {
+              primaryScore: selection.primaryAnalysis.score,
+              retryScore: selection.retryAnalysis.score,
+              primaryReasons: selection.primaryAnalysis.reasons,
+              retryReasons: selection.retryAnalysis.reasons,
+            },
             "transcription"
           );
         }
@@ -365,6 +611,33 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     }
 
     const finalRawText = typeof activeResult.rawText === "string" ? activeResult.rawText : "";
+    const finalAnalysis = analyzeCandidate(finalRawText, {
+      durationSeconds,
+      promptEchoDetected,
+    });
+    const hardReject = isHardReject(finalAnalysis, { durationSeconds, promptEchoDetected });
+    if (hardReject) {
+      transcriber.logger?.warn?.(
+        "Rejecting unreliable transcription output",
+        {
+          model,
+          provider,
+          durationSeconds,
+          words: finalAnalysis.words,
+          wordsPerSecond:
+            finalAnalysis.wordsPerSecond !== null ? Number(finalAnalysis.wordsPerSecond.toFixed(3)) : null,
+          reasons: finalAnalysis.reasons,
+          preview: finalRawText.slice(0, 200),
+          attemptsCount: attempts.length,
+          promptEchoDetected,
+        },
+        "transcription"
+      );
+      throw new Error(
+        "Transcription result appears unreliable (too short or likely model-generated). Please retry."
+      );
+    }
+
     const combinedTimings = combineTranscriptionTimings(attempts);
     timings.transcriptionProcessingDurationMs = combinedTimings.transcriptionProcessingDurationMs;
     timings.transcriptionAttemptCount = combinedTimings.transcriptionAttemptCount;
