@@ -65,7 +65,7 @@ function registerDictionaryHandlers(
     const extension = exportFormat === "csv" ? "csv" : "txt";
     const defaultPath = path.join(
       app.getPath("documents"),
-      `openwhispr-dictionary-${timestamp}.${extension}`
+      `echodraft-dictionary-${timestamp}.${extension}`
     );
 
     const saveDialogResult = await dialog.showSaveDialog(
@@ -110,4 +110,3 @@ function registerDictionaryHandlers(
 }
 
 module.exports = { registerDictionaryHandlers };
-

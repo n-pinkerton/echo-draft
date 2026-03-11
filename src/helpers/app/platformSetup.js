@@ -2,7 +2,7 @@ const path = require("path");
 
 const { isTruthyFlag } = require("../utils/flags");
 
-const BASE_WINDOWS_APP_ID = "com.herotools.openwispr";
+const BASE_WINDOWS_APP_ID = "com.herotools.echodraft";
 
 function configureChannelUserDataPath({ app, channel, env = process.env } = {}) {
   if (!app) {
@@ -78,4 +78,3 @@ module.exports = {
   applyWindowsAppUserModelId,
   configureChannelUserDataPath,
 };
-

@@ -56,7 +56,7 @@ Status: In Progress
 
 ### Progress log
 - [x] Investigated “I have also provided…” truncation report:
-  - Source of truth is the SQLite DB at `C:\Users\NigelPinkerton\AppData\Roaming\open-whispr\transcriptions.db`.
+  - Source of truth is the SQLite DB at `C:\Users\NigelPinkerton\AppData\Roaming\EchoDraft\transcriptions.db`.
     - Query used (WSL): `python3 -c "…sqlite3…SELECT … FROM transcriptions WHERE id=931"`.
   - Record `transcriptions.id=931`:
     - `timestamp=2026-02-18 23:29:23` (UTC)
@@ -65,7 +65,7 @@ Status: In Progress
     - `text === raw_text === "I have also provided our existing code deployment playbook."`
     - Word count: raw `9`, cleaned `9`
   - Logs:
-    - Installed debug log: `C:\Users\NigelPinkerton\AppData\Local\Programs\OpenWhispr\EchoDraft\logs\openwhispr-debug-2026-02-19.jsonl`
+    - Installed debug log: `C:\Users\NigelPinkerton\AppData\Local\Programs\EchoDraft\logs\echodraft-debug-2026-02-19.jsonl`
     - That file starts at `2026-02-19T01:02:03Z` (after the `id=931` timestamp), and a search for that sessionId returns no matches.
     - Conclusion: we can’t prove why that recording stopped at ~34s (no logs, no saved audio capture for that session).
   - UI:
@@ -210,7 +210,7 @@ Status: In Progress
 
 ### A) Investigate + baseline
 - [x] Read latest log files in `C:\Users\NigelPinkerton\AppData\Local\Programs\EchoDraft\logs`.
-- [x] Confirm `72c21aa6` / `cae59e8a` / `0e5a79dd` session sequence in `openwhispr-debug-2026-02-16.jsonl`.
+- [x] Confirm `72c21aa6` / `cae59e8a` / `0e5a79dd` session sequence in `echodraft-debug-2026-02-16.jsonl`.
 - [x] Confirm stop event with different session id appears while a recording is active.
 - [x] Confirm non-streaming stop path writes `Recording stopped` and enqueues one processing job in `audioManager.start/stop` flow.
 
@@ -223,7 +223,7 @@ Status: In Progress
 ### C) Validation
 - [x] Add/keep stop instrumentation fields in logs (`recordingContext`, `chunksCount`, `stopLatencyMs`, `stopFlushMs`, `stopInProgress`).
 - [ ] Perform 2+ long dictations with alternating start/stop and compare: complete job `rawLength` and `outputTextLength` per session.
-  - One full end-to-end session observed in `openwhispr-debug-2026-02-16.jsonl` with:
+  - One full end-to-end session observed in `echodraft-debug-2026-02-16.jsonl` with:
     - `1x Dictation start requested`
     - `1x Dictation stop requested` (`stopSessionMismatch=true`)
     - `1x Dictation transcription complete` (`rawLength:766`, `cleanedLength:782`)
@@ -250,9 +250,9 @@ Status: In Progress
 - [ ] Verify `.env` contains `OPENWHISPR_LOG_LEVEL` with chosen value after each toggle.
 
 ### C) Bootstrap validation
-- [x] Verify renderer startup now reconciles localStorage key `openwhisprDebugEnabled` with persisted debug state and re-syncs to main process.
+- [x] Verify renderer startup now reconciles localStorage key `echoDraftDebugEnabled` with persisted debug state and re-syncs to main process.
 - [x] Capture a post-rebuild log proving this path runs on real startup after restart.
-  - `openwhispr-debug-2026-02-16.jsonl` shows startup `Renderer settings snapshot` in both windows with `openwhisprDebugEnabled:"true"`.
+  - `echodraft-debug-2026-02-16.jsonl` shows startup `Renderer settings snapshot` in both windows with `echoDraftDebugEnabled:"true"`.
 
 ## Issue 3 — Windows rebuild / in-place upgrade
 

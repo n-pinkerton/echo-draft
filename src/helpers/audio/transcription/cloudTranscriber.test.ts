@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  ECHO_DRAFT_BYOK_REASONED_SOURCE,
+  ECHO_DRAFT_CLOUD_MODE,
+  ECHO_DRAFT_REASONED_SOURCE,
+} from "../../../utils/branding";
 import { CloudTranscriber } from "./cloudTranscriber";
 
 const createLogger = () => ({
@@ -68,7 +73,7 @@ describe("CloudTranscriber", () => {
 
   it("applies cloud reasoning when enabled", async () => {
     localStorage.setItem("useReasoningModel", "true");
-    localStorage.setItem("cloudReasoningMode", "openwhispr");
+    localStorage.setItem("cloudReasoningMode", ECHO_DRAFT_CLOUD_MODE);
 
     (window as any).electronAPI.cloudTranscribe.mockResolvedValue({
       success: true,
@@ -100,7 +105,7 @@ describe("CloudTranscriber", () => {
     expect((window as any).electronAPI.cloudReason).toHaveBeenCalledTimes(1);
     expect(result.text).toBe("clean");
     expect(result.rawText).toBe("raw");
-    expect(result.source).toBe("openwhispr-reasoned");
+    expect(result.source).toBe(ECHO_DRAFT_REASONED_SOURCE);
     expect(result.timings?.transcriptionProcessingDurationMs).toEqual(expect.any(Number));
     expect(result.timings?.reasoningProcessingDurationMs).toEqual(expect.any(Number));
   });
@@ -131,7 +136,7 @@ describe("CloudTranscriber", () => {
 
     expect(processWithReasoningModel).toHaveBeenCalledTimes(1);
     expect((window as any).electronAPI.cloudReason).not.toHaveBeenCalled();
-    expect(result.source).toBe("openwhispr-byok-reasoned");
+    expect(result.source).toBe(ECHO_DRAFT_BYOK_REASONED_SOURCE);
     expect(result.text).toBe("clean");
   });
 });

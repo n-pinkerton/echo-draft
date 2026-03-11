@@ -69,7 +69,7 @@ async function connectCdpTargets(port) {
   await dictation.waitFor("document.readyState === 'complete'", 15000);
 
   // Wait for E2E helper to exist in dictation panel
-  await dictation.waitFor("window.__openwhisprE2E && typeof window.__openwhisprE2E.getProgress === 'function'", 15000);
+  await dictation.waitFor("window.__echoDraftE2E && typeof window.__echoDraftE2E.getProgress === 'function'", 15000);
 
   return { panel, dictation };
 }
@@ -77,4 +77,3 @@ async function connectCdpTargets(port) {
 module.exports = {
   connectCdpTargets,
 };
-

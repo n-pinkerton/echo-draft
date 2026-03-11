@@ -121,27 +121,26 @@ export function WelcomeView({
       </div>
 
       <p className="text-[10px] text-muted-foreground/80 leading-tight text-center">
-        By continuing, you agree to our{" "}
+        By continuing, you agree to the project{" "}
         <a
-          href="https://openwhispr.com/terms"
+          href="https://github.com/n-pinkerton/echo-draft/blob/main/LICENSE"
           target="_blank"
           rel="noopener noreferrer"
           className="text-link underline decoration-link/30 hover:decoration-link/60 transition-colors"
         >
-          Terms of Service
+          license
         </a>{" "}
         and{" "}
         <a
-          href="https://openwhispr.com/privacy"
+          href="https://github.com/n-pinkerton/echo-draft/blob/main/Docs/PRIVACY.md"
           target="_blank"
           rel="noopener noreferrer"
           className="text-link underline decoration-link/30 hover:decoration-link/60 transition-colors"
         >
-          Privacy Policy
+          privacy notes
         </a>
         .
       </p>
     </div>
   );
 }
-

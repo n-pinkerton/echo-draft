@@ -128,7 +128,7 @@ async function createControlPanelWindow(manager) {
 
   manager.controlPanelWindow.webContents.on("did-finish-load", () => {
     clearVisibilityTimer();
-    manager.controlPanelWindow.setTitle("Control Panel");
+    manager.controlPanelWindow.setTitle("EchoDraft");
   });
 
   manager.controlPanelWindow.webContents.on(

@@ -14,7 +14,7 @@ describe("historyFilterUtils", () => {
       id: 2,
       text: "Clipboard text",
       raw_text: "Clipboard text",
-      meta: { source: "openwhispr", outputMode: "clipboard", status: "success" },
+      meta: { source: "echodraft", outputMode: "clipboard", status: "success" },
     },
     {
       id: 3,
@@ -25,7 +25,7 @@ describe("historyFilterUtils", () => {
   ];
 
   it("collects provider options from provider/source", () => {
-    expect(getProviderOptions(history as any)).toEqual(["openai", "openwhispr"]);
+    expect(getProviderOptions(history as any)).toEqual(["echodraft", "openai"]);
   });
 
   it("filters by query and mode/status/provider", () => {
@@ -61,9 +61,8 @@ describe("historyFilterUtils", () => {
         searchQuery: "",
         modeFilter: "all",
         statusFilter: "all",
-        providerFilter: "openwhispr",
+        providerFilter: "echodraft",
       }).map((x: any) => x.id)
     ).toEqual([2]);
   });
 });
-

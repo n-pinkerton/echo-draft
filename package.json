@@ -1,5 +1,5 @@
 {
-  "name": "open-whispr",
+  "name": "echodraft",
   "version": "1.4.5",
   "description": "A desktop dictation application using whisper.cpp for speech-to-text transcription",
   "main": "main.js",
@@ -57,8 +57,7 @@
     "desktop-app"
   ],
   "author": {
-    "name": "EchoDraft Team",
-    "email": "support@openwhispr.com"
+    "name": "EchoDraft Team"
   },
   "license": "MIT",
   "devDependencies": {

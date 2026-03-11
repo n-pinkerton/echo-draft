@@ -13,7 +13,7 @@ const WINDOW_SIZES = {
 const MAIN_WINDOW_CONFIG = {
   width: WINDOW_SIZES.BASE.width,
   height: WINDOW_SIZES.BASE.height,
-  title: "Voice Recorder",
+  title: "EchoDraft",
   webPreferences: {
     preload: path.join(__dirname, "..", "..", "preload.js"),
     nodeIntegration: false,
@@ -69,6 +69,7 @@ const CONTROL_PANEL_CONFIG = {
   alwaysOnTop: false, // Control panel should not be always on top
   visibleOnAllWorkspaces: false, // Control panel should stay in its workspace
   type: "normal", // Ensure it's a normal window, not a panel
+  title: "EchoDraft",
 };
 
 // Window positioning utilities

@@ -22,7 +22,7 @@ class DebugLogger {
     this.lastFileLoggingInitError = null;
 
     this.telemetryLogger = new TelemetryFileLogger({
-      filePrefix: "openwhispr-debug",
+      filePrefix: "echodraft-debug",
       getHeaderRecord: () => this.buildHeaderRecord(),
     });
   }
@@ -306,4 +306,3 @@ class DebugLogger {
 }
 
 module.exports = { DebugLogger };
-

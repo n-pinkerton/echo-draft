@@ -2,6 +2,7 @@ import { Cloud, Key } from "lucide-react";
 
 import TranscriptionModelPicker from "../../TranscriptionModelPicker";
 import type { LocalTranscriptionProvider } from "../../../types/electron";
+import { ECHO_DRAFT_CLOUD_MODE } from "../../../utils/branding";
 import { SectionHeader, SettingsPanel, SettingsPanelRow } from "../SettingsPanels";
 
 export interface TranscriptionSectionProps {
@@ -71,7 +72,8 @@ export default function TranscriptionSection(props: TranscriptionSectionProps) {
   } = props;
 
   const isCustomMode = cloudTranscriptionMode === "byok" || useLocalWhisper;
-  const isCloudMode = isSignedIn && cloudTranscriptionMode === "openwhispr" && !useLocalWhisper;
+  const isCloudMode =
+    isSignedIn && cloudTranscriptionMode === ECHO_DRAFT_CLOUD_MODE && !useLocalWhisper;
 
   return (
     <div className="space-y-4">
@@ -84,7 +86,7 @@ export default function TranscriptionSection(props: TranscriptionSectionProps) {
             <button
               onClick={() => {
                 if (!isCloudMode) {
-                  setCloudTranscriptionMode("openwhispr");
+                  setCloudTranscriptionMode(ECHO_DRAFT_CLOUD_MODE);
                   setUseLocalWhisper(false);
                   updateTranscriptionSettings({ useLocalWhisper: false });
                   toast({
@@ -238,4 +240,3 @@ export default function TranscriptionSection(props: TranscriptionSectionProps) {
     </div>
   );
 }
-

@@ -1,4 +1,10 @@
 import logger from "../../../utils/logger";
+import {
+  ECHO_DRAFT_CLOUD_MODE,
+  ECHO_DRAFT_CLOUD_SOURCE,
+  getRendererLogLevel,
+  isEchoDraftCloudMode,
+} from "../../../utils/branding";
 import { getCustomDictionaryArray } from "../transcription/customDictionary";
 import { cleanupStreamingListeners } from "./assemblyAiStreamingCleanup";
 
@@ -158,15 +164,15 @@ export async function stopStreamingRecording(manager) {
     manager.emitProgress({
       stage: "cleaning",
       stageLabel: "Cleaning up",
-      provider: "openwhispr",
+      provider: ECHO_DRAFT_CLOUD_SOURCE,
       context: manager.streamingContext,
     });
     const reasoningStart = performance.now();
     const agentName = localStorage.getItem("agentName") || "";
-    const cloudReasoningMode = localStorage.getItem("cloudReasoningMode") || "openwhispr";
+    const cloudReasoningMode = localStorage.getItem("cloudReasoningMode") || ECHO_DRAFT_CLOUD_MODE;
 
     try {
-      if (cloudReasoningMode === "openwhispr") {
+      if (isEchoDraftCloudMode(cloudReasoningMode)) {
         const reasonResult = await manager.withSessionRefresh(async () => {
           const res = await window.electronAPI.cloudReason(finalText, {
             agentName,
@@ -232,7 +238,7 @@ export async function stopStreamingRecording(manager) {
       },
       "transcription"
     );
-    if (typeof window !== "undefined" && window.__openwhisprLogLevel === "trace") {
+    if (getRendererLogLevel() === "trace") {
       logger.trace(
         "Streaming transcript text",
         {
@@ -285,4 +291,3 @@ export async function stopStreamingRecording(manager) {
 
   return true;
 }
-

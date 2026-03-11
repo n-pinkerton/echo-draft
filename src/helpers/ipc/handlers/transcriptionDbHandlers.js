@@ -92,7 +92,7 @@ function registerTranscriptionDbHandlers(
     const extension = exportFormat === "csv" ? "csv" : "json";
     const defaultPath = path.join(
       app.getPath("documents"),
-      `openwhispr-transcriptions-${timestamp}.${extension}`
+      `echodraft-transcriptions-${timestamp}.${extension}`
     );
 
     const saveDialogResult = await dialog.showSaveDialog(

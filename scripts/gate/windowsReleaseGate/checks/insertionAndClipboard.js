@@ -68,7 +68,7 @@ async function checkInsertionAndClipboard(dictation, record, runId) {
   const beforeForegroundText = await readEditText(notepad.editHwnd);
   await dictation.eval(`
       (async function () {
-        await window.__openwhisprE2E.simulateTranscriptionComplete(
+        await window.__echoDraftE2E.simulateTranscriptionComplete(
           { text: ${JSON.stringify(insertForegroundText)}, source: "e2e" },
           { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-foreground-${runId}`)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
         );
@@ -106,7 +106,7 @@ async function checkInsertionAndClipboard(dictation, record, runId) {
 
     await dictation.eval(`
         (async function () {
-          await window.__openwhisprE2E.simulateTranscriptionComplete(
+          await window.__echoDraftE2E.simulateTranscriptionComplete(
             { text: ${JSON.stringify(insertLockedText)}, source: "e2e" },
             { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-locked-${runId}`)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
           );
@@ -153,7 +153,7 @@ async function checkInsertionAndClipboard(dictation, record, runId) {
   const notepadTextBeforeClipboardMode = await readEditText(notepad.editHwnd);
   await dictation.eval(`
       (async function () {
-        await window.__openwhisprE2E.simulateTranscriptionComplete(
+        await window.__echoDraftE2E.simulateTranscriptionComplete(
           { text: ${JSON.stringify(clipText)}, source: "e2e" },
           { outputMode: "clipboard", sessionId: ${JSON.stringify(`sess-clip-${runId}`)} }
         );
@@ -177,7 +177,7 @@ async function checkInsertionAndClipboard(dictation, record, runId) {
   const beforeFailText = await readEditText(notepad.editHwnd);
   await dictation.eval(`
       (async function () {
-        await window.__openwhisprE2E.simulateTranscriptionComplete(
+        await window.__echoDraftE2E.simulateTranscriptionComplete(
           { text: ${JSON.stringify(insertFailText)}, source: "e2e" },
           { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-fail-${runId}`)}, insertionTarget: { hwnd: 1, pid: 0, processName: "invalid", title: "invalid" } }
         );
@@ -230,7 +230,7 @@ async function checkInsertionAndClipboard(dictation, record, runId) {
   );
   await dictation.eval(`
       (async function () {
-        await window.__openwhisprE2E.simulateTranscriptionComplete(
+        await window.__echoDraftE2E.simulateTranscriptionComplete(
           { text: ${JSON.stringify(`E2E ImagePreserve ${runId}`)}, source: "e2e" },
           { outputMode: "insert", sessionId: ${JSON.stringify(`sess-img-${runId}`)}, insertionTarget: ${JSON.stringify(capture2?.target || null)} }
         );
@@ -294,4 +294,3 @@ module.exports = {
   checkInsertionAndClipboard,
   closeInsertionTarget,
 };
-

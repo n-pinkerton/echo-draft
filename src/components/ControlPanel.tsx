@@ -6,6 +6,7 @@ import { useToast } from "./ui/toastContext";
 import { useUpdater } from "../hooks/useUpdater";
 import { useSettings } from "../hooks/useSettings";
 import { useAuth } from "../hooks/useAuth";
+import { ECHO_DRAFT_CLOUD_MODE } from "../utils/branding";
 import {
   useTranscriptions,
   initializeTranscriptions,
@@ -161,7 +162,7 @@ export default function ControlPanel() {
 
     cloudMigrationProcessed.current = true;
     setUseLocalWhisper(false);
-    setCloudTranscriptionMode("openwhispr");
+    setCloudTranscriptionMode(ECHO_DRAFT_CLOUD_MODE);
     localStorage.removeItem("pendingCloudMigration");
     setShowCloudMigrationBanner(true);
   }, [authLoaded, isSignedIn, setUseLocalWhisper, setCloudTranscriptionMode]);

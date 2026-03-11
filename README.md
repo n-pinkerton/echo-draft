@@ -4,7 +4,16 @@
 
 An open source desktop dictation application that converts speech to text using OpenAI Whisper. Features both local and cloud processing options for maximum flexibility and privacy.
 
-EchoDraft is a fork of the original [OpenWhisper](https://github.com/OpenWhispr/openwhispr) project.
+## Documentation
+
+For maintainers, contributors, and coding agents:
+
+- [Documentation map](Docs/README.md)
+- [Agent instructions](AGENTS.md)
+- [Technical architecture reference](CLAUDE.md)
+- [Debug logging and diagnostics](DEBUG.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
+- [Windows installer build runbook](README_WINDOWS_INSTALLER_BUILD.md)
 
 ## Star History
 
@@ -117,7 +126,7 @@ npm run pack
 
 # The unsigned app will be in: dist/mac-arm64/EchoDraft.app (macOS)
 # or dist/win-unpacked/EchoDraft.exe (Windows)
-# or dist/linux-unpacked/open-whispr (Linux)
+# or dist/linux-unpacked/echodraft (Linux)
 ```
 
 **Note**: On macOS, you may see a security warning when first opening the unsigned app. Right-click and select "Open" to bypass this.
@@ -159,7 +168,7 @@ sudo dnf install flatpak flatpak-builder  # Fedora/RHEL
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 
-# Add "flatpak" to linux.target in electron-builder.json, then build
+# Add "flatpak" to linux.target in electron-builder.cjs, then build
 npm run build:linux
 ```
 
@@ -175,7 +184,7 @@ sudo dnf install ./dist/EchoDraft-*-linux-x64.rpm
 # Universal tar.gz (no root required)
 tar -xzf dist/EchoDraft-*-linux-x64.tar.gz
 cd EchoDraft-*/
-./openwhispr
+./echodraft
 
 # Flatpak
 flatpak install --user ./dist/EchoDraft-*-linux-x64.flatpak
@@ -269,7 +278,7 @@ On GNOME Wayland, Electron's standard global shortcuts don't work due to Wayland
 
 > ℹ️ **GNOME Wayland Limitation**: GNOME system shortcuts only fire a single toggle event (no key-up detection), so push-to-talk mode cannot work. The app automatically uses tap-to-talk mode on GNOME Wayland.
 
-> 🔒 **Flatpak Security**: The Flatpak package includes sandboxing with explicit permissions for microphone, clipboard, and file access. See [electron-builder.json](electron-builder.json) for the complete permission list.
+> 🔒 **Flatpak Security**: The Flatpak package includes sandboxing with explicit permissions for microphone, clipboard, and file access. See [electron-builder.cjs](electron-builder.cjs) for the complete permission list.
 
 ### Building for Distribution
 
@@ -321,10 +330,10 @@ npm run build:linux  # Linux
 
 ### Uninstall & Cache Cleanup
 
-- **In-App**: Use _Settings → General → Local Model Storage → Remove Downloaded Models_ to clear `~/.cache/openwhispr/whisper-models` (or `%USERPROFILE%\.cache\openwhispr\whisper-models` on Windows).
+- **In-App**: Use _Settings → General → Local Model Storage → Remove Downloaded Models_ to clear `~/.cache/echodraft/whisper-models` (or `%USERPROFILE%\.cache\echodraft\whisper-models` on Windows).
 - **Windows Uninstall**: The NSIS uninstaller automatically deletes the same cache directory.
 - **Linux Packages**: `deb`/`rpm` post-uninstall scripts also remove cached models.
-- **macOS**: If you uninstall manually, remove `~/Library/Caches` or `~/.cache/openwhispr/whisper-models` if desired.
+- **macOS**: If you uninstall manually, remove `~/Library/Caches` or `~/.cache/echodraft/whisper-models` if desired.
 
 ### Agent Naming & AI Processing
 
@@ -385,7 +394,7 @@ Improve transcription accuracy for specific words, names, or technical terms:
 ## Project Structure
 
 ```
-open-whispr/
+echodraft/
 ├── main.js              # Electron main process & IPC handlers
 ├── preload.js           # Electron preload script & API bridge
 ├── setup.js             # First-time setup script
@@ -457,7 +466,7 @@ Key docs:
 
 Important stability notes (to keep Windows in-place upgrades working):
 
-- Avoid changing `electron-builder.json` `appId` / `productName` without an explicit migration plan.
+- Avoid changing `electron-builder.cjs` `appId` / `productName` without an explicit migration plan.
 - Avoid changing the Windows AppUserModelId (`main.js` sets this) without understanding taskbar grouping + installer identity implications.
 
 ### Scripts
@@ -545,12 +554,12 @@ If you develop in WSL, copy the repo into the Windows filesystem and run the bui
 # From WSL (copy into a Windows folder; keep node_modules/dist out of the copy)
 rsync -a --delete \
   --exclude ".git" --exclude "node_modules" --exclude "dist" --exclude "resources/bin" \
-  ./ /mnt/c/Users/<you>/AppData/Local/Temp/openwhispr-winbuild/
+  ./ /mnt/c/Users/<you>/AppData/Local/Temp/echodraft-winbuild/
 ```
 
 ```powershell
 # From Windows PowerShell
-cd $env:TEMP\openwhispr-winbuild
+cd $env:TEMP\echodraft-winbuild
 npm ci
 npm run build:win
 ```
@@ -600,7 +609,7 @@ DEBUG=false
 For local processing, EchoDraft uses OpenAI's Whisper model via whisper.cpp - a high-performance C++ implementation:
 
 1. **Bundled Binary**: whisper.cpp is bundled with the app for all platforms
-2. **GGML Models**: Downloads optimized GGML models on first use to `~/.cache/openwhispr/whisper-models/`
+2. **GGML Models**: Downloads optimized GGML models on first use to `~/.cache/echodraft/whisper-models/`
 3. **No Dependencies**: No Python or other runtime required
 
 **System Fallback**: If the bundled binary fails, install via package manager:
@@ -614,7 +623,7 @@ For local processing, EchoDraft uses OpenAI's Whisper model via whisper.cpp - a 
 
 - Sufficient disk space for models (75MB - 3GB depending on model)
 
-**Upgrading from Python-based version**: If you previously used the Python-based Whisper, you'll need to re-download models in GGML format. You can safely delete the old Python environment (`~/.openwhispr/python/`) and PyTorch models (`~/.cache/whisper/`) to reclaim disk space.
+**Upgrading from Python-based version**: If you previously used the Python-based Whisper, you'll need to re-download models in GGML format. You can safely delete the old Python environment (`~/.echodraft/python/`) and PyTorch models (`~/.cache/whisper/`) to reclaim disk space.
 
 ### Local Parakeet Setup (Alternative)
 
@@ -622,7 +631,7 @@ EchoDraft also supports NVIDIA Parakeet models via sherpa-onnx - a fast alternat
 
 1. **Bundled Binary**: sherpa-onnx is bundled with the app for all platforms
 2. **INT8 Quantized Models**: Efficient CPU inference
-3. **Models stored in**: `~/.cache/openwhispr/parakeet-models/`
+3. **Models stored in**: `~/.cache/echodraft/parakeet-models/`
 
 **Available Models**:
 
@@ -702,7 +711,7 @@ If you need to diagnose lag, missing audio, or truncated transcripts, enable **D
 
 - Control Panel → **Developer** → **Debug mode**
 - Logs are written as **JSONL** (one JSON object per line) to a **daily** file:
-  - Preferred: `logs/openwhispr-debug-YYYY-MM-DD.jsonl` next to the installed `EchoDraft.exe`
+  - Preferred: `logs/echodraft-debug-YYYY-MM-DD.jsonl` next to the installed `EchoDraft.exe`
   - Fallback: the app’s `userData/logs` directory (if the install directory isn’t writable)
 - Use **Open Logs Folder** in the Developer section to jump to the current log location.
 
@@ -717,22 +726,22 @@ For full details (enable/disable options, log format, and what gets captured), s
 - To separate “transcription vs cleanup” issues:
   - Compare `rawText` vs `cleanedText` in `trace` logs (e.g. `Transcription result text`, `Streaming transcript text`, `Dictation transcript text`).
   - In History, `raw_text` is stored separately and shown under “Details” when different.
-  - When EchoDraft Cloud cleanup runs, `meta.source` is tagged as `openwhispr-reasoned` (or `openwhispr-byok-reasoned`).
+  - When EchoDraft Cloud cleanup runs, `meta.source` is tagged as `echodraft-reasoned` (or `echodraft-byok-reasoned`).
 
 If you have `jq` installed, a few quick recipes:
 
 ```bash
 # 1) Show warnings/errors (good first-pass triage)
 jq -r 'select(.type!="header") | select(.level=="warn" or .level=="error") | [.ts,.scope,.message] | @tsv' \
-  logs/openwhispr-debug-YYYY-MM-DD.jsonl
+  logs/echodraft-debug-YYYY-MM-DD.jsonl
 
 # 2) Hotkey → recording latency (helps diagnose “delay before recording starts”)
 jq -r 'select(.message=="Dictation recording started") | [.ts,.meta.hotkeyToRecordingMs,.meta.method] | @tsv' \
-  logs/openwhispr-debug-YYYY-MM-DD.jsonl
+  logs/echodraft-debug-YYYY-MM-DD.jsonl
 
 # 3) Pipeline timings (helps spot truncation, slow cleanup, etc.)
 jq -r 'select(.message=="Pipeline timing") | [.ts,.meta.mode,.meta.model,.meta.roundTripDurationMs,.meta.transcriptionProcessingDurationMs,.meta.reasoningProcessingDurationMs] | @tsv' \
-  logs/openwhispr-debug-YYYY-MM-DD.jsonl
+  logs/echodraft-debug-YYYY-MM-DD.jsonl
 ```
 
 Warning: Debug logs may contain transcribed text and other sensitive data. Share only with trusted support.

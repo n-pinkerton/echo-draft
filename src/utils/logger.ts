@@ -1,5 +1,10 @@
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 
+import {
+  clearRendererLogLevel,
+  setRendererLogLevel,
+} from "./branding";
+
 const LOG_LEVELS: Record<LogLevel, number> = {
   trace: 10,
   debug: 20,
@@ -32,7 +37,7 @@ const resolveLogLevel = async (): Promise<LogLevel> => {
           if (level) {
             cachedLevel = level;
             try {
-              (window as any).__openwhisprLogLevel = cachedLevel;
+              setRendererLogLevel(cachedLevel);
             } catch {
               // Ignore
             }
@@ -44,7 +49,7 @@ const resolveLogLevel = async (): Promise<LogLevel> => {
       }
       cachedLevel = defaultLevel;
       try {
-        (window as any).__openwhisprLogLevel = cachedLevel;
+        setRendererLogLevel(cachedLevel);
       } catch {
         // Ignore
       }
@@ -109,7 +114,7 @@ const logger = {
     levelPromise = null;
     try {
       if (typeof window !== "undefined") {
-        delete (window as any).__openwhisprLogLevel;
+        clearRendererLogLevel();
       }
     } catch {
       // Ignore

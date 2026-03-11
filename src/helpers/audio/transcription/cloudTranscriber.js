@@ -1,9 +1,16 @@
 import { getBaseLanguageCode } from "../../../utils/languageSupport";
+import {
+  ECHO_DRAFT_BYOK_REASONED_SOURCE,
+  ECHO_DRAFT_CLOUD_MODE,
+  ECHO_DRAFT_CLOUD_SOURCE,
+  ECHO_DRAFT_REASONED_SOURCE,
+  normalizeCloudMode,
+} from "../../../utils/branding";
 import { getCustomDictionaryArray } from "./customDictionary";
 import { isLikelyDictionaryPromptEcho } from "./dictionaryPromptEcho";
 
 /**
- * EchoDraft/OpenWhispr cloud transcription client used by AudioManager.
+ * EchoDraft cloud transcription client used by AudioManager.
  *
  * Responsibilities:
  * - IPC call to `cloudTranscribe`
@@ -73,20 +80,22 @@ export class CloudTranscriber {
     const override = this.getCleanupEnabledOverride?.() ?? null;
     const useReasoningModel =
       override !== null ? override : localStorage.getItem("useReasoningModel") === "true";
-    let source = "openwhispr";
+    let source = ECHO_DRAFT_CLOUD_SOURCE;
 
     if (useReasoningModel && processedText) {
       this.emitProgress?.({
         stage: "cleaning",
         stageLabel: "Cleaning up",
-        provider: "openwhispr",
+        provider: ECHO_DRAFT_CLOUD_SOURCE,
       });
       const reasoningStart = performance.now();
       const agentName = localStorage.getItem("agentName") || "";
-      const cloudReasoningMode = localStorage.getItem("cloudReasoningMode") || "openwhispr";
+      const cloudReasoningMode = normalizeCloudMode(
+        localStorage.getItem("cloudReasoningMode") || ECHO_DRAFT_CLOUD_MODE
+      );
 
       try {
-        if (cloudReasoningMode === "openwhispr") {
+        if (cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE) {
           const reasonResult = await this.withSessionRefresh(async () => {
             const res = await window.electronAPI.cloudReason(processedText, {
               agentName,
@@ -103,7 +112,7 @@ export class CloudTranscriber {
 
           if (reasonResult.success && reasonResult.text) {
             processedText = reasonResult.text;
-            source = "openwhispr-reasoned";
+            source = ECHO_DRAFT_REASONED_SOURCE;
           }
         } else {
           const reasoningModel = localStorage.getItem("reasoningModel") || "";
@@ -115,7 +124,7 @@ export class CloudTranscriber {
             );
             if (result) {
               processedText = result;
-              source = "openwhispr-byok-reasoned";
+              source = ECHO_DRAFT_BYOK_REASONED_SOURCE;
             }
           }
         }
@@ -142,4 +151,3 @@ export class CloudTranscriber {
     };
   }
 }
-

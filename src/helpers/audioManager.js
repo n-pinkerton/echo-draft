@@ -1,4 +1,5 @@
 import ReasoningService from "../services/ReasoningService";
+import { getRendererLogLevel, isEchoDraftCloudMode } from "../utils/branding";
 import logger from "../utils/logger";
 import { withSessionRefresh } from "../lib/neonAuth";
 import {
@@ -34,7 +35,7 @@ import {
   saveTranscription as saveTranscriptionImpl,
 } from "./audio/persistence/audioPersistence";
 const REASONING_CACHE_TTL = 30000; // 30 seconds
-const STREAMING_WORKLET_FLUSH_DONE_MESSAGE = "__openwhispr_stream_worklet_flush_done__";
+const STREAMING_WORKLET_FLUSH_DONE_MESSAGE = "__echoDraft_stream_worklet_flush_done__";
 class AudioManager {
   constructor() {
     this.mediaRecorder = null;
@@ -146,7 +147,7 @@ class AudioManager {
           this.streamingAudioFirstChunkAt = now;
         }
         this.streamingAudioLastChunkAt = now;
-        if (typeof window !== "undefined" && window.__openwhisprLogLevel === "trace") {
+        if (getRendererLogLevel() === "trace") {
           logger.trace(
             "Streaming audio chunk forwarded",
             {
@@ -326,14 +327,14 @@ class AudioManager {
   }
 
   shouldUseStreaming() {
-    const cloudTranscriptionMode = localStorage.getItem("cloudTranscriptionMode") || "openwhispr";
+    const cloudTranscriptionMode = localStorage.getItem("cloudTranscriptionMode") || "echodraft";
     const isSignedIn = localStorage.getItem("isSignedIn") === "true";
     const useLocalWhisper = localStorage.getItem("useLocalWhisper") === "true";
     const streamingDisabled = localStorage.getItem("assemblyAiStreaming") === "false";
 
     return (
       !useLocalWhisper &&
-      cloudTranscriptionMode === "openwhispr" &&
+      isEchoDraftCloudMode(cloudTranscriptionMode) &&
       isSignedIn &&
       !streamingDisabled
     );

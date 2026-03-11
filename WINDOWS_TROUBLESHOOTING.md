@@ -28,7 +28,7 @@
 1. whisper.cpp is bundled with the app - try reinstalling
 2. If running from source, run `npm run download:whisper-cpp` and confirm `resources\\bin\\whisper-cpp-win32-x64.exe` exists
 3. Check antivirus isn't blocking the whisper-cpp executable
-4. Clear model cache: delete `%USERPROFILE%\.cache\openwhispr\whisper-models`
+4. Clear model cache: delete `%USERPROFILE%\.cache\echodraft\whisper-models`
 5. Try cloud mode as fallback
 
 ### FFmpeg Issues

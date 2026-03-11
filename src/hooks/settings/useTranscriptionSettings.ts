@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import { API_ENDPOINTS } from "../../config/constants";
+import { ECHO_DRAFT_CLOUD_MODE, normalizeCloudMode } from "../../utils/branding";
 import logger from "../../utils/logger";
 import type { LocalTranscriptionProvider } from "../../types/electron";
 import { useLocalStorage } from "../useLocalStorage";
@@ -87,13 +88,13 @@ export function useTranscriptionSettings() {
     }
   );
 
-  // Cloud transcription mode: "openwhispr" (server-side) or "byok" (bring your own key)
+  // Cloud transcription mode: "echodraft" (server-side) or "byok" (bring your own key)
   const [cloudTranscriptionMode, setCloudTranscriptionMode] = useLocalStorage(
     "cloudTranscriptionMode",
-    "openwhispr",
+    ECHO_DRAFT_CLOUD_MODE,
     {
       serialize: String,
-      deserialize: String,
+      deserialize: (value) => normalizeCloudMode(String(value)),
     }
   );
 
@@ -223,4 +224,3 @@ export function useTranscriptionSettings() {
     updateTranscriptionSettings,
   };
 }
-

@@ -5,15 +5,15 @@ async function checkStageAndEchoGuards(dictation, record) {
   await dictation.waitForSelector('[data-testid="dictation-status-bar"]', 15000);
   record("Status bar present", true);
 
-  await dictation.eval(`window.__openwhisprE2E.setStage("listening", { stageLabel: "Listening" }); true;`);
+  await dictation.eval(`window.__echoDraftE2E.setStage("listening", { stageLabel: "Listening" }); true;`);
   await sleep(250);
-  await dictation.eval(`window.__openwhisprE2E.setStage("listening", { stageLabel: "Listening" }); true;`);
+  await dictation.eval(`window.__echoDraftE2E.setStage("listening", { stageLabel: "Listening" }); true;`);
   const stageListening = await dictation.eval(
     `document.querySelector('[data-testid="dictation-status-stage"]')?.textContent || ""`
   );
   record("Stage label updates (Listening)", stageListening.trim() === "Listening", stageListening);
 
-  await dictation.eval(`window.__openwhisprE2E.setStage("transcribing", { stageLabel: "Transcribing", generatedWords: 12 }); true;`);
+  await dictation.eval(`window.__echoDraftE2E.setStage("transcribing", { stageLabel: "Transcribing", generatedWords: 12 }); true;`);
   const stageTranscribing = await dictation.eval(
     `document.querySelector('[data-testid="dictation-status-stage"]')?.textContent || ""`
   );
@@ -34,7 +34,7 @@ async function checkStageAndEchoGuards(dictation, record) {
   ];
   const dictPrompt = dictTerms.join(", ");
   const echoDetected = await dictation.eval(
-    `window.__openwhisprE2E.isLikelyDictionaryPromptEcho(${JSON.stringify(dictPrompt)}, ${JSON.stringify(dictTerms)})`
+    `window.__echoDraftE2E.isLikelyDictionaryPromptEcho(${JSON.stringify(dictPrompt)}, ${JSON.stringify(dictTerms)})`
   );
   record(
     "Dictionary prompt echo guard detects prompt output",
@@ -43,7 +43,7 @@ async function checkStageAndEchoGuards(dictation, record) {
   );
 
   const echoFalsePositive = await dictation.eval(
-    `window.__openwhisprE2E.isLikelyDictionaryPromptEcho("let's test cloud transcription then shall we", ${JSON.stringify(dictTerms)})`
+    `window.__echoDraftE2E.isLikelyDictionaryPromptEcho("let's test cloud transcription then shall we", ${JSON.stringify(dictTerms)})`
   );
   record(
     "Dictionary prompt echo guard avoids false positive",
@@ -55,4 +55,3 @@ async function checkStageAndEchoGuards(dictation, record) {
 module.exports = {
   checkStageAndEchoGuards,
 };
-

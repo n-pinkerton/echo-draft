@@ -1,11 +1,12 @@
 import { useCallback, useState } from "react";
 import { FolderOpen } from "lucide-react";
 
+import { dispatchModelsCleared } from "../../../utils/branding";
+import type { AlertDialogState, ConfirmDialogState } from "../../../hooks/useDialogs";
 import DeveloperSection from "../../DeveloperSection";
 import { Button } from "../../ui/button";
 import { SettingsRow } from "../../ui/SettingsSection";
 import { SectionHeader, SettingsPanel, SettingsPanelRow } from "../SettingsPanels";
-import type { AlertDialogState, ConfirmDialogState } from "../../../hooks/useDialogs";
 
 type Props = {
   showConfirmDialog: (options: Omit<ConfirmDialogState, "open">) => void;
@@ -17,8 +18,8 @@ export default function DeveloperToolsSection(props: Props) {
   const [isRemovingModels, setIsRemovingModels] = useState(false);
   const cachePathHint =
     typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent)
-      ? "%USERPROFILE%\\.cache\\openwhispr\\whisper-models"
-      : "~/.cache/openwhispr/whisper-models";
+      ? "%USERPROFILE%\\.cache\\echodraft\\whisper-models"
+      : "~/.cache/echodraft/whisper-models";
 
   const handleRemoveModels = useCallback(() => {
     if (isRemovingModels) return;
@@ -42,7 +43,7 @@ export default function DeveloperToolsSection(props: Props) {
               return;
             }
 
-            window.dispatchEvent(new Event("openwhispr-models-cleared"));
+            dispatchModelsCleared();
 
             showAlertDialog({
               title: "Models Removed",
@@ -146,4 +147,3 @@ export default function DeveloperToolsSection(props: Props) {
     </div>
   );
 }
-

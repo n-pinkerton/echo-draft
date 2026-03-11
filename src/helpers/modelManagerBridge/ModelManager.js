@@ -43,7 +43,7 @@ class ModelManager {
   getModelsDir() {
     const os = require("os");
     const homeDir = app.isReady() ? app.getPath("home") : os.homedir();
-    return path.join(homeDir, ".cache", "openwhispr", "models");
+    return path.join(homeDir, ".cache", "echodraft", "models");
   }
 
   async ensureModelsDirExists() {
@@ -380,4 +380,3 @@ class ModelManager {
 }
 
 module.exports = { ModelManager };
-

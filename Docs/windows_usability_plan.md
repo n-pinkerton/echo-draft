@@ -1,4 +1,4 @@
-# EchoDraft (openwhispr) — Windows 11 Usability & Reliability Improvement Plan
+# EchoDraft — Windows 11 Usability & Reliability Improvement Plan
 
 **Repository reviewed:** the ZIP you attached (fork of `https://github.com/n-pinkerton/echo-draft`)  
 **Date of this report:** 2026-02-09 (Pacific/Auckland)
@@ -817,7 +817,7 @@ Test all combinations of:
 
 ### Windows insertion target helper
 - New: `resources/windows-insert-helper.c` (or similar)
-- Update packaging: `electron-builder.json` extraResources for helper
+- Update packaging: `electron-builder.cjs` extraResources for helper
 - Update clipboard insertion: `src/helpers/clipboard.js` use helper for paste/type + window activation
 
 ---

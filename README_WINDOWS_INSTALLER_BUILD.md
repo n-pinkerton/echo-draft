@@ -9,7 +9,7 @@ This runbook explains how to build the **Windows NSIS installer** (`EchoDraft Se
 From a copy of the repo that lives on the Windows filesystem:
 
 ```powershell
-cd C:\path\to\openwhispr
+cd C:\path\to\echo-draft
 npm ci
 npm run build:win
 
@@ -24,7 +24,7 @@ After a successful build, `dist/` contains:
 - `EchoDraft Setup <version>.exe` — **NSIS installer** (use this to install/reinstall/upgrade)
 - `EchoDraft <version>.exe` — **portable** build (runs in-place; does **not** upgrade an installed app)
 
-> Tip: You may also see older artifacts named `OpenWhispr Setup <version>.exe` from earlier builds. Make sure you copy/install the **EchoDraft Setup** one produced by your current build.
+> Tip: Make sure you copy/install the **EchoDraft Setup** artifact produced by your current build, not an older portable or archived installer.
 
 ## Building from WSL (recommended workflow if you develop in WSL)
 
@@ -37,7 +37,7 @@ This mirrors the repo into a Windows folder while keeping big/host-specific dire
 ```bash
 rsync -a --delete \
   --exclude ".git" --exclude "node_modules" --exclude "dist" --exclude "resources/bin" \
-  ./ /mnt/c/Users/<you>/AppData/Local/Temp/openwhispr-winbuild/
+  ./ /mnt/c/Users/<you>/AppData/Local/Temp/echodraft-winbuild/
 ```
 
 Notes:
@@ -47,7 +47,7 @@ Notes:
 ### 2) Build in PowerShell (on Windows)
 
 ```powershell
-cd $env:TEMP\openwhispr-winbuild
+cd $env:TEMP\echodraft-winbuild
 npm ci
 npm run build:win
 Copy-Item ".\dist\EchoDraft Setup *.exe" "$env:USERPROFILE\Downloads\" -Force
@@ -75,7 +75,7 @@ What we changed:
 If you hit download failures on a fresh machine:
 1. Check whether the binary exists:
    - `resources/bin/whisper-server-win32-x64.exe`
-2. If it’s missing, populate it from a known-good source (for example, from a previously installed app under `...\OpenWhispr\resources\bin\`) and re-run the build.
+2. If it’s missing, populate it from a known-good source (for example, from a previously built app under `...\EchoDraft\resources\bin\`) and re-run the build.
 3. If you actually want to re-download, force it:
 
 ```powershell
@@ -112,7 +112,7 @@ npm run build:win
 1. Run the NSIS installer from `dist/` (or `Downloads/` if copied).
 2. Confirm the installed app launches.
 3. If you’re debugging dictation issues, enable debug logging in-app and collect:
-   - `logs/openwhispr-debug-YYYY-MM-DD.jsonl`
+   - `logs/echodraft-debug-YYYY-MM-DD.jsonl`
    - `logs/audio/` (last 10 recorded audio clips, rolling retention)
 
 ## Debugging “truncated” transcriptions (runbook)
@@ -124,9 +124,9 @@ If a transcription looks “cut off”, there are two different failure modes:
 
 ### Source of truth: DB + debug logs
 
-- **DB** (history): `C:\\Users\\<you>\\AppData\\Roaming\\open-whispr\\transcriptions.db`
-- **Debug logs**: `C:\\Users\\<you>\\AppData\\Local\\Programs\\OpenWhispr\\EchoDraft\\logs\\openwhispr-debug-YYYY-MM-DD.jsonl`
-- **Saved audio** (debug enabled): `C:\\Users\\<you>\\AppData\\Local\\Programs\\OpenWhispr\\EchoDraft\\logs\\audio\\` (last 10 clips)
+- **DB** (history): `C:\\Users\\<you>\\AppData\\Roaming\\EchoDraft\\transcriptions.db`
+- **Debug logs**: `C:\\Users\\<you>\\AppData\\Local\\Programs\\EchoDraft\\logs\\echodraft-debug-YYYY-MM-DD.jsonl`
+- **Saved audio** (debug enabled): `C:\\Users\\<you>\\AppData\\Local\\Programs\\EchoDraft\\logs\\audio\\` (last 10 clips)
 
 ### What to check first
 

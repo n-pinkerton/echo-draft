@@ -1,13 +1,13 @@
 # EchoDraft — Windows Usability Plan Verification Report (Adversarial Gate)
 
 - Review date: **2026-02-11** (NZDT) / **2026-02-10** (UTC)
-- Repo: `/home/npinkerton/ReposOther/openwhispr`
+- Repo: `echo-draft`
 - Branch: `main`
 - Code verified: `35dea66` (packaged gate runId `2026-02-11T01-54-57-866Z` was built from this code)
 
 ## Scope & standards
 
-This report verifies `Docs/openwhispr_windows_usability_plan.md` against the codebase with Windows-first release-gate standards:
+This report verifies `Docs/windows_usability_plan.md` against the codebase with Windows-first release-gate standards:
 
 - **PASS requires**: (1) code evidence (file + key functions) **and** (2) runtime verification on a **packaged Windows build**.
 - Runtime verification was executed via the packaged-runtime gate harness:
@@ -19,7 +19,7 @@ This report verifies `Docs/openwhispr_windows_usability_plan.md` against the cod
 ### Windows packaged runtime (used for the runtime gate)
 
 - Windows build working copy:
-  - `C:\Users\NigelPinkerton\AppData\Local\Temp\openwhispr-winbuild-20260211T014857Z`
+  - `C:\Users\NigelPinkerton\AppData\Local\Temp\echodraft-winbuild-20260211T014857Z`
 - Packaged app executed:
   - `dist\win-unpacked\EchoDraft.exe`
 - Packaged gate runId (PASS):
@@ -29,7 +29,7 @@ This report verifies `Docs/openwhispr_windows_usability_plan.md` against the cod
 
 Installer/portable artifacts were verified present under:
 
-- `C:\Users\NigelPinkerton\AppData\Local\Temp\openwhispr-winbuild-20260211T014857Z\dist\`
+- `C:\Users\NigelPinkerton\AppData\Local\Temp\echodraft-winbuild-20260211T014857Z\dist\`
   - `EchoDraft Setup 1.4.4.exe` (NSIS)
   - `EchoDraft 1.4.4.exe` (portable)
   - `latest.yml` (+ blockmap)
@@ -66,7 +66,7 @@ Legend: **PASS** = code evidence + packaged runtime evidence. **FAIL** = missing
 | G | Clipboard restore delay not dangerously short | `src/helpers/clipboard.js` (`RESTORE_DELAYS.win32_* = 850ms`) | Indirect (image test passes with restore delay) | PASS | Manual recommended for Word/Chrome/VS Code paste timing sensitivity. |
 | G | No focus-stealing regression | `src/helpers/windowManager.js` (`showDictationPanel({ focus:false })`) | Gate run `2026-02-11T01-54-57-866Z`: **PASS** “No focus-steal on showDictationPanel”, **PASS** “No focus-steal on insert completion” | PASS | |
 | G | Dictionary prompt echo guard prevents junk output | `src/helpers/audioManager.js` (`isLikelyDictionaryPromptEcho`, retry in `processWithOpenAIAPI`) | Gate run `2026-02-11T01-54-57-866Z`: **PASS** “Dictionary prompt echo guard detects prompt output”, **PASS** “… avoids false positive” | PASS | Regression guard for a real-world failure: STT returning the dictionary prompt. |
-| G | Windows helper binaries present in packaged resources | `electron-builder.json` (`extraResources`), `scripts/build-windows-key-listener.js`, `resources/windows-key-listener.c` | Verified packaged tree contains `resources\\bin\\windows-key-listener.exe` and `whisper-server-win32-x64.exe` | PASS | Runtime gate also proves listener can start in push mode. |
+| G | Windows helper binaries present in packaged resources | `electron-builder.cjs` (`extraResources`), `scripts/build-windows-key-listener.js`, `resources/windows-key-listener.c` | Verified packaged tree contains `resources\\bin\\windows-key-listener.exe` and `whisper-server-win32-x64.exe` | PASS | Runtime gate also proves listener can start in push mode. |
 
 ## Issues found (during gatekeeping)
 
@@ -113,7 +113,7 @@ No High-severity app regressions were found in the verified Windows packaged-run
 
 ### Windows (packaged runtime gate)
 
-From `C:\Users\NigelPinkerton\AppData\Local\Temp\openwhispr-winbuild-20260211T014857Z`:
+From `C:\Users\NigelPinkerton\AppData\Local\Temp\echodraft-winbuild-20260211T014857Z`:
 
 - `npm ci` → OK
 - `npm run quality-check` → PASS (warnings only)
@@ -126,20 +126,18 @@ From `C:\Users\NigelPinkerton\AppData\Local\Temp\openwhispr-winbuild-20260211T01
 
 ### Identity (must not change)
 
-Verified in `electron-builder.json`:
+Verified in `electron-builder.cjs`:
 
-- `appId`: `com.herotools.openwispr`
+- `appId`: `com.herotools.echodraft`
 - `productName`: `EchoDraft`
 
 These values should remain stable to preserve the existing `%APPDATA%\EchoDraft\` userData folder on upgrade.
-Note: current Windows builds use `%APPDATA%\open-whispr\` (based on the Electron app name); back up whichever exists on your machine.
 
 ### User install instructions (upgrade-in-place; no data loss)
 
 1) **Back up user data (copy only; do not delete)**
-   - `%APPDATA%\open-whispr\` (includes DB + Local Storage; current builds)
-   - `%APPDATA%\EchoDraft\` (only if it exists from older builds)
-   - `%USERPROFILE%\.cache\openwhispr\models\` (local models)
+   - `%APPDATA%\EchoDraft\` (includes DB + Local Storage)
+   - `%USERPROFILE%\.cache\echodraft\models\` (local models)
 
 2) Build installer on Windows (if needed)
    - `npm ci`

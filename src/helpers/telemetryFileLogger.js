@@ -33,7 +33,7 @@ class TelemetryFileLogger {
   constructor(options = {}) {
     this.enabled = false;
     this.logsDir = options.logsDir || null;
-    this.filePrefix = options.filePrefix || "openwhispr-debug";
+    this.filePrefix = options.filePrefix || "echodraft-debug";
     this.getNow = typeof options.getNow === "function" ? options.getNow : () => new Date();
     this.getHeaderRecord =
       typeof options.getHeaderRecord === "function" ? options.getHeaderRecord : () => null;

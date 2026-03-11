@@ -1,3 +1,11 @@
+import {
+  ECHO_DRAFT_CLOUD_MODE,
+  ECHO_DRAFT_CLOUD_MODEL,
+  ECHO_DRAFT_CLOUD_SOURCE,
+  getRendererLogLevel,
+  isEchoDraftCloudMode,
+} from "../../../utils/branding";
+
 /**
  * TranscriptionPipeline
  *
@@ -38,11 +46,10 @@ export class TranscriptionPipeline {
       const parakeetModel = localStorage.getItem("parakeetModel") || "parakeet-tdt-0.6b-v3";
 
       const cloudTranscriptionMode =
-        localStorage.getItem("cloudTranscriptionMode") || "openwhispr";
+        localStorage.getItem("cloudTranscriptionMode") || ECHO_DRAFT_CLOUD_MODE;
       const isSignedIn = localStorage.getItem("isSignedIn") === "true";
 
-      const isEchoDraftCloudMode = !useLocalWhisper && cloudTranscriptionMode === "openwhispr";
-      const useCloud = isEchoDraftCloudMode && isSignedIn;
+      const useCloud = !useLocalWhisper && isEchoDraftCloudMode(cloudTranscriptionMode) && isSignedIn;
       this.logger.debug(
         "Transcription routing",
         { useLocalWhisper, useCloud, isSignedIn, cloudTranscriptionMode },
@@ -84,10 +91,10 @@ export class TranscriptionPipeline {
         this.emitProgress({
           stage: "transcribing",
           stageLabel: "Transcribing",
-          provider: "openwhispr",
-          model: "openwhispr-cloud",
+          provider: ECHO_DRAFT_CLOUD_SOURCE,
+          model: ECHO_DRAFT_CLOUD_MODEL,
         });
-        activeModel = "openwhispr-cloud";
+        activeModel = ECHO_DRAFT_CLOUD_MODEL;
         result = await this.cloudTranscriber.processWithEchoDraftCloud(audioBlob, metadata);
       } else {
         activeModel = this.openAiTranscriber.getTranscriptionModel();
@@ -104,7 +111,7 @@ export class TranscriptionPipeline {
         return;
       }
 
-      if (typeof window !== "undefined" && window.__openwhisprLogLevel === "trace") {
+      if (getRendererLogLevel() === "trace") {
         const rawText = typeof result?.rawText === "string" ? result.rawText : null;
         const cleanedText = typeof result?.text === "string" ? result.text : null;
         this.logger.trace(

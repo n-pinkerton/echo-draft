@@ -1,4 +1,5 @@
 import logger from "../../utils/logger";
+import { getRendererLogLevel } from "../../utils/branding";
 import { countWords } from "./textMetrics";
 import { STAGE_META } from "./stages";
 
@@ -155,7 +156,7 @@ export const createAudioManagerCallbacks = (deps) => {
     onPartialTranscript: (text) => {
       setPartialTranscript(text);
 
-      if (typeof window !== "undefined" && window.__openwhisprLogLevel === "trace") {
+      if (getRendererLogLevel() === "trace") {
         logger.trace(
           "Partial transcript",
           {
@@ -184,4 +185,3 @@ export const createAudioManagerCallbacks = (deps) => {
     onTranscriptionComplete: onTranscriptionComplete,
   };
 };
-

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 
 import { API_ENDPOINTS } from "../../config/constants";
+import { ECHO_DRAFT_CLOUD_MODE, normalizeCloudMode } from "../../utils/branding";
 import { useLocalStorage } from "../useLocalStorage";
 import type { ReasoningSettings } from "./settingsTypes";
 
@@ -31,10 +32,10 @@ export function useReasoningSettings() {
 
   const [cloudReasoningMode, setCloudReasoningMode] = useLocalStorage(
     "cloudReasoningMode",
-    "openwhispr",
+    ECHO_DRAFT_CLOUD_MODE,
     {
       serialize: String,
-      deserialize: String,
+      deserialize: (value) => normalizeCloudMode(String(value)),
     }
   );
 
@@ -73,4 +74,3 @@ export function useReasoningSettings() {
     updateReasoningSettings,
   };
 }
-

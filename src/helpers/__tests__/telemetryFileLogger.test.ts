@@ -8,14 +8,14 @@ const { TelemetryFileLogger, getLocalDateKey } = require("../telemetryFileLogger
 
 describe("TelemetryFileLogger", () => {
   it("writes a header once per new daily file and appends JSONL records", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-telemetry-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-telemetry-"));
 
     let now = new Date(2026, 1, 12, 8, 0, 0);
     const dateKey = getLocalDateKey(now);
 
     const logger = new TelemetryFileLogger({
       logsDir: tempDir,
-      filePrefix: "openwhispr-test",
+      filePrefix: "echodraft-test",
       getNow: () => now,
       getHeaderRecord: () => ({ type: "header", marker: true }),
     });
@@ -24,7 +24,7 @@ describe("TelemetryFileLogger", () => {
     expect(logger.write({ type: "event", n: 1 })).toBe(true);
     expect(await logger.flush()).toBe(true);
 
-    const logPath = path.join(tempDir, `openwhispr-test-${dateKey}.jsonl`);
+    const logPath = path.join(tempDir, `echodraft-test-${dateKey}.jsonl`);
     const content = fs.readFileSync(logPath, "utf8").trim().split("\n");
     expect(content.length).toBe(2);
     expect(JSON.parse(content[0])).toMatchObject({ type: "header", marker: true });
@@ -41,12 +41,12 @@ describe("TelemetryFileLogger", () => {
   });
 
   it("rotates to a new file when the local date changes", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-telemetry-rotate-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-telemetry-rotate-"));
 
     let now = new Date(2026, 1, 12, 23, 50, 0);
     const logger = new TelemetryFileLogger({
       logsDir: tempDir,
-      filePrefix: "openwhispr-test",
+      filePrefix: "echodraft-test",
       getNow: () => now,
       getHeaderRecord: () => ({ type: "header" }),
     });
@@ -62,11 +62,11 @@ describe("TelemetryFileLogger", () => {
 
     const day1 = path.join(
       tempDir,
-      `openwhispr-test-${getLocalDateKey(new Date(2026, 1, 12))}.jsonl`
+      `echodraft-test-${getLocalDateKey(new Date(2026, 1, 12))}.jsonl`
     );
     const day2 = path.join(
       tempDir,
-      `openwhispr-test-${getLocalDateKey(new Date(2026, 1, 13))}.jsonl`
+      `echodraft-test-${getLocalDateKey(new Date(2026, 1, 13))}.jsonl`
     );
 
     const c1 = fs.readFileSync(day1, "utf8").trim().split("\n");
@@ -78,14 +78,14 @@ describe("TelemetryFileLogger", () => {
   });
 
   it("recreates the daily log file if it is deleted while running", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-telemetry-recreate-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-telemetry-recreate-"));
 
     const now = new Date(2026, 1, 12, 12, 0, 0);
     const dateKey = getLocalDateKey(now);
 
     const logger = new TelemetryFileLogger({
       logsDir: tempDir,
-      filePrefix: "openwhispr-test",
+      filePrefix: "echodraft-test",
       getNow: () => now,
       getHeaderRecord: () => ({ type: "header", marker: "recreate" }),
     });
@@ -94,7 +94,7 @@ describe("TelemetryFileLogger", () => {
     expect(logger.write({ type: "event", n: 1 })).toBe(true);
     expect(await logger.flush()).toBe(true);
 
-    const logPath = path.join(tempDir, `openwhispr-test-${dateKey}.jsonl`);
+    const logPath = path.join(tempDir, `echodraft-test-${dateKey}.jsonl`);
     expect(fs.existsSync(logPath)).toBe(true);
 
     fs.unlinkSync(logPath);

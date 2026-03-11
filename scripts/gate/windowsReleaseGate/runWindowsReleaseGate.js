@@ -128,7 +128,7 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
 
     const { notepad } = await checkInsertionAndClipboard(dictation, record, runId);
 
-    const exportDir = path.join(process.env.TEMP || process.env.TMP || "C:\\\\Windows\\\\Temp", "openwhispr-e2e");
+    const exportDir = path.join(process.env.TEMP || process.env.TMP || "C:\\\\Windows\\\\Temp", "echodraft-e2e");
     await checkHistoryAndExports(panel, record, runId, exportDir);
     await checkDictionaryUi(panel, record, exportDir, runId);
     await closeInsertionTarget(notepad);

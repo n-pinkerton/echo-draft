@@ -3,7 +3,7 @@ const path = require("path");
 
 const DEFAULT_MAX_CAPTURES = 10;
 const AUDIO_SUBDIR = "audio";
-const AUDIO_PREFIX = "openwhispr-audio-";
+const AUDIO_PREFIX = "echodraft-audio-";
 
 const sanitizeToken = (value, fallback = "unknown") => {
   const raw = typeof value === "string" ? value.trim() : String(value ?? "").trim();
@@ -169,4 +169,3 @@ module.exports = {
   makeSafeTimestamp,
   sanitizeToken,
 };
-

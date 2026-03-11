@@ -5,7 +5,7 @@ function registerE2eHandlers(
   { ipcMain, app, fs, path, globalShortcut },
   { databaseManager, windowManager }
 ) {
-  const e2eBaseDir = path.join(app.getPath("temp"), "openwhispr-e2e");
+  const e2eBaseDir = path.join(app.getPath("temp"), "echodraft-e2e");
   const resolveE2eFilePath = (filePath) => {
     if (typeof filePath !== "string" || !filePath.trim()) {
       throw new Error("filePath is required");

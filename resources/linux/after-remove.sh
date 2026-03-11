@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-CACHE_DIR="$HOME/.cache/openwhispr"
+CACHE_DIR="$HOME/.cache/echodraft"
 MODELS_DIR="$CACHE_DIR/models"
 
 if [ -d "$MODELS_DIR" ]; then

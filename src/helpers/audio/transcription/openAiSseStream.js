@@ -3,7 +3,7 @@ import { countWords } from "../utils/wordCount";
 /**
  * Read an OpenAI transcription stream response (`text/event-stream`) and return the full transcript.
  *
- * OpenWhispr uses `stream=true` for certain OpenAI models (notably `gpt-4o-transcribe*`) to:
+ * EchoDraft uses `stream=true` for certain OpenAI models (notably `gpt-4o-transcribe*`) to:
  * - show progress in the UI
  * - reduce perceived latency
  *
@@ -232,4 +232,3 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
 
   return result;
 }
-

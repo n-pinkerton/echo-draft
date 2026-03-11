@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { LocalModel } from "./modelTypes";
+import { addModelsClearedListener } from "../../../utils/branding";
 
 interface UseParakeetModelsOptions {
   enabled: boolean;
@@ -33,8 +34,7 @@ export function useParakeetModels({ enabled }: UseParakeetModelsOptions) {
 
   useEffect(() => {
     const handleModelsCleared = () => void reload();
-    window.addEventListener("openwhispr-models-cleared", handleModelsCleared);
-    return () => window.removeEventListener("openwhispr-models-cleared", handleModelsCleared);
+    return addModelsClearedListener(handleModelsCleared);
   }, [reload]);
 
   return { models, reload };

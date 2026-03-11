@@ -1,6 +1,8 @@
 import logger from "../utils/logger";
-
-export const DEBUG_MODE_STORAGE_KEY = "openwhisprDebugEnabled";
+import {
+  DEBUG_MODE_STORAGE_KEY,
+  LEGACY_DEBUG_MODE_STORAGE_KEY,
+} from "../utils/branding";
 
 export const shouldRedactLocalStorageKey = (key = ""): boolean => {
   const normalized = String(key || "").toLowerCase();
@@ -47,14 +49,16 @@ export async function bootstrapDebugTelemetry(): Promise<void> {
       return;
     }
 
-    const win = window as unknown as { __openwhisprDebugTelemetryBootstrapped?: boolean };
-    if (win.__openwhisprDebugTelemetryBootstrapped) {
+    const win = window as unknown as { __echoDraftDebugTelemetryBootstrapped?: boolean };
+    if (win.__echoDraftDebugTelemetryBootstrapped) {
       return;
     }
-    win.__openwhisprDebugTelemetryBootstrapped = true;
+    win.__echoDraftDebugTelemetryBootstrapped = true;
 
     let state = await window.electronAPI.getDebugState().catch(() => null);
-    const storedDebugMode = localStorage.getItem(DEBUG_MODE_STORAGE_KEY);
+    const storedDebugMode =
+      localStorage.getItem(DEBUG_MODE_STORAGE_KEY) ??
+      localStorage.getItem(LEGACY_DEBUG_MODE_STORAGE_KEY);
     if (storedDebugMode === "true" || storedDebugMode === "false") {
       const desiredDebugMode = storedDebugMode === "true";
       const currentDebugMode = Boolean(state?.enabled);
@@ -78,6 +82,7 @@ export async function bootstrapDebugTelemetry(): Promise<void> {
         }
       }
     }
+    localStorage.removeItem(LEGACY_DEBUG_MODE_STORAGE_KEY);
 
     if (!state?.enabled) {
       localStorage.setItem(DEBUG_MODE_STORAGE_KEY, String(false));
@@ -155,4 +160,3 @@ export async function bootstrapDebugTelemetry(): Promise<void> {
     }
   }
 }
-

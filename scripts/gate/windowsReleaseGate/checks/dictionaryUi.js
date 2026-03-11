@@ -16,7 +16,7 @@ async function checkDictionaryUi(panel, record, exportDir, runId) {
   await panel.click('button[data-section-id="dictionary"]');
   await panel.waitForSelector('textarea[placeholder^="Paste one word"]', 15000);
 
-  const batchText = "EchoDraft\nKubernetes\nopenwhispr\n;Dr. Martinez,  \n\n";
+  const batchText = "EchoDraft\nKubernetes\nEchoDraft Cloud\n;Dr. Martinez,  \n\n";
   await panel.setInputValue('textarea[placeholder^="Paste one word"]', batchText);
   await sleep(250);
   const previewText = await panel.eval(`
@@ -76,4 +76,3 @@ async function checkDictionaryUi(panel, record, exportDir, runId) {
 module.exports = {
   checkDictionaryUi,
 };
-

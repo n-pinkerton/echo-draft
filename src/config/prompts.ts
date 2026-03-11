@@ -1,11 +1,11 @@
 import promptData from "./promptData.json";
 import { getLanguageInstruction } from "../utils/languageSupport";
+import { UNTRUSTED_TRANSCRIPTION_TAG_NAME } from "../utils/branding";
 
 export const UNIFIED_SYSTEM_PROMPT = promptData.UNIFIED_SYSTEM_PROMPT;
 export const LEGACY_PROMPTS = promptData.LEGACY_PROMPTS;
 const DICTIONARY_SUFFIX = promptData.DICTIONARY_SUFFIX;
 
-export const UNTRUSTED_TRANSCRIPTION_TAG_NAME = "openwhispr_untrusted_transcription";
 export const UNTRUSTED_TRANSCRIPTION_OPEN_TAG = `<${UNTRUSTED_TRANSCRIPTION_TAG_NAME}>`;
 export const UNTRUSTED_TRANSCRIPTION_CLOSE_TAG = `</${UNTRUSTED_TRANSCRIPTION_TAG_NAME}>`;
 

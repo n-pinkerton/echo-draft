@@ -5,9 +5,9 @@ type OAuthRedirectConfig = {
 
 const VALID_CHANNELS = new Set(["development", "staging", "production"]);
 const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
-  development: "openwhispr-dev",
-  staging: "openwhispr-staging",
-  production: "openwhispr",
+  development: "echodraft-dev",
+  staging: "echodraft-staging",
+  production: "echodraft",
 } as const;
 
 export function resolveOAuthRedirectConfig(): OAuthRedirectConfig {
@@ -249,4 +249,3 @@ export function handleOAuthBrowserRedirect(): boolean {
   document.body.innerHTML = renderOAuthRedirectPage();
   return true;
 }
-

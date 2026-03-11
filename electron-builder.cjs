@@ -1,11 +1,11 @@
 const { ICON_ASSET_PATHS } = require("./src/config/iconPaths.cjs");
 
 module.exports = {
-  appId: "com.herotools.openwispr",
+  appId: "com.herotools.echodraft",
   productName: "EchoDraft",
   protocols: {
     name: "EchoDraft Protocol",
-    schemes: ["openwhispr"],
+    schemes: ["echodraft"],
   },
   directories: {
     output: "dist",

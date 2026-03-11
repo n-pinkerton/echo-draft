@@ -31,7 +31,7 @@ OPENWHISPR_LOG_LEVEL=debug
 ## Log files & format
 
 - **Directory**: `logs/` next to the installed executable **when writable** (preferred), otherwise `logs/` inside the app’s `userData` directory.
-- **Filename**: `openwhispr-debug-YYYY-MM-DD.jsonl` (local system date).
+- **Filename**: `echodraft-debug-YYYY-MM-DD.jsonl` (local system date).
 - **Format**: JSON Lines (one JSON object per line).
   - Line 1 is a `type: "header"` record (system/app details + settings snapshot placeholders).
   - Subsequent lines are structured log records with `ts`, `level`, `scope`, and `meta`.

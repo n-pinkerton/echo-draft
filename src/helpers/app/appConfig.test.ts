@@ -53,15 +53,15 @@ describe("appConfig", () => {
 
   describe("getOAuthProtocol", () => {
     it("returns validated protocol from env when present", () => {
-      expect(getOAuthProtocol({ env: { OPENWHISPR_PROTOCOL: "openwhispr-dev" }, channel: "production" })).toBe(
-        "openwhispr-dev"
+      expect(getOAuthProtocol({ env: { OPENWHISPR_PROTOCOL: "echodraft-dev" }, channel: "production" })).toBe(
+        "echodraft-dev"
       );
     });
 
     it("falls back to channel defaults when env is missing/invalid", () => {
-      expect(getOAuthProtocol({ env: {}, channel: "development" })).toBe("openwhispr-dev");
+      expect(getOAuthProtocol({ env: {}, channel: "development" })).toBe("echodraft-dev");
       expect(getOAuthProtocol({ env: { OPENWHISPR_PROTOCOL: "not a protocol" }, channel: "staging" })).toBe(
-        "openwhispr-staging"
+        "echodraft-staging"
       );
     });
   });

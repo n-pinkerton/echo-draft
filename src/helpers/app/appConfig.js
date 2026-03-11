@@ -1,9 +1,9 @@
 const VALID_CHANNELS = new Set(["development", "staging", "production"]);
 
 const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
-  development: "openwhispr-dev",
-  staging: "openwhispr-staging",
-  production: "openwhispr",
+  development: "echodraft-dev",
+  staging: "echodraft-staging",
+  production: "echodraft",
 };
 
 const DEFAULT_AUTH_BRIDGE_PORT = 5199;
@@ -94,4 +94,3 @@ module.exports = {
   resolveAppChannel,
   shouldRegisterProtocolWithAppArg,
 };
-

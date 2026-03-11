@@ -1,4 +1,9 @@
 import logger from "../../utils/logger";
+import {
+  ECHO_DRAFT_CLOUD_SOURCE,
+  getRendererLogLevel,
+  normalizeEchoDraftSource,
+} from "../../utils/branding";
 import { countWords } from "./textMetrics";
 
 export const createTranscriptionCompleteHandler = (deps) => {
@@ -89,7 +94,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       "dictation"
     );
 
-    if (typeof window !== "undefined" && window.__openwhisprLogLevel === "trace") {
+    if (getRendererLogLevel() === "trace") {
       logger.trace(
         "Dictation transcript text",
         {
@@ -293,7 +298,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       });
     }
 
-    if (result.source === "openwhispr" && result.limitReached) {
+    if (normalizeEchoDraftSource(result.source) === ECHO_DRAFT_CLOUD_SOURCE && result.limitReached) {
       electronAPI?.notifyLimitReached?.({
         wordsUsed: result.wordsUsed,
         limit: result.wordsRemaining !== undefined ? result.wordsUsed + result.wordsRemaining : 2000,

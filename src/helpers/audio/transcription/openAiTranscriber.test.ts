@@ -73,7 +73,7 @@ const LARGE_DICTIONARY = [
   "CloudShell",
   "logging",
   "Logging Mcp",
-  "OpenWhispr",
+  "EchoDraft",
   "Figma",
   "Partner Dashboard",
   "Help Center",

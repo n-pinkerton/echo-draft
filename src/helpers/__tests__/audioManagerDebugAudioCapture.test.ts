@@ -30,7 +30,7 @@ describe("AudioManager.saveDebugAudioCaptureIfEnabled", () => {
     const getDebugState = vi.fn(async () => ({ enabled: true, logPath: null, logLevel: "debug" }));
     const debugSaveAudio = vi.fn(async () => ({
       success: true,
-      filePath: "/tmp/openwhispr-audio.webm",
+      filePath: "/tmp/echodraft-audio.webm",
       bytes: 4,
       kept: 1,
       deleted: 0,
@@ -86,4 +86,3 @@ describe("AudioManager.saveDebugAudioCaptureIfEnabled", () => {
     manager.cleanup();
   });
 });
-

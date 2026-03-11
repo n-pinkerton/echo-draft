@@ -21,7 +21,6 @@ remove_target() {
 
 echo "Stopping running EchoDraft/Electron processes..."
 pkill -f "EchoDraft" 2>/dev/null || true
-pkill -f "open-whispr" 2>/dev/null || true
 pkill -f "Electron Helper.*EchoDraft" 2>/dev/null || true
 
 echo "Removing /Applications/EchoDraft.app (requires admin)..."
@@ -29,22 +28,19 @@ remove_target "/Applications/EchoDraft.app"
 
 echo "Purging Application Support data..."
 remove_target "$HOME/Library/Application Support/EchoDraft"
-remove_target "$HOME/Library/Application Support/open-whispr"
 remove_target "$HOME/Library/Application Support/EchoDraft-dev"
-remove_target "$HOME/Library/Application Support/com.openwhispr"
-remove_target "$HOME/Library/Application Support/com.openwhispr.EchoDraft"
 
 echo "Removing caches, logs, and saved state..."
-remove_target "$HOME/Library/Caches/open-whispr"
-remove_target "$HOME/Library/Caches/com.openwhispr.EchoDraft"
-remove_target "$HOME/Library/Preferences/com.openwhispr.EchoDraft.plist"
-remove_target "$HOME/Library/Preferences/com.openwhispr.helper.plist"
+remove_target "$HOME/Library/Caches/echodraft"
+remove_target "$HOME/Library/Caches/com.herotools.echodraft"
+remove_target "$HOME/Library/Preferences/com.herotools.echodraft.plist"
+remove_target "$HOME/Library/Preferences/com.herotools.echodraft.helper.plist"
 remove_target "$HOME/Library/Logs/EchoDraft"
-remove_target "$HOME/Library/Saved Application State/com.openwhispr.EchoDraft.savedState"
+remove_target "$HOME/Library/Saved Application State/com.herotools.echodraft.savedState"
 
 echo "Cleaning temporary files..."
 shopt -s nullglob
-for tmp in /tmp/openwhispr*; do
+for tmp in /tmp/echodraft*; do
   remove_target "$tmp"
 done
 for crash in "$HOME/Library/Application Support/CrashReporter"/EchoDraft_*; do
@@ -71,9 +67,9 @@ fi
 cat <<'EOF'
 macOS keeps microphone, screen recording, and accessibility approvals even after files are removed.
 Reset them if you want a truly fresh start:
-  tccutil reset Microphone com.openwhispr.app
-  tccutil reset Accessibility com.openwhispr.app
-  tccutil reset ScreenCapture com.openwhispr.app
+  tccutil reset Microphone com.herotools.echodraft
+  tccutil reset Accessibility com.herotools.echodraft
+  tccutil reset ScreenCapture com.herotools.echodraft
 
 Full uninstall complete. Reboot if you removed permissions, then reinstall or run npm scripts on a clean tree.
 EOF

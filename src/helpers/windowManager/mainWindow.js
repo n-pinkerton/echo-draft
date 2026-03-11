@@ -48,7 +48,7 @@ async function createMainWindow(manager) {
   );
 
   manager.mainWindow.webContents.on("did-finish-load", () => {
-    manager.mainWindow.setTitle("Voice Recorder");
+    manager.mainWindow.setTitle("EchoDraft");
     enforceMainWindowOnTop(manager);
   });
 
@@ -200,4 +200,3 @@ module.exports = {
   setMainWindowInteractivity,
   showDictationPanel,
 };
-

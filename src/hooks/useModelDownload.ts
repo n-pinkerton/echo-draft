@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useDialogs } from "./useDialogs";
 import { useToast } from "../components/ui/toastContext";
 import type { WhisperDownloadProgressData } from "../types/electron";
+import { addModelsClearedListener } from "../utils/branding";
 import "../types/electron";
 
 const PROGRESS_THROTTLE_MS = 100;
@@ -67,8 +68,7 @@ export function useModelDownload({
 
   useEffect(() => {
     const handleModelsCleared = () => onModelsClearedRef.current?.();
-    window.addEventListener("openwhispr-models-cleared", handleModelsCleared);
-    return () => window.removeEventListener("openwhispr-models-cleared", handleModelsCleared);
+    return addModelsClearedListener(handleModelsCleared);
   }, []);
 
   const handleWhisperProgress = useCallback(

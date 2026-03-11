@@ -12,6 +12,7 @@ import { processWithIpcProvider } from "./reasoning/providers/ipcProvider";
 import { processWithEchoDraftProvider } from "./reasoning/providers/echoDraftProvider";
 import { OpenAiEndpointResolver } from "./reasoning/openaiEndpoints";
 import { checkReasoningAvailability } from "./reasoning/availability";
+import { ECHO_DRAFT_CLOUD_MODE } from "../utils/branding";
 
 /**
  * @deprecated Use UNIFIED_SYSTEM_PROMPT from ../config/prompts instead
@@ -92,7 +93,7 @@ class ReasoningService extends BaseReasoningService {
         case "groq":
           result = await this.processWithGroq(text, model, agentName, config);
           break;
-        case "openwhispr":
+        case ECHO_DRAFT_CLOUD_MODE:
           result = await this.processWithEchoDraft(text, model, agentName, config);
           break;
         default:

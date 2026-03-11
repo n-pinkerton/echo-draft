@@ -9,7 +9,7 @@ The server-side API is **provider-agnostic** — transcription and reasoning are
 ## Architecture
 
 ```
-Electron App  →  IPC (main process)  →  openwhispr-api (Vercel)  →  Provider (transcription)
+Electron App  →  IPC (main process)  →  echodraft-api (Vercel)  →  Provider (transcription)
                    (attaches session cookies)     ↕                →  Provider (reasoning)
                                              Neon Postgres              ↕
                                                   ↕                Stripe Webhooks
@@ -34,12 +34,12 @@ Merge before starting feature work:
 
 ---
 
-## Step 1: Create `openwhispr-api` Repo
+## Step 1: Create `echodraft-api` Repo
 
 Location: `~/Projects/n-pinkerton/echo-draft-api/`
 
 ```
-openwhispr-api/
+echodraft-api/
   package.json            # @neondatabase/serverless, stripe, openai (provider-compatible), typescript
   tsconfig.json
   vercel.json             # maxDuration: 30s for transcribe, 60s for reason
@@ -288,7 +288,7 @@ cloudPortal: () => ipcRenderer.invoke('cloud-portal'),
 ### New Setting: `cloudTranscriptionMode`
 
 Add to `src/hooks/useSettings.ts`:
-- `cloudTranscriptionMode`: `"openwhispr"` | `"byok"` (default: `"openwhispr"`)
+- `cloudTranscriptionMode`: `"echodraft"` | `"byok"` (default: `"echodraft"`)
 - When signed in + `useLocalWhisper === false`: determines cloud routing
 - When not signed in: ignored, falls through to BYOK
 
@@ -317,19 +317,19 @@ Add to `src/hooks/useSettings.ts`:
 - Add `processWithEchoDraftCloud(audioBlob, metadata)` method:
   - Calls `window.electronAPI.cloudTranscribe(audioArrayBuffer, { language, prompt })`
   - Handles `limitReached` flag (emits event for UI to show UpgradePrompt)
-  - Returns same `{ success, text, source: "openwhispr", timings }` shape as other methods
+  - Returns same `{ success, text, source: "echodraft", timings }` shape as other methods
   - ~10 lines — all heavy lifting in the IPC handler
 - Modify `processAudio()` routing (~line 219):
   ```
   if (useLocalWhisper) → processWithLocalWhisper/Parakeet (unchanged)
-  else if (cloudTranscriptionMode === "openwhispr" && isSignedIn) → processWithEchoDraftCloud (NEW)
+  else if (cloudTranscriptionMode === "echodraft" && isSignedIn) → processWithEchoDraftCloud (NEW)
   else → processWithOpenAIAPI (existing BYOK flow, unchanged)
   ```
 
-**`src/services/ReasoningService.ts`** — Add `"openwhispr"` provider
+**`src/services/ReasoningService.ts`** — Add `"echodraft"` provider
 - Add `processWithEchoDraft()` method alongside existing `processWithOpenAI()`, `processWithAnthropic()`, etc.
 - Calls `window.electronAPI.cloudReason(text, { model, agentName, customDictionary })`
-- When `cloudTranscriptionMode === "openwhispr"` && signed in, `reasoningProvider` is `"openwhispr"`
+- When `cloudTranscriptionMode === "echodraft"` && signed in, `reasoningProvider` is `"echodraft"`
 - Single routing point — no changes needed in `audioManager.js` for reasoning
 
 **`src/hooks/useSettings.ts`**
@@ -346,7 +346,7 @@ Add to `src/hooks/useSettings.ts`:
 - **Account section**: Add usage display (words today / limit), plan badge, upgrade/manage button
 
 **`src/models/modelRegistryData.json`** — Add cloud model tiers
-- Add `"openwhisprCloudModels"` section with curated tiers:
+- Add `"echoDraftCloudModels"` section with curated tiers:
   - **Fast** (Groq): `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`
   - **Balanced** (OpenRouter): `anthropic/claude-sonnet-4`, `google/gemini-2.5-flash`
   - **Quality** (OpenRouter): `anthropic/claude-opus-4`, `openai/gpt-4.1`
@@ -684,7 +684,7 @@ Current: gradient card with avatar + name + email + sign-out.
 
 ### 5e. Settings Page — AI Models Section (Cloud Mode)
 
-When `cloudTranscriptionMode === "openwhispr"`, replace `ReasoningModelSelector` with a simplified cloud model picker:
+When `cloudTranscriptionMode === "echodraft"`, replace `ReasoningModelSelector` with a simplified cloud model picker:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -709,7 +709,7 @@ When `cloudTranscriptionMode === "openwhispr"`, replace `ReasoningModelSelector`
 - `ProviderTabs` reused with tier labels: "Fast" (Groq), "Balanced" (OpenRouter), "Quality" (OpenRouter)
 - Each tier has a simple `Select` dropdown (not full ModelCardList — keep it minimal)
 - "Recommended" badge on the default model per tier
-- Model data from `modelRegistryData.json` `openwhisprCloudModels` section (ships with app, works offline)
+- Model data from `modelRegistryData.json` `echoDraftCloudModels` section (ships with app, works offline)
 
 **When BYOK mode:** Show existing `ReasoningModelSelector` unchanged.
 
@@ -876,7 +876,7 @@ Minor addition to `ControlPanel.tsx`:
 14. ✅ Add `cloudTranscriptionMode` to `useSettings.ts`
 15. ✅ Add `processWithEchoDraftCloud()` to `audioManager.js`
 16. ✅ Wire transcription routing in `processAudio()`
-17. ✅ Add `"openwhispr"` provider to `ReasoningService.ts`
+17. ✅ Add `"echodraft"` provider to `ReasoningService.ts`
 18. ⏳ Test: sign in → dictate → transcription + reasoning via API
 
 ### Phase 4: Usage Tracking & UI ✅ COMPLETE

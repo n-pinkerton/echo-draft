@@ -1,6 +1,10 @@
 import { createAuthClient } from "@neondatabase/auth";
 import { BetterAuthReactAdapter } from "@neondatabase/auth/react";
 import { OPENWHISPR_API_URL } from "../config/constants";
+import {
+  LAST_SIGN_IN_STORAGE_KEY,
+  LEGACY_LAST_SIGN_IN_STORAGE_KEY,
+} from "../utils/branding";
 import { openExternalLink } from "../utils/externalLinks";
 import logger from "../utils/logger";
 
@@ -11,7 +15,6 @@ export const authClient = NEON_AUTH_URL
 
 export type SocialProvider = "google";
 
-const LAST_SIGN_IN_STORAGE_KEY = "openwhispr:lastSignInTime";
 const GRACE_PERIOD_MS = 60_000;
 const GRACE_RETRY_COUNT = 6;
 const INITIAL_GRACE_RETRY_DELAY_MS = 500;
@@ -31,14 +34,20 @@ function loadLastSignInTimeFromStorage(): number | null {
   const storage = getLocalStorageSafe();
   if (!storage) return null;
 
-  const raw = storage.getItem(LAST_SIGN_IN_STORAGE_KEY);
+  const raw =
+    storage.getItem(LAST_SIGN_IN_STORAGE_KEY) ??
+    storage.getItem(LEGACY_LAST_SIGN_IN_STORAGE_KEY);
   if (!raw) return null;
 
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     storage.removeItem(LAST_SIGN_IN_STORAGE_KEY);
+    storage.removeItem(LEGACY_LAST_SIGN_IN_STORAGE_KEY);
     return null;
   }
+
+  storage.setItem(LAST_SIGN_IN_STORAGE_KEY, String(parsed));
+  storage.removeItem(LEGACY_LAST_SIGN_IN_STORAGE_KEY);
 
   return parsed;
 }
@@ -49,8 +58,10 @@ function persistLastSignInTime(value: number | null): void {
 
   if (value === null) {
     storage.removeItem(LAST_SIGN_IN_STORAGE_KEY);
+    storage.removeItem(LEGACY_LAST_SIGN_IN_STORAGE_KEY);
   } else {
     storage.setItem(LAST_SIGN_IN_STORAGE_KEY, String(value));
+    storage.removeItem(LEGACY_LAST_SIGN_IN_STORAGE_KEY);
   }
 }
 

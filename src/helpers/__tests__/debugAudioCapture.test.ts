@@ -19,7 +19,7 @@ describe("debugAudioCapture", () => {
   });
 
   it("enforces a rolling retention of 10 audio captures", () => {
-    logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-logs-"));
+    logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-logs-"));
 
     const audioBuffer = new Uint8Array([1, 2, 3, 4]).buffer;
     for (let i = 0; i < 12; i += 1) {
@@ -50,4 +50,3 @@ describe("debugAudioCapture", () => {
     expect(guessExtensionFromMimeType("audio/wav")).toBe("wav");
   });
 });
-

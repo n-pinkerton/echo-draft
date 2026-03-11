@@ -4,6 +4,7 @@ import { FolderOpen, Copy, Check } from "lucide-react";
 import { useToast } from "./ui/toastContext";
 import { Toggle } from "./ui/toggle";
 import logger from "../utils/logger";
+import { DEBUG_MODE_STORAGE_KEY } from "../utils/branding";
 
 export default function DeveloperSection() {
   const [debugEnabled, setDebugEnabled] = useState(false);
@@ -22,7 +23,7 @@ export default function DeveloperSection() {
       setIsLoading(true);
       const state = await window.electronAPI.getDebugState();
       setDebugEnabled(state.enabled);
-      localStorage.setItem("openwhisprDebugEnabled", String(Boolean(state.enabled)));
+      localStorage.setItem(DEBUG_MODE_STORAGE_KEY, String(Boolean(state.enabled)));
       setLogPath(state.logPath);
       setLogsDir(state.logsDir || null);
       setLogsDirSource(state.logsDirSource || null);
@@ -61,7 +62,7 @@ export default function DeveloperSection() {
       }
 
       setDebugEnabled(newState);
-      localStorage.setItem("openwhisprDebugEnabled", String(newState));
+      localStorage.setItem(DEBUG_MODE_STORAGE_KEY, String(newState));
       logger.refreshLogLevel();
       await loadDebugState();
 

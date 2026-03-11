@@ -1,4 +1,5 @@
 import modelDataRaw from "./modelRegistryData.json";
+import { ECHO_DRAFT_CLOUD_MODE } from "../utils/branding";
 
 export interface ModelDefinition {
   id: string;
@@ -247,8 +248,8 @@ export function getModelProvider(modelId: string): string {
   if (typeof localStorage !== "undefined") {
     const cloudMode = localStorage.getItem("cloudReasoningMode");
     const isSignedIn = localStorage.getItem("isSignedIn") === "true";
-    if (cloudMode === "openwhispr" && isSignedIn) {
-      return "openwhispr";
+    if (cloudMode === ECHO_DRAFT_CLOUD_MODE && isSignedIn) {
+      return ECHO_DRAFT_CLOUD_MODE;
     }
   }
 

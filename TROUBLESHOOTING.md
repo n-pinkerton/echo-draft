@@ -80,7 +80,7 @@
 3. If bundled binary fails, install via package manager:
    - macOS: `brew install whisper-cpp`
    - Linux: Build from source at https://github.com/ggml-org/whisper.cpp
-4. Clear model cache: `rm -rf ~/.cache/openwhispr/whisper-models`
+4. Clear model cache: `rm -rf ~/.cache/echodraft/whisper-models`
 5. Try cloud transcription as fallback
 
 ### Wayland Clipboard Issues (Linux)

@@ -118,7 +118,7 @@ EchoDraft is an Electron-based desktop dictation application that uses whisper.c
   - Bundled binaries in `resources/bin/whisper-cpp-{platform}-{arch}`
   - Falls back to system installation (`brew install whisper-cpp`)
   - GGML model downloads from HuggingFace
-  - Models stored in `~/.cache/openwhispr/whisper-models/`
+  - Models stored in `~/.cache/echodraft/whisper-models/`
 
 ### NVIDIA Parakeet Integration (via sherpa-onnx)
 
@@ -126,7 +126,7 @@ EchoDraft is an Electron-based desktop dictation application that uses whisper.c
   - Uses sherpa-onnx runtime for cross-platform ONNX inference
   - Bundled binaries in `resources/bin/sherpa-onnx-{platform}-{arch}`
   - INT8 quantized models for efficient CPU inference
-  - Models stored in `~/.cache/openwhispr/parakeet-models/`
+  - Models stored in `~/.cache/echodraft/parakeet-models/`
   - Server pre-warming on startup when `LOCAL_TRANSCRIPTION_PROVIDER=nvidia` is set
   - Provider preference persisted to `.env` via `saveAllKeysToEnvFile()` on server start/stop
 
@@ -174,7 +174,7 @@ FFmpeg is bundled with the app and doesn't require system installation:
 
 ### 3. Local Whisper Models (GGML format)
 
-Models stored in `~/.cache/openwhispr/whisper-models/`:
+Models stored in `~/.cache/echodraft/whisper-models/`:
 - tiny: ~75MB (fastest, lowest quality)
 - base: ~142MB (recommended balance)
 - small: ~466MB (better quality)
@@ -378,14 +378,14 @@ On GNOME Wayland, Electron's `globalShortcut` API doesn't work due to Wayland's 
 **Architecture**:
 1. `main.js` enables `GlobalShortcutsPortal` feature flag for Wayland
 2. `hotkeyManager.js` detects GNOME + Wayland and initializes `GnomeShortcutManager`
-3. `gnomeShortcut.js` creates D-Bus service at `com.openwhispr.App`
+3. `gnomeShortcut.js` creates D-Bus service at `com.echodraft.App`
 4. Shortcuts registered via `gsettings` as custom GNOME keybindings
 5. GNOME triggers `dbus-send` command which calls the D-Bus `Toggle()` method
 
 **Key Constants**:
-- D-Bus service: `com.openwhispr.App`
-- D-Bus path: `/com/openwhispr/App`
-- gsettings path: `/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/openwhispr/`
+- D-Bus service: `com.echodraft.App`
+- D-Bus path: `/com/echodraft/App`
+- gsettings path: `/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/echodraft/`
 
 **IPC Integration**:
 - `get-hotkey-mode-info`: Returns `{ isUsingGnome: boolean }` to renderer

@@ -1,3 +1,5 @@
+import { installEchoDraftE2E } from "../../utils/branding";
+
 export const installE2EHelpers = (deps) => {
   const {
     enabled,
@@ -13,7 +15,7 @@ export const installE2EHelpers = (deps) => {
     return () => {};
   }
 
-  window.__openwhisprE2E = {
+  const helpers = {
     getProgress: () => latestProgressRef.current,
     setStage: (stage, patch = {}) => {
       updateStage(stage, patch);
@@ -55,10 +57,5 @@ export const installE2EHelpers = (deps) => {
     },
   };
 
-  return () => {
-    if (typeof window !== "undefined" && window.__openwhisprE2E) {
-      delete window.__openwhisprE2E;
-    }
-  };
+  return installEchoDraftE2E(helpers);
 };
-

@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, buildApiUrl, normalizeBaseUrl } from "../../../config/constants";
+import { getRendererLogLevel } from "../../../utils/branding";
 import { isSecureEndpoint } from "../../../utils/urlUtils";
 import { readOpenAiTranscriptionStream } from "./openAiSseStream";
 import { processWithOpenAIAPI as processWithOpenAIAPIRequest } from "./openAiTranscriptionProcessor";
@@ -373,7 +374,7 @@ export class OpenAiTranscriber {
   }
 
   async readTranscriptionStream(response) {
-    const trace = typeof window !== "undefined" && window.__openwhisprLogLevel === "trace";
+    const trace = getRendererLogLevel() === "trace";
 
     return readOpenAiTranscriptionStream(response, {
       logger: this.logger,

@@ -1,4 +1,5 @@
 import logger from "../../../utils/logger";
+import { getRendererLogLevel } from "../../../utils/branding";
 import { describeRecordingStartError } from "./nonStreamingRecordingErrors";
 import { waitForNonStreamingStopFlush } from "./nonStreamingStopFlush";
 
@@ -113,7 +114,7 @@ export async function startNonStreamingRecording(manager, context = null) {
 
     mediaRecorder.ondataavailable = (event) => {
       audioChunks.push(event.data);
-      if (typeof window !== "undefined" && window.__openwhisprLogLevel === "trace") {
+      if (getRendererLogLevel() === "trace") {
         logger.trace(
           "MediaRecorder chunk captured",
           {

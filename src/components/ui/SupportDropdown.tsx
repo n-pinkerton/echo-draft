@@ -16,16 +16,17 @@ interface SupportDropdownProps {
 export default function SupportDropdown({ className }: SupportDropdownProps) {
   const handleContactSupport = async () => {
     try {
-      const result = await window.electronAPI?.openExternal("mailto:support@openwhispr.com");
+      const result = await window.electronAPI?.openExternal(
+        "https://github.com/n-pinkerton/echo-draft/issues/new/choose"
+      );
       if (!result?.success) {
-        console.error("Failed to open email client:", result?.error);
-        // Fallback: try opening the email as a web URL
+        console.error("Failed to open support page:", result?.error);
         await window.electronAPI?.openExternal(
-          "https://mail.google.com/mail/?view=cm&to=support@openwhispr.com"
+          "https://github.com/n-pinkerton/echo-draft/issues"
         );
       }
     } catch (error) {
-      console.error("Error opening email client:", error);
+      console.error("Error opening support page:", error);
     }
   };
 
@@ -62,7 +63,7 @@ export default function SupportDropdown({ className }: SupportDropdownProps) {
           className="cursor-pointer hover:bg-muted focus:bg-muted"
         >
           <Mail className="mr-2 h-4 w-4" />
-          Contact Support
+          Get Help
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={handleSubmitBug}

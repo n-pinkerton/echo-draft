@@ -3,6 +3,7 @@ import { Cloud, Key } from "lucide-react";
 import ReasoningModelSelector from "../../ReasoningModelSelector";
 import { SettingsRow } from "../../ui/SettingsSection";
 import { Toggle } from "../../ui/toggle";
+import { ECHO_DRAFT_CLOUD_MODE } from "../../../utils/branding";
 import { SectionHeader, SettingsPanel, SettingsPanelRow } from "../SettingsPanels";
 
 export interface AiModelsSectionProps {
@@ -64,7 +65,7 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
   } = props;
 
   const isCustomMode = cloudReasoningMode === "byok";
-  const isCloudMode = isSignedIn && cloudReasoningMode === "openwhispr";
+  const isCloudMode = isSignedIn && cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE;
 
   return (
     <div className="space-y-4">
@@ -91,7 +92,7 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
                 <button
                   onClick={() => {
                     if (!isCloudMode) {
-                      setCloudReasoningMode("openwhispr");
+                      setCloudReasoningMode(ECHO_DRAFT_CLOUD_MODE);
                       toast({
                         title: "Switched to EchoDraft Cloud",
                         description: "AI text enhancement will use EchoDraft's cloud service.",
@@ -233,4 +234,3 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
     </div>
   );
 }
-
