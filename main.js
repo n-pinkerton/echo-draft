@@ -9,6 +9,7 @@ const {
   shouldRegisterProtocolWithAppArg,
 } = require("./src/helpers/app/appConfig");
 const { applyPlatformPreReadySetup } = require("./src/helpers/app/platformSetup");
+const { migrateUserDataProfile } = require("./src/helpers/app/userDataProfileMigration");
 const { startAuthBridgeServer, DEFAULT_AUTH_BRIDGE_HOST, DEFAULT_AUTH_BRIDGE_PATH } = require("./src/helpers/app/authBridgeServer");
 const { handleOAuthDeepLink, navigateControlPanelWithVerifier } = require("./src/helpers/app/oauthDeepLink");
 const { bootstrapManagers } = require("./src/helpers/app/managerBootstrap");
@@ -106,6 +107,12 @@ app.on("open-url", (event, url) => {
 
 // Main application startup
 async function startApp() {
+  try {
+    migrateUserDataProfile({ app, logger: console });
+  } catch (error) {
+    console.error("[ProfileMigration] failed:", error?.message || error);
+  }
+
   // Initialize all managers now that app is ready
   const managers = bootstrapManagers();
   debugLogger = managers.debugLogger;

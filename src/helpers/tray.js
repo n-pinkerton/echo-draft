@@ -131,18 +131,6 @@ class TrayManager {
     const trayAssetRelativePath = getTrayIconAssetPath(platform);
     const trayAssetFileName = path.basename(trayAssetRelativePath);
 
-    if (platform === "win32" && !isDevelopment) {
-      try {
-        const executableIcon = await app.getFileIcon(process.execPath, { size: "normal" });
-        if (executableIcon && !executableIcon.isEmpty()) {
-          console.log("Using tray icon from executable:", process.execPath);
-          return executableIcon;
-        }
-      } catch (error) {
-        console.error("Error loading tray icon from executable:", error.message);
-      }
-    }
-
     const candidatePaths = [];
 
     if (platform === "darwin") {
@@ -191,6 +179,18 @@ class TrayManager {
         }
       } catch (error) {
         console.error("Error checking tray icon path:", testPath, error.message);
+      }
+    }
+
+    if (platform === "win32" && !isDevelopment) {
+      try {
+        const executableIcon = await app.getFileIcon(process.execPath, { size: "normal" });
+        if (executableIcon && !executableIcon.isEmpty()) {
+          console.log("Using tray icon from executable:", process.execPath);
+          return executableIcon;
+        }
+      } catch (error) {
+        console.error("Error loading tray icon from executable:", error.message);
       }
     }
 
