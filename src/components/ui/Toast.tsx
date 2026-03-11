@@ -12,6 +12,10 @@ interface ToastState extends ToastProps {
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = React.useState<ToastState[]>([]);
   const timersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const toastViewportSize = React.useMemo(
+    () => (toasts.length > 0 && toasts.every((toast) => toast.size === "compact") ? "compact" : "default"),
+    [toasts]
+  );
 
   const clearTimer = React.useCallback((id: string) => {
     const timer = timersRef.current[id];
@@ -93,7 +97,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   return (
-    <ToastContext.Provider value={{ toast, dismiss, toastCount: toasts.length }}>
+    <ToastContext.Provider
+      value={{ toast, dismiss, toastCount: toasts.length, toastViewportSize }}
+    >
       {children}
       <ToastViewport
         toasts={toasts}
@@ -125,7 +131,7 @@ const ToastViewport: React.FC<{
       className={cn(
         "fixed z-50 flex flex-col gap-1.5 pointer-events-none",
         isDictationPanel
-          ? "bottom-20 right-6" // Above mic button in dictation panel
+          ? "bottom-44 right-4 items-end" // Clear the status widget in the dictation panel
           : "bottom-5 right-5" // Standard position in control panel
       )}
     >
@@ -195,6 +201,7 @@ const Toast: React.FC<
   description,
   action,
   variant = "default",
+  size = "default",
   duration = 3500,
   isExiting,
   createdAt,
@@ -205,6 +212,7 @@ const Toast: React.FC<
   const config = variantConfig[variant];
   const Icon = config.icon;
   const pausedAtRef = React.useRef<number | null>(null);
+  const isCompact = size === "compact";
 
   const handleMouseEnter = () => {
     pausedAtRef.current = Date.now();
@@ -223,9 +231,10 @@ const Toast: React.FC<
   return (
     <div
       className={cn(
-        "pointer-events-auto relative flex items-start gap-2.5 w-[320px]",
-        "px-3 py-2.5 pr-8 overflow-hidden",
-        "rounded-[6px]",
+        "pointer-events-auto relative flex items-start overflow-hidden",
+        isCompact
+          ? "gap-2 w-[220px] px-2.5 py-1.5 pr-6 rounded-[999px]"
+          : "gap-2.5 w-[320px] px-3 py-2.5 pr-8 rounded-[6px]",
         "backdrop-blur-xl",
         "transition-all duration-200 ease-out",
         isExiting
@@ -236,16 +245,26 @@ const Toast: React.FC<
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <Icon className={cn("size-4 shrink-0 mt-0.5", config.iconClass)} />
+      <Icon className={cn("shrink-0", isCompact ? "size-3.5 mt-0.5" : "size-4 mt-0.5", config.iconClass)} />
 
       <div className="flex-1 min-w-0">
         {title && (
-          <div className={cn("text-[13px] font-medium leading-tight", config.titleClass)}>
+          <div
+            className={cn(
+              isCompact ? "text-[11px] font-medium leading-none truncate" : "text-[13px] font-medium leading-tight",
+              config.titleClass
+            )}
+          >
             {title}
           </div>
         )}
         {description && (
-          <div className={cn("text-[12px] leading-snug mt-0.5", config.descClass)}>
+          <div
+            className={cn(
+              isCompact ? "text-[10px] leading-tight mt-0.5 truncate" : "text-[12px] leading-snug mt-0.5",
+              config.descClass
+            )}
+          >
             {description}
           </div>
         )}
@@ -257,7 +276,7 @@ const Toast: React.FC<
         <button
           onClick={onClose}
           className={cn(
-            "absolute right-1.5 top-1.5 p-1 rounded-[4px]",
+            isCompact ? "absolute right-1 top-1 p-0.5 rounded-full" : "absolute right-1.5 top-1.5 p-1 rounded-[4px]",
             "opacity-50 hover:opacity-100",
             "hover:bg-foreground/5 dark:hover:bg-white/10",
             "transition-all duration-150",
@@ -265,13 +284,15 @@ const Toast: React.FC<
             config.iconClass
           )}
         >
-          <X className="size-3.5" />
+          <X className={isCompact ? "size-3" : "size-3.5"} />
           <span className="sr-only">Close</span>
         </button>
       )}
 
       {duration > 0 && !isExiting && (
-        <div className="absolute bottom-0 left-0 right-0 h-[2px] overflow-hidden">
+        <div
+          className={cn("absolute bottom-0 left-0 right-0 overflow-hidden", isCompact ? "h-px" : "h-[2px]")}
+        >
           <div
             className={cn("h-full", config.progressClass)}
             style={{

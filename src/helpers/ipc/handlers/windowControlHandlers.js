@@ -45,6 +45,11 @@ function registerWindowControlHandlers({ ipcMain, app }, { windowManager }) {
     windowManager.showDictationPanel();
   });
 
+  ipcMain.handle("show-control-panel", async () => {
+    await windowManager.createControlPanelWindow();
+    return { success: true };
+  });
+
   ipcMain.handle("force-stop-dictation", () => {
     if (windowManager?.forceStopMacCompoundPush) {
       windowManager.forceStopMacCompoundPush("manual");
@@ -63,4 +68,3 @@ function registerWindowControlHandlers({ ipcMain, app }, { windowManager }) {
 }
 
 module.exports = { registerWindowControlHandlers };
-

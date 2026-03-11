@@ -16,9 +16,11 @@ export default function App() {
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
   const commandMenuRef = useRef(null);
   const buttonRef = useRef(null);
-  const { toast, toastCount } = useToast();
+  const { toast, toastCount, toastViewportSize } = useToast();
   const { isDragging, handleMouseDown, handleMouseUp } = useWindowDrag();
   const { isSignedIn } = useAuth();
+  const isWindows =
+    typeof window !== "undefined" && window.electronAPI?.getPlatform?.() === "win32";
 
   const [dragStartPos, setDragStartPos] = useState(null);
   const [hasDragged, setHasDragged] = useState(false);
@@ -80,18 +82,20 @@ export default function App() {
 
   useEffect(() => {
     const resizeWindow = () => {
-      if (isCommandMenuOpen && toastCount > 0) {
+      if (isCommandMenuOpen && toastCount > 0 && toastViewportSize === "default") {
         window.electronAPI?.resizeMainWindow?.("EXPANDED");
       } else if (isCommandMenuOpen) {
         window.electronAPI?.resizeMainWindow?.("WITH_MENU");
       } else if (toastCount > 0) {
-        window.electronAPI?.resizeMainWindow?.("WITH_TOAST");
+        window.electronAPI?.resizeMainWindow?.(
+          toastViewportSize === "compact" ? "WITH_COMPACT_TOAST" : "WITH_TOAST"
+        );
       } else {
         window.electronAPI?.resizeMainWindow?.("WITH_STATUS");
       }
     };
     resizeWindow();
-  }, [isCommandMenuOpen, toastCount]);
+  }, [isCommandMenuOpen, toastCount, toastViewportSize]);
 
   const handleDictationToggle = React.useCallback(() => {
     setIsCommandMenuOpen(false);
@@ -203,8 +207,62 @@ export default function App() {
       title: "Copied",
       description: "Copied transcript to clipboard.",
       duration: 1500,
+      size: "compact",
+      variant: "success",
     });
   };
+
+  const openMainApp = async () => {
+    try {
+      await window.electronAPI?.showControlPanel?.();
+    } catch {
+      toast({
+        title: "Open failed",
+        description: "Could not open the main app window.",
+        duration: 2500,
+      });
+    }
+  };
+
+  const isWindowDragTarget = React.useCallback(
+    (target) => target instanceof Element && !target.closest("button,[data-no-window-drag='true']"),
+    []
+  );
+
+  const startWidgetDrag = React.useCallback(
+    (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      setIsCommandMenuOpen(false);
+      setDragStartPos({ x: event.clientX, y: event.clientY });
+      setHasDragged(false);
+      handleMouseDown(event);
+    },
+    [handleMouseDown]
+  );
+
+  const updateDragThreshold = React.useCallback(
+    (event) => {
+      if (dragStartPos && !hasDragged) {
+        const distance = Math.sqrt(
+          Math.pow(event.clientX - dragStartPos.x, 2) + Math.pow(event.clientY - dragStartPos.y, 2)
+        );
+        if (distance > 5) {
+          setHasDragged(true);
+        }
+      }
+    },
+    [dragStartPos, hasDragged]
+  );
+
+  const stopWidgetDrag = React.useCallback(
+    (event) => {
+      handleMouseUp(event);
+      setDragStartPos(null);
+    },
+    [handleMouseUp]
+  );
 
   return (
     <div className="dictation-window">
@@ -212,6 +270,24 @@ export default function App() {
       <div className="fixed bottom-4 right-4 z-50">
         <div
           className="flex flex-col items-end gap-2"
+          onMouseDown={(event) => {
+            if (!isWindows || !isWindowDragTarget(event.target)) {
+              return;
+            }
+            startWidgetDrag(event);
+          }}
+          onMouseMove={(event) => {
+            if (!isWindows) {
+              return;
+            }
+            updateDragThreshold(event);
+          }}
+          onMouseUp={(event) => {
+            if (!isWindows) {
+              return;
+            }
+            stopWidgetDrag(event);
+          }}
           onMouseEnter={() => {
             setIsHovered(true);
             setWindowInteractivity(true);
@@ -227,6 +303,7 @@ export default function App() {
             progress={progress}
             canCopyTranscript={canCopyTranscript}
             onCopyTranscript={copyLastTranscript}
+            onLaunchApp={openMainApp}
           />
 
           <div className="relative flex items-center gap-2">
@@ -280,26 +357,10 @@ export default function App() {
               <button
                 ref={buttonRef}
                 onMouseDown={(e) => {
-                  setIsCommandMenuOpen(false);
-                  setDragStartPos({ x: e.clientX, y: e.clientY });
-                  setHasDragged(false);
-                  handleMouseDown(e);
+                  startWidgetDrag(e);
                 }}
-                onMouseMove={(e) => {
-                  if (dragStartPos && !hasDragged) {
-                    const distance = Math.sqrt(
-                      Math.pow(e.clientX - dragStartPos.x, 2) +
-                        Math.pow(e.clientY - dragStartPos.y, 2)
-                    );
-                    if (distance > 5) {
-                      setHasDragged(true);
-                    }
-                  }
-                }}
-                onMouseUp={(e) => {
-                  handleMouseUp(e);
-                  setDragStartPos(null);
-                }}
+                onMouseMove={updateDragThreshold}
+                onMouseUp={stopWidgetDrag}
                 onClick={(e) => {
                   if (!hasDragged) {
                     setIsCommandMenuOpen(false);
@@ -355,6 +416,7 @@ export default function App() {
             {isCommandMenuOpen && (
               <div
                 ref={commandMenuRef}
+                data-no-window-drag="true"
                 className="absolute bottom-full right-0 mb-3 w-48 rounded-lg border border-border bg-popover text-popover-foreground shadow-lg backdrop-blur-sm"
                 onMouseEnter={() => {
                   setWindowInteractivity(true);

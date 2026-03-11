@@ -6,6 +6,7 @@ export interface ToastProps {
   description?: string;
   action?: React.ReactNode;
   variant?: "default" | "destructive" | "success";
+  size?: "default" | "compact";
   duration?: number;
   onClose?: () => void;
 }
@@ -14,6 +15,7 @@ export interface ToastContextType {
   toast: (props: Omit<ToastProps, "id">) => void;
   dismiss: (id?: string) => void;
   toastCount: number;
+  toastViewportSize: "default" | "compact";
 }
 
 export const ToastContext = React.createContext<ToastContextType | undefined>(undefined);
@@ -25,4 +27,3 @@ export const useToast = () => {
   }
   return context;
 };
-

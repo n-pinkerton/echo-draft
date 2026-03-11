@@ -35,12 +35,17 @@ async function loadControlPanel(manager) {
 
 async function createControlPanelWindow(manager) {
   if (manager.controlPanelWindow && !manager.controlPanelWindow.isDestroyed()) {
+    if (typeof app.focus === "function") {
+      app.focus({ steal: true });
+    }
+    if (process.platform === "darwin" && app.dock) {
+      app.dock.show();
+    }
     if (manager.controlPanelWindow.isMinimized()) {
       manager.controlPanelWindow.restore();
     }
-    if (!manager.controlPanelWindow.isVisible()) {
-      manager.controlPanelWindow.show();
-    }
+    manager.controlPanelWindow.show();
+    manager.controlPanelWindow.moveTop();
     manager.controlPanelWindow.focus();
     return;
   }
@@ -152,4 +157,3 @@ module.exports = {
   loadControlPanel,
   openExternalUrl,
 };
-

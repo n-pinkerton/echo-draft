@@ -1,6 +1,7 @@
 const { Tray, Menu, nativeImage, app } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { getTrayIconAssetPath } = require("../config/iconPaths.cjs");
 
 class TrayManager {
   constructor() {
@@ -127,41 +128,51 @@ class TrayManager {
   async loadTrayIcon() {
     const platform = process.platform;
     const isDevelopment = process.env.NODE_ENV === "development";
+    const trayAssetRelativePath = getTrayIconAssetPath(platform);
+    const trayAssetFileName = path.basename(trayAssetRelativePath);
+
+    if (platform === "win32" && !isDevelopment) {
+      try {
+        const executableIcon = await app.getFileIcon(process.execPath, { size: "normal" });
+        if (executableIcon && !executableIcon.isEmpty()) {
+          console.log("Using tray icon from executable:", process.execPath);
+          return executableIcon;
+        }
+      } catch (error) {
+        console.error("Error loading tray icon from executable:", error.message);
+      }
+    }
 
     const candidatePaths = [];
 
     if (platform === "darwin") {
       if (isDevelopment) {
-        candidatePaths.push(path.join(__dirname, "..", "assets", "iconTemplate@3x.png"));
+        candidatePaths.push(path.join(__dirname, "..", "assets", trayAssetFileName));
       } else {
         candidatePaths.push(
-          path.join(process.resourcesPath, "src", "assets", "iconTemplate@3x.png"),
-          path.join(process.resourcesPath, "assets", "iconTemplate@3x.png"),
+          path.join(process.resourcesPath, "src", "assets", trayAssetFileName),
+          path.join(process.resourcesPath, "assets", trayAssetFileName),
           path.join(
             process.resourcesPath,
             "app.asar.unpacked",
             "src",
             "assets",
-            "iconTemplate@3x.png"
+            trayAssetFileName
           ),
-          path.join(__dirname, "..", "..", "src", "assets", "iconTemplate@3x.png"),
-          path.join(app.getAppPath(), "src", "assets", "iconTemplate@3x.png")
+          path.join(__dirname, "..", "..", "src", "assets", trayAssetFileName),
+          path.join(app.getAppPath(), "src", "assets", trayAssetFileName)
         );
       }
     } else {
-      const fileName = platform === "win32" ? "icon.ico" : "icon.png";
       if (isDevelopment) {
-        candidatePaths.push(
-          path.join(__dirname, "..", "assets", fileName),
-          path.join(__dirname, "..", "assets", "icon.png")
-        );
+        candidatePaths.push(path.join(__dirname, "..", "assets", trayAssetFileName));
       } else {
         candidatePaths.push(
-          path.join(process.resourcesPath, "src", "assets", fileName),
-          path.join(process.resourcesPath, "assets", fileName),
-          path.join(process.resourcesPath, "app.asar.unpacked", "src", "assets", fileName),
-          path.join(__dirname, "..", "..", "src", "assets", fileName),
-          path.join(app.getAppPath(), "src", "assets", fileName)
+          path.join(process.resourcesPath, "src", "assets", trayAssetFileName),
+          path.join(process.resourcesPath, "assets", trayAssetFileName),
+          path.join(process.resourcesPath, "app.asar.unpacked", "src", "assets", trayAssetFileName),
+          path.join(__dirname, "..", "..", "src", "assets", trayAssetFileName),
+          path.join(app.getAppPath(), "src", "assets", trayAssetFileName)
         );
       }
     }

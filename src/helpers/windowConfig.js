@@ -2,10 +2,11 @@ const path = require("path");
 
 const WINDOW_SIZES = {
   BASE: { width: 96, height: 96 },
-  WITH_STATUS: { width: 230, height: 150 },
-  WITH_MENU: { width: 240, height: 280 },
-  WITH_TOAST: { width: 400, height: 500 },
-  EXPANDED: { width: 400, height: 500 },
+  WITH_STATUS: { width: 280, height: 182 },
+  WITH_MENU: { width: 280, height: 310 },
+  WITH_COMPACT_TOAST: { width: 300, height: 250 },
+  WITH_TOAST: { width: 420, height: 540 },
+  EXPANDED: { width: 420, height: 540 },
 };
 
 // Main dictation window configuration

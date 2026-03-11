@@ -36,6 +36,7 @@ describe("createTranscriptionCompleteHandler", () => {
     const setTranscript = vi.fn();
     const setProgress = vi.fn();
     const toast = vi.fn();
+    const playCompletionCue = vi.fn();
 
     const electronAPI = {
       writeClipboard: vi.fn(async () => {}),
@@ -66,6 +67,7 @@ describe("createTranscriptionCompleteHandler", () => {
       toast,
       updateStage,
       upsertJob,
+      playCompletionCue,
       electronAPI,
       localStorage: { getItem: () => null },
     });
@@ -81,6 +83,14 @@ describe("createTranscriptionCompleteHandler", () => {
 
     expect(electronAPI.writeClipboard).toHaveBeenCalledWith("hello world");
     expect(audioManagerRef.current.saveTranscription).toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Job #1 ready",
+        description: "Copied to clipboard",
+        size: "compact",
+        variant: "success",
+      })
+    );
     const savePayload = (audioManagerRef.current.saveTranscription as any).mock.calls[0][0];
     expect(savePayload.meta).toMatchObject({
       sessionId: "s-1",
@@ -98,6 +108,7 @@ describe("createTranscriptionCompleteHandler", () => {
     });
     expect(updateStage).toHaveBeenCalledWith("saving", expect.objectContaining({ sessionId: "s-1" }));
     expect(updateStage).toHaveBeenCalledWith("done", expect.objectContaining({ sessionId: "s-1" }));
+    expect(playCompletionCue).toHaveBeenCalledTimes(1);
     expect(audioManagerRef.current.warmupStreamingConnection).toHaveBeenCalled();
   });
 
@@ -132,6 +143,7 @@ describe("createTranscriptionCompleteHandler", () => {
     const setTranscript = vi.fn();
     const setProgress = vi.fn();
     const toast = vi.fn();
+    const playCompletionCue = vi.fn();
 
     const electronAPI = {
       patchTranscriptionMeta: vi.fn(async () => {}),
@@ -161,6 +173,7 @@ describe("createTranscriptionCompleteHandler", () => {
       toast,
       updateStage,
       upsertJob,
+      playCompletionCue,
       electronAPI,
       localStorage: { getItem: () => null },
     });
@@ -197,5 +210,6 @@ describe("createTranscriptionCompleteHandler", () => {
     );
     expect(updateStage).toHaveBeenCalledWith("saving", expect.objectContaining({ sessionId: "s-1" }));
     expect(updateStage).toHaveBeenCalledWith("done", expect.objectContaining({ sessionId: "s-1" }));
+    expect(playCompletionCue).toHaveBeenCalledTimes(1);
   });
 });

@@ -15,6 +15,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
     toast,
     updateStage,
     upsertJob,
+    playCompletionCue,
   } = deps;
 
   const electronAPI =
@@ -169,9 +170,11 @@ export const createTranscriptionCompleteHandler = (deps) => {
       );
 
       toast({
-        title: jobId !== null ? `Copied Job #${jobId}` : "Copied to Clipboard",
-        description: "Dictation finished. Paste where you want the text.",
-        duration: 2500,
+        title: jobId !== null ? `Job #${jobId} ready` : "Ready to paste",
+        description: "Copied to clipboard",
+        duration: 1800,
+        size: "compact",
+        variant: "success",
       });
     }
 
@@ -331,6 +334,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       setTimeout(() => removeJob(resolvedSessionId), 1500);
     }
 
+    void playCompletionCue?.();
     audioManager.warmupStreamingConnection();
   };
 };

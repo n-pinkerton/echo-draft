@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import AudioManager from "../helpers/audioManager";
-import { playStartCue, playStopCue } from "../utils/dictationCues";
+import { playCompletionCue, playStartCue, playStopCue } from "../utils/dictationCues";
 import { INITIAL_PROGRESS } from "./audioRecording/stages";
 import { createSessionId as createSessionIdBase, normalizeTriggerPayload as normalizeTriggerPayloadBase } from "./audioRecording/triggerPayload";
 import { createAudioManagerCallbacks } from "./audioRecording/audioManagerCallbacks";
@@ -159,6 +159,7 @@ export const useAudioRecording = (toast, options = {}) => {
       toast,
       updateStage,
       upsertJob,
+      playCompletionCue,
     });
 
     audioManagerRef.current.setCallbacks(

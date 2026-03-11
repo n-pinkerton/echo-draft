@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
+  showControlPanel: () => ipcRenderer.invoke("show-control-panel"),
   onToggleDictation: registerListener(
     "toggle-dictation",
     (callback) => (_event, payload) => callback(payload)

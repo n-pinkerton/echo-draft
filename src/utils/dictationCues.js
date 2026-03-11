@@ -1,10 +1,12 @@
 import logger from "./logger";
 
-const START_NOTES = [880, 1174.66];
-const STOP_NOTES = [1174.66, 880];
-const NOTE_DURATION_SECONDS = 0.06;
+const START_NOTES = [1046.5];
+const STOP_NOTES = [698.46];
+const COMPLETION_NOTES = [1046.5, 880, 698.46];
+const START_STOP_NOTE_DURATION_SECONDS = 0.035;
+const COMPLETION_NOTE_DURATION_SECONDS = 0.06;
 const NOTE_GAP_SECONDS = 0.02;
-const NOTE_ATTACK_SECONDS = 0.008;
+const NOTE_ATTACK_SECONDS = 0.004;
 const MAX_GAIN = 0.2;
 const MIN_GAIN = 0.0001;
 
@@ -49,10 +51,10 @@ export const resumeContextIfNeeded = async () => {
   }
 };
 
-const scheduleTone = (context, frequency, startTime) => {
+const scheduleTone = (context, frequency, startTime, durationSeconds) => {
   const oscillator = context.createOscillator();
   const gainNode = context.createGain();
-  const stopTime = startTime + NOTE_DURATION_SECONDS;
+  const stopTime = startTime + durationSeconds;
 
   oscillator.type = "sine";
   oscillator.frequency.setValueAtTime(frequency, startTime);
@@ -68,7 +70,7 @@ const scheduleTone = (context, frequency, startTime) => {
   oscillator.stop(stopTime + 0.01);
 };
 
-const playCue = async (notes) => {
+const playCue = async (notes, durationSeconds) => {
   try {
     const context = await resumeContextIfNeeded();
     if (!context) {
@@ -77,8 +79,8 @@ const playCue = async (notes) => {
 
     const baseTime = context.currentTime + 0.005;
     notes.forEach((frequency, index) => {
-      const noteStart = baseTime + index * (NOTE_DURATION_SECONDS + NOTE_GAP_SECONDS);
-      scheduleTone(context, frequency, noteStart);
+      const noteStart = baseTime + index * (durationSeconds + NOTE_GAP_SECONDS);
+      scheduleTone(context, frequency, noteStart, durationSeconds);
     });
   } catch (error) {
     logger.debug(
@@ -89,6 +91,8 @@ const playCue = async (notes) => {
   }
 };
 
-export const playStartCue = () => playCue(START_NOTES);
+export const playStartCue = () => playCue(START_NOTES, START_STOP_NOTE_DURATION_SECONDS);
 
-export const playStopCue = () => playCue(STOP_NOTES);
+export const playStopCue = () => playCue(STOP_NOTES, START_STOP_NOTE_DURATION_SECONDS);
+
+export const playCompletionCue = () => playCue(COMPLETION_NOTES, COMPLETION_NOTE_DURATION_SECONDS);
