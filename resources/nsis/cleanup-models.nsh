@@ -1,15 +1,12 @@
 !macro customInit
   Push $0
-  Push $1
-  Push $2
 
-  nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq EchoDraft.exe" /FO CSV /NH'
+  nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq EchoDraft.exe" | find /I "EchoDraft.exe" >nul'
   Pop $0
-  Pop $1
+  StrCmp $0 "0" check_running
+  Goto done
 
-  StrCmp $0 "0" 0 done
-  StrCmp $1 "INFO: No tasks are running which match the specified criteria." done
-
+check_running:
   MessageBox MB_ICONQUESTION|MB_YESNO \
     "EchoDraft is currently running. The installer needs to close it before continuing.$\r$\n$\r$\nClose EchoDraft now?" \
     IDYES close_app
@@ -18,16 +15,15 @@
   Abort
 
 close_app:
-  nsExec::ExecToLog 'taskkill /IM EchoDraft.exe'
-  Sleep 1500
+  nsExec::ExecToLog 'taskkill /IM EchoDraft.exe /T'
+  Sleep 2000
 
-  nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq EchoDraft.exe" /FO CSV /NH'
+  nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq EchoDraft.exe" | find /I "EchoDraft.exe" >nul'
   Pop $0
-  Pop $1
+  StrCmp $0 "0" still_running_after_close
+  Goto done
 
-  StrCmp $0 "0" 0 done
-  StrCmp $1 "INFO: No tasks are running which match the specified criteria." done
-
+still_running_after_close:
   MessageBox MB_ICONEXCLAMATION|MB_YESNO \
     "EchoDraft did not close in time. Force close it and continue?" \
     IDYES force_close
@@ -36,23 +32,18 @@ close_app:
   Abort
 
 force_close:
-  nsExec::ExecToLog 'taskkill /F /IM EchoDraft.exe'
-  Sleep 1000
+  nsExec::ExecToLog 'taskkill /F /IM EchoDraft.exe /T'
+  Sleep 1500
 
-  nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq EchoDraft.exe" /FO CSV /NH'
+  nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq EchoDraft.exe" | find /I "EchoDraft.exe" >nul'
   Pop $0
-  Pop $1
-
   StrCmp $0 "0" 0 done
-  StrCmp $1 "INFO: No tasks are running which match the specified criteria." done
 
   MessageBox MB_ICONSTOP \
     "Setup could not close EchoDraft automatically. Please close it manually and run the installer again."
   Abort
 
 done:
-  Pop $2
-  Pop $1
   Pop $0
 !macroend
 
