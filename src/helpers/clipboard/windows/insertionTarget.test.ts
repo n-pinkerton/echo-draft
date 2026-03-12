@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const { parsePowerShellJsonOutput } = require("./powershellUtils");
 const { activateInsertionTarget, captureInsertionTarget, resolveTargetLabel } = require("./insertionTarget");
@@ -47,5 +47,33 @@ describe("insertionTarget", () => {
       reason: "invalid_target",
     });
   });
-});
 
+  it("activateInsertionTarget does not use SW_RESTORE when refocusing the target window", async () => {
+    const runWindowsPowerShellScript = vi.fn(async () => ({
+      code: 0,
+      stdout: '{"success":true,"targetHwnd":42,"activeHwnd":42,"setForegroundReturned":true}',
+      stderr: "",
+    }));
+    const manager = {
+      deps: { platform: "win32" },
+      runWindowsPowerShellScript,
+      parsePowerShellJsonOutput,
+    };
+
+    const result = await activateInsertionTarget(manager, { hwnd: 42 });
+
+    expect(result).toEqual({
+      success: true,
+      details: {
+        success: true,
+        targetHwnd: 42,
+        activeHwnd: 42,
+        setForegroundReturned: true,
+      },
+    });
+    expect(runWindowsPowerShellScript).toHaveBeenCalledTimes(1);
+    const [script] = runWindowsPowerShellScript.mock.calls[0];
+    expect(script).not.toContain("ShowWindowAsync");
+    expect(script).not.toContain("SW_RESTORE");
+  });
+});

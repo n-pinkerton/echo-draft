@@ -73,5 +73,18 @@ describe("ReasoningCleanupService", () => {
 
     await expect(svc.processTranscription(" hello  ", "openai", null)).resolves.toBe("hello");
   });
-});
 
+  it("normalizes banned dash characters in reasoning output", async () => {
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => "alpha \u2014 beta"),
+    };
+    const logger = { logReasoning: vi.fn() };
+    const svc = new ReasoningCleanupService({ logger, reasoningService });
+
+    localStorage.setItem("reasoningModel", "gpt-5-mini");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(svc.processTranscription("alpha beta", "openai", null)).resolves.toBe("alpha - beta");
+  });
+});

@@ -1,3 +1,5 @@
+import { sanitizeProcessedText } from "../../../config/prompts";
+
 /**
  * Shared cleanup/orchestration around `ReasoningService` for transcript post-processing.
  *
@@ -128,7 +130,7 @@ export class ReasoningCleanupService {
         success: true,
       });
 
-      return result;
+      return sanitizeProcessedText(result);
     } catch (error) {
       const processingTimeMs = Date.now() - startTime;
       this.logger?.logReasoning?.("REASONING_SERVICE_ERROR", {
@@ -205,8 +207,7 @@ export class ReasoningCleanupService {
         fallbackToCleanup: true,
       });
 
-      return normalizedText;
+      return sanitizeProcessedText(normalizedText);
     }
   }
 }
-

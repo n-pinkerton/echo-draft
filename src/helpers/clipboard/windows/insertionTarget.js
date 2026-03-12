@@ -102,7 +102,6 @@ using System.Runtime.InteropServices;
 public static class WinApiActivate {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
 }
 "@
@@ -111,7 +110,6 @@ if (-not [WinApiActivate]::IsWindow($target)) {
   [pscustomobject]@{ success = $false; reason = "window_not_found"; targetHwnd = $TargetHwnd } | ConvertTo-Json -Compress
   exit 0
 }
-[void][WinApiActivate]::ShowWindowAsync($target, 9)
 $setResult = [WinApiActivate]::SetForegroundWindow($target)
 Start-Sleep -Milliseconds 140
 $active = [Int64][WinApiActivate]::GetForegroundWindow()
@@ -177,4 +175,3 @@ module.exports = {
   captureInsertionTarget,
   resolveTargetLabel,
 };
-

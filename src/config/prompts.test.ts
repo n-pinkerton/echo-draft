@@ -6,6 +6,7 @@ import {
   UNTRUSTED_TRANSCRIPTION_OPEN_TAG,
   getUserPrompt,
   getSystemPrompt,
+  sanitizeProcessedText,
   stripUntrustedTranscriptionWrapper,
   wrapUntrustedTranscription,
 } from "./prompts";
@@ -57,5 +58,13 @@ describe("prompts untrusted transcription wrapper", () => {
   it("unified system prompt no longer allows in-band direct-address rewrite exceptions", () => {
     expect(UNIFIED_SYSTEM_PROMPT).not.toContain("DIRECT ADDRESS");
     expect(UNIFIED_SYSTEM_PROMPT).not.toContain("The ONLY time you may apply an additional instruction");
+  });
+
+  it("sanitizeProcessedText replaces em dashes with hyphens", () => {
+    expect(sanitizeProcessedText("alpha \u2014 beta")).toBe("alpha - beta");
+  });
+
+  it("system prompt explicitly bans the em dash character", () => {
+    expect(UNIFIED_SYSTEM_PROMPT).toContain("Never output the em dash character.");
   });
 });

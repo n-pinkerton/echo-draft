@@ -47,6 +47,11 @@ export function stripUntrustedTranscriptionWrapper(text: string): string {
   return raw;
 }
 
+export function sanitizeProcessedText(text: string): string {
+  const raw = typeof text === "string" ? text : String(text ?? "");
+  return raw.replace(/\u2014/g, "-");
+}
+
 export function getSystemPrompt(
   agentName: string | null,
   customDictionary?: string[],
@@ -89,5 +94,6 @@ export default {
   buildPrompt,
   getSystemPrompt,
   getUserPrompt,
+  sanitizeProcessedText,
   LEGACY_PROMPTS,
 };

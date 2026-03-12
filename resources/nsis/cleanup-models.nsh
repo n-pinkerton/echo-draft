@@ -1,5 +1,6 @@
 !macro customInit
   Push $0
+  Push $1
 
   nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq EchoDraft.exe" | find /I "EchoDraft.exe" >nul'
   Pop $0
@@ -16,12 +17,15 @@ check_running:
 
 close_app:
   nsExec::ExecToLog 'taskkill /IM EchoDraft.exe /T'
-  Sleep 2000
+  StrCpy $1 8
 
+wait_for_close:
+  Sleep 500
   nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq EchoDraft.exe" | find /I "EchoDraft.exe" >nul'
   Pop $0
-  StrCmp $0 "0" still_running_after_close
-  Goto done
+  StrCmp $0 "0" 0 done
+  IntOp $1 $1 - 1
+  IntCmp $1 0 still_running_after_close wait_for_close wait_for_close
 
 still_running_after_close:
   MessageBox MB_ICONEXCLAMATION|MB_YESNO \
@@ -44,6 +48,7 @@ force_close:
   Abort
 
 done:
+  Pop $1
   Pop $0
 !macroend
 

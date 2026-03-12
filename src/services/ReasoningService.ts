@@ -2,7 +2,7 @@ import { getModelProvider } from "../models/ModelRegistry";
 import { BaseReasoningService, ReasoningConfig } from "./BaseReasoningService";
 import { SecureCache } from "../utils/SecureCache";
 import { API_ENDPOINTS, buildApiUrl } from "../config/constants";
-import { LEGACY_PROMPTS, stripUntrustedTranscriptionWrapper } from "../config/prompts";
+import { LEGACY_PROMPTS, sanitizeProcessedText, stripUntrustedTranscriptionWrapper } from "../config/prompts";
 import logger from "../utils/logger";
 import { processWithOpenAiProvider } from "./reasoning/providers/openaiProvider";
 import { getReasoningApiKey } from "./reasoning/apiKeys";
@@ -100,7 +100,7 @@ class ReasoningService extends BaseReasoningService {
           throw new Error(`Unsupported reasoning provider: ${provider}`);
       }
 
-      result = stripUntrustedTranscriptionWrapper(result);
+      result = sanitizeProcessedText(stripUntrustedTranscriptionWrapper(result));
 
       const processingTime = Date.now() - startTime;
 
