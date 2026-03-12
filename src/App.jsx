@@ -166,9 +166,7 @@ export default function App() {
 
   const micState = getMicState({ isRecording, isProcessing, isHovered });
   const micProps = getMicButtonProps(micState);
-  const stage = progress?.stage || "idle";
-  const isStatusActive = stage !== "idle";
-  const shouldShowStatusBar = !isStatusActive || !isStatusCollapsed;
+  const shouldShowStatusBar = !isStatusCollapsed;
   const visibleJobs = Array.isArray(jobs)
     ? jobs.filter((job) => job && typeof job === "object" && job.status !== "done")
     : [];
@@ -232,12 +230,6 @@ export default function App() {
     (target) => target instanceof Element && !target.closest("button,[data-no-window-drag='true']"),
     []
   );
-
-  useEffect(() => {
-    if (!isStatusActive && isStatusCollapsed) {
-      setIsStatusCollapsed(false);
-    }
-  }, [isStatusActive, isStatusCollapsed]);
 
   const startWidgetDrag = React.useCallback(
     (event) => {
@@ -310,28 +302,26 @@ export default function App() {
           }}
         >
           {shouldShowStatusBar ? (
-            <div className="relative">
+            <div className="relative mb-2">
               <DictationStatusBar
                 progress={progress}
                 canCopyTranscript={canCopyTranscript}
                 onCopyTranscript={copyLastTranscript}
                 onLaunchApp={openMainApp}
               />
-              {isStatusActive ? (
-                <button
-                  type="button"
-                  data-no-window-drag="true"
-                  aria-label="Collapse dictation status"
-                  title="Collapse dictation status"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setIsStatusCollapsed(true);
-                  }}
-                  className="absolute bottom-2 right-2 flex h-5 w-5 items-center justify-center rounded-md border border-border/60 bg-surface-2/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors duration-150 hover:bg-muted hover:text-foreground"
-                >
-                  <ChevronDown size={12} />
-                </button>
-              ) : null}
+              <button
+                type="button"
+                data-no-window-drag="true"
+                aria-label="Collapse dictation status"
+                title="Collapse dictation status"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setIsStatusCollapsed(true);
+                }}
+                className="absolute -bottom-2.5 left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-surface-2/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors duration-150 hover:bg-muted hover:text-foreground"
+              >
+                <ChevronDown size={12} />
+              </button>
             </div>
           ) : null}
 
@@ -446,7 +436,7 @@ export default function App() {
                   )}
                 </button>
               </DictationTooltip>
-              {isStatusActive && isStatusCollapsed ? (
+              {isStatusCollapsed ? (
                 <button
                   type="button"
                   data-no-window-drag="true"
@@ -457,7 +447,7 @@ export default function App() {
                     event.preventDefault();
                     setIsStatusCollapsed(false);
                   }}
-                  className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-border/70 bg-surface-2/95 text-muted-foreground shadow-sm transition-colors duration-150 hover:bg-muted hover:text-foreground"
+                  className="absolute -bottom-2.5 left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-surface-2/95 text-muted-foreground shadow-sm transition-colors duration-150 hover:bg-muted hover:text-foreground"
                 >
                   <ChevronUp size={12} />
                 </button>
