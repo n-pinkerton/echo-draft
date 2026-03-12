@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./index.css";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useToast } from "./components/ui/toastContext";
 import { LoadingDots } from "./components/ui/LoadingDots";
 import DictationStatusBar from "./components/ui/DictationStatusBar";
@@ -14,6 +14,7 @@ import { useAuth } from "./hooks/useAuth";
 export default function App() {
   const [isHovered, setIsHovered] = useState(false);
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
+  const [isStatusCollapsed, setIsStatusCollapsed] = useState(false);
   const commandMenuRef = useRef(null);
   const buttonRef = useRef(null);
   const { toast, toastCount, toastViewportSize } = useToast();
@@ -165,6 +166,9 @@ export default function App() {
 
   const micState = getMicState({ isRecording, isProcessing, isHovered });
   const micProps = getMicButtonProps(micState);
+  const stage = progress?.stage || "idle";
+  const isStatusActive = stage !== "idle";
+  const shouldShowStatusBar = !isStatusActive || !isStatusCollapsed;
   const visibleJobs = Array.isArray(jobs)
     ? jobs.filter((job) => job && typeof job === "object" && job.status !== "done")
     : [];
@@ -228,6 +232,12 @@ export default function App() {
     (target) => target instanceof Element && !target.closest("button,[data-no-window-drag='true']"),
     []
   );
+
+  useEffect(() => {
+    if (!isStatusActive && isStatusCollapsed) {
+      setIsStatusCollapsed(false);
+    }
+  }, [isStatusActive, isStatusCollapsed]);
 
   const startWidgetDrag = React.useCallback(
     (event) => {
@@ -299,16 +309,38 @@ export default function App() {
             }
           }}
         >
-          <DictationStatusBar
-            progress={progress}
-            canCopyTranscript={canCopyTranscript}
-            onCopyTranscript={copyLastTranscript}
-            onLaunchApp={openMainApp}
-          />
+          {shouldShowStatusBar ? (
+            <div className="relative">
+              <DictationStatusBar
+                progress={progress}
+                canCopyTranscript={canCopyTranscript}
+                onCopyTranscript={copyLastTranscript}
+                onLaunchApp={openMainApp}
+              />
+              {isStatusActive ? (
+                <button
+                  type="button"
+                  data-no-window-drag="true"
+                  aria-label="Collapse dictation status"
+                  title="Collapse dictation status"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setIsStatusCollapsed(true);
+                  }}
+                  className="absolute bottom-2 right-2 flex h-5 w-5 items-center justify-center rounded-md border border-border/60 bg-surface-2/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors duration-150 hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronDown size={12} />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="relative flex items-center gap-2">
-            {(isRecording || isProcessing) && isHovered && (
+            {((isRecording || isProcessing) && isHovered && !isStatusCollapsed) ||
+            (isStatusCollapsed && isRecording) ? (
               <button
+                type="button"
+                data-no-window-drag="true"
                 aria-label={isRecording ? "Cancel recording" : "Cancel processing"}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -322,7 +354,7 @@ export default function App() {
                   className="text-foreground group-hover/cancel:text-destructive-foreground transition-colors duration-150"
                 />
               </button>
-            )}
+            ) : null}
             {visibleJobs.length > 1 ? (
               <div className="flex flex-col items-end gap-1 pr-0.5" aria-label="Dictation jobs">
                 {stackedJobs.map((job) => {
@@ -353,66 +385,84 @@ export default function App() {
                 ) : null}
               </div>
             ) : null}
-            <DictationTooltip content={micProps.tooltip}>
-              <button
-                ref={buttonRef}
-                onMouseDown={(e) => {
-                  startWidgetDrag(e);
-                }}
-                onMouseMove={updateDragThreshold}
-                onMouseUp={stopWidgetDrag}
-                onClick={(e) => {
-                  if (!hasDragged) {
-                    setIsCommandMenuOpen(false);
-                    toggleListening({ outputMode: "clipboard" });
-                  }
-                  e.preventDefault();
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  if (!hasDragged) {
-                    setWindowInteractivity(true);
-                    setIsCommandMenuOpen((prev) => !prev);
-                  }
-                }}
-                onFocus={() => setIsHovered(true)}
-                onBlur={() => setIsHovered(false)}
-                className={micProps.className}
-                style={{
-                  ...micProps.style,
-                  cursor: isDragging ? "grabbing !important" : "pointer !important",
-                  transition:
-                    "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.25s ease-out",
-                }}
-              >
-                <div
-                  className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent transition-opacity duration-150"
-                  style={{ opacity: micState === "hover" ? 0.8 : 0 }}
-                ></div>
-                <div
-                  className="absolute inset-0 transition-colors duration-150"
-                  style={{
-                    backgroundColor: micState === "hover" ? "rgba(0,0,0,0.1)" : "transparent",
+            <div className="relative">
+              <DictationTooltip content={micProps.tooltip}>
+                <button
+                  ref={buttonRef}
+                  onMouseDown={(e) => {
+                    startWidgetDrag(e);
                   }}
-                ></div>
+                  onMouseMove={updateDragThreshold}
+                  onMouseUp={stopWidgetDrag}
+                  onClick={(e) => {
+                    if (!hasDragged) {
+                      setIsCommandMenuOpen(false);
+                      toggleListening({ outputMode: "clipboard" });
+                    }
+                    e.preventDefault();
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (!hasDragged) {
+                      setWindowInteractivity(true);
+                      setIsCommandMenuOpen((prev) => !prev);
+                    }
+                  }}
+                  onFocus={() => setIsHovered(true)}
+                  onBlur={() => setIsHovered(false)}
+                  className={micProps.className}
+                  style={{
+                    ...micProps.style,
+                    cursor: isDragging ? "grabbing !important" : "pointer !important",
+                    transition:
+                      "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.25s ease-out",
+                  }}
+                >
+                  <div
+                    className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent transition-opacity duration-150"
+                    style={{ opacity: micState === "hover" ? 0.8 : 0 }}
+                  ></div>
+                  <div
+                    className="absolute inset-0 transition-colors duration-150"
+                    style={{
+                      backgroundColor: micState === "hover" ? "rgba(0,0,0,0.1)" : "transparent",
+                    }}
+                  ></div>
 
-                {micState === "idle" || micState === "hover" ? (
-                  <SoundWaveIcon size={micState === "idle" ? 12 : 14} />
-                ) : micState === "recording" ? (
-                  <LoadingDots />
-                ) : micState === "processing" ? (
-                  <VoiceWaveIndicator isListening={true} />
-                ) : null}
+                  {micState === "idle" || micState === "hover" ? (
+                    <SoundWaveIcon size={micState === "idle" ? 12 : 14} />
+                  ) : micState === "recording" ? (
+                    <LoadingDots />
+                  ) : micState === "processing" ? (
+                    <VoiceWaveIndicator isListening={true} />
+                  ) : null}
 
-                {micState === "recording" && (
-                  <div className="absolute inset-0 rounded-full border-2 border-primary/50 animate-pulse"></div>
-                )}
+                  {micState === "recording" && (
+                    <div className="absolute inset-0 rounded-full border-2 border-primary/50 animate-pulse"></div>
+                  )}
 
-                {micState === "processing" && (
-                  <div className="absolute inset-0 rounded-full border-2 border-primary/30 opacity-50"></div>
-                )}
-              </button>
-            </DictationTooltip>
+                  {micState === "processing" && (
+                    <div className="absolute inset-0 rounded-full border-2 border-primary/30 opacity-50"></div>
+                  )}
+                </button>
+              </DictationTooltip>
+              {isStatusActive && isStatusCollapsed ? (
+                <button
+                  type="button"
+                  data-no-window-drag="true"
+                  aria-label="Expand dictation status"
+                  title="Expand dictation status"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    setIsStatusCollapsed(false);
+                  }}
+                  className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-border/70 bg-surface-2/95 text-muted-foreground shadow-sm transition-colors duration-150 hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronUp size={12} />
+                </button>
+              ) : null}
+            </div>
             {isCommandMenuOpen && (
               <div
                 ref={commandMenuRef}
