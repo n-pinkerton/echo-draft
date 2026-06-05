@@ -5,6 +5,7 @@ import {
   getRendererLogLevel,
   isEchoDraftCloudMode,
 } from "../../../utils/branding";
+import { analyzeAudioBlobLevel, getLowAudioRejection } from "../audioLevelAnalysis";
 
 /**
  * TranscriptionPipeline
@@ -23,6 +24,7 @@ export class TranscriptionPipeline {
    *   openAiTranscriber: any,
    *   localTranscriber: any,
    *   cloudTranscriber: any,
+   *   audioLevelAnalyzer?: (audioBlob: Blob) => Promise<any>,
    * }} deps
    */
   constructor(deps) {
@@ -34,12 +36,16 @@ export class TranscriptionPipeline {
     this.openAiTranscriber = deps.openAiTranscriber;
     this.localTranscriber = deps.localTranscriber;
     this.cloudTranscriber = deps.cloudTranscriber;
+    this.audioLevelAnalyzer = deps.audioLevelAnalyzer || analyzeAudioBlobLevel;
   }
 
   async processAudio(audioBlob, metadata = {}, context = null) {
     const pipelineStart = performance.now();
+    let audioLevel = null;
 
     try {
+      audioLevel = await this.checkAudioLevelBeforeTranscription(audioBlob, metadata, context);
+
       const useLocalWhisper = localStorage.getItem("useLocalWhisper") === "true";
       const localProvider = localStorage.getItem("localTranscriptionProvider") || "whisper";
       const whisperModel = localStorage.getItem("whisperModel") || "base";
@@ -150,6 +156,8 @@ export class TranscriptionPipeline {
         chunksCount: metadata.chunksCount ?? null,
         chunksBeforeStopWait: metadata.chunksBeforeStopWait ?? null,
         chunksAfterStopWait: metadata.chunksAfterStopWait ?? null,
+        audioPeakDbFS: audioLevel?.peakDbFS ?? null,
+        audioRmsDbFS: audioLevel?.rmsDbFS ?? null,
       };
 
       const resultWithDiagnostics = {
@@ -187,6 +195,8 @@ export class TranscriptionPipeline {
         roundTripDurationMs,
         audioSizeBytes: audioBlob.size,
         audioFormat: audioBlob.type,
+        audioPeakDbFS: audioLevel?.peakDbFS ?? null,
+        audioRmsDbFS: audioLevel?.rmsDbFS ?? null,
         outputTextLength: result?.text?.length,
       };
 
@@ -229,5 +239,58 @@ export class TranscriptionPipeline {
     } finally {
       // Processing state is managed by the caller (queue or streaming finalize).
     }
+  }
+
+  async checkAudioLevelBeforeTranscription(audioBlob, metadata = {}, context = null) {
+    let audioLevel;
+    try {
+      audioLevel = await this.audioLevelAnalyzer?.(audioBlob, metadata, context);
+    } catch (error) {
+      this.logger.warn(
+        "Audio level analysis failed; continuing transcription",
+        { error: error?.message || String(error), context },
+        "audio"
+      );
+      return null;
+    }
+
+    if (!audioLevel?.available) {
+      this.logger.debug(
+        "Audio level analysis unavailable",
+        { reason: audioLevel?.reason || "unknown" },
+        "audio"
+      );
+      return null;
+    }
+
+    const rejection = getLowAudioRejection(audioLevel, metadata);
+    if (!rejection) {
+      this.logger.debug(
+        "Audio level check passed",
+        {
+          peakDbFS: audioLevel.peakDbFS,
+          rmsDbFS: audioLevel.rmsDbFS,
+          durationSeconds: metadata.durationSeconds ?? audioLevel.durationSeconds ?? null,
+          microphoneLabel: metadata.microphoneLabel || null,
+        },
+        "audio"
+      );
+      return audioLevel;
+    }
+
+    this.logger.warn(
+      "Recording audio level too low for transcription",
+      {
+        ...rejection,
+        microphoneLabel: metadata.microphoneLabel || null,
+        context,
+      },
+      "audio"
+    );
+
+    const error = new Error(rejection.message);
+    error.code = rejection.code;
+    error.details = rejection;
+    throw error;
   }
 }

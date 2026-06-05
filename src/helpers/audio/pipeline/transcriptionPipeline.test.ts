@@ -113,4 +113,70 @@ describe("TranscriptionPipeline", () => {
     expect(openAiTranscriber.processWithOpenAIAPI).toHaveBeenCalledTimes(1);
     expect(onTranscriptionComplete).not.toHaveBeenCalled();
   });
+
+  it("rejects near-silent recordings before sending them to a transcriber", async () => {
+    const logger = {
+      debug: vi.fn(),
+      trace: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const emitProgress = vi.fn();
+    const emitError = vi.fn();
+    const onTranscriptionComplete = vi.fn();
+
+    const openAiTranscriber = {
+      getTranscriptionModel: () => "gpt-4o-mini-transcribe",
+      processWithOpenAIAPI: vi.fn(),
+    };
+
+    const pipeline = new TranscriptionPipeline({
+      logger,
+      emitProgress,
+      emitError,
+      shouldContinue: () => true,
+      getOnTranscriptionComplete: () => onTranscriptionComplete,
+      openAiTranscriber,
+      localTranscriber: { processWithLocalWhisper: vi.fn(), processWithLocalParakeet: vi.fn() },
+      cloudTranscriber: { processWithEchoDraftCloud: vi.fn() },
+      audioLevelAnalyzer: vi.fn(async () => ({
+        available: true,
+        durationSeconds: 18.9,
+        peakDbFS: -43.7,
+        rmsDbFS: -69.3,
+      })),
+    });
+
+    const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
+    await pipeline.processAudio(
+      audioBlob,
+      { durationSeconds: 18.9, microphoneLabel: "Desk USB Mic" },
+      { sessionId: "s-low" }
+    );
+
+    expect(openAiTranscriber.processWithOpenAIAPI).not.toHaveBeenCalled();
+    expect(onTranscriptionComplete).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Recording audio level too low for transcription",
+      expect.objectContaining({
+        code: "LOW_AUDIO_LEVEL",
+        microphoneLabel: "Desk USB Mic",
+        peakDbFS: -43.7,
+        rmsDbFS: -69.3,
+      }),
+      "audio"
+    );
+    expect(emitProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "error",
+        message:
+          "Selected microphone is too quiet or not receiving speech. Check the input device and microphone level, then try again.",
+      })
+    );
+    expect(emitError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "LOW_AUDIO_LEVEL" }),
+      expect.any(Error)
+    );
+  });
 });

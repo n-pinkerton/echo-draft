@@ -20,6 +20,19 @@
 2. Verify mic is selected: Sound settings → Input
 3. Test recording in Windows Voice Recorder first
 
+### Microphone Too Quiet
+
+**Symptoms:** EchoDraft reports that the selected microphone is too quiet or not receiving speech, or transcripts are only punctuation/very short phrases despite a normal-length recording.
+
+**Meaning:** The app received a real recording, but the decoded audio level was near silent before transcription. This often points to the wrong input device, a muted/low-gain USB mic, a bad USB connection, or a Windows audio driver issue.
+
+**Solutions:**
+1. Open Settings → System → Sound → Input and confirm the intended microphone is selected.
+2. Raise the input volume/gain and use "Test your microphone" in Windows Sound settings.
+3. Unplug/replug the mic, preferably into a different USB port.
+4. If Windows Voice Recorder crashes or also records silence, reinstall or remove/re-detect the USB audio device in Device Manager.
+5. Temporarily select another microphone in EchoDraft to confirm the issue is device-specific.
+
 ### whisper.cpp Not Working
 
 **Symptoms:** Local transcription fails

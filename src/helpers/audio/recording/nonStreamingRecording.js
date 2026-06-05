@@ -37,6 +37,8 @@ export async function startNonStreamingRecording(manager, context = null) {
     }
 
     const audioTrack = stream.getAudioTracks()[0];
+    let microphoneLabel = null;
+    let microphoneSettings = {};
     if (audioTrack) {
       const maybeSetAutoStopContext = (reason, source) => {
         if (manager.pendingNonStreamingStopContext || manager.pendingStopContext) {
@@ -68,6 +70,8 @@ export async function startNonStreamingRecording(manager, context = null) {
       }
 
       const settings = audioTrack.getSettings();
+      microphoneLabel = audioTrack.label || null;
+      microphoneSettings = settings || {};
       logger.info(
         "Recording started with microphone",
         {
@@ -203,6 +207,10 @@ export async function startNonStreamingRecording(manager, context = null) {
             stopFlushMs,
             chunksBeforeStopWait,
             chunksAfterStopWait,
+            microphoneLabel,
+            microphoneDeviceId: microphoneSettings.deviceId || null,
+            microphoneSampleRate: microphoneSettings.sampleRate ?? null,
+            microphoneChannelCount: microphoneSettings.channelCount ?? null,
           },
           recordingContext
         );
