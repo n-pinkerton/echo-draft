@@ -9,9 +9,10 @@
 **Solutions:**
 1. Check the system tray. On Windows, EchoDraft may be under the hidden-icons `^` caret until you pin it.
 2. To keep it visible, right-click the taskbar → Taskbar settings → Other system tray icons, then enable EchoDraft or drag EchoDraft from the hidden-icons menu into the visible tray.
-3. Click the EchoDraft tray icon for status, copy-last, dictation, Control Panel, and quit actions.
-4. Run with debug: `EchoDraft.exe --log-level=debug`
-5. Try disabling GPU: `EchoDraft.exe --disable-gpu`
+3. If Windows shows `Electron` instead of `EchoDraft`, install the latest EchoDraft build and restart the app; older builds shipped generic Electron executable metadata that Windows can cache in this list.
+4. Click the EchoDraft tray icon for status, copy-last, dictation, Control Panel, and quit actions.
+5. Run with debug: `EchoDraft.exe --log-level=debug`
+6. Try disabling GPU: `EchoDraft.exe --disable-gpu`
 
 ### No Transcriptions
 

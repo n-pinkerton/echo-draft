@@ -49,8 +49,8 @@ if (!gotSingleInstanceLock) {
   app.exit(0);
 }
 
-// Ensure macOS menus use the proper casing for the app name
-if (process.platform === "darwin" && app.getName() !== "EchoDraft") {
+// Keep shell-facing app identity consistent before tray/windows are created.
+if (app.getName() !== "EchoDraft") {
   app.setName("EchoDraft");
 }
 
