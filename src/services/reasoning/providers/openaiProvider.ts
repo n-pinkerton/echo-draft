@@ -6,6 +6,8 @@ import type { ReasoningConfig } from "../../BaseReasoningService";
 
 export type OpenAiEndpointCandidate = { url: string; type: "responses" | "chat" };
 
+const OPENAI_CLEANUP_TEXT_VERBOSITY = "medium";
+
 export async function processWithOpenAiProvider({
   text,
   model,
@@ -108,6 +110,8 @@ export async function processWithOpenAiProvider({
             requestBody.max_output_tokens = maxOutputTokens;
             if (usesOpenAiReasoningControls) {
               requestBody.reasoning = { effort: "low" };
+              requestBody.text = { verbosity: OPENAI_CLEANUP_TEXT_VERBOSITY };
+              requestBody.truncation = "disabled";
             }
           } else {
             requestBody.messages = chatMessages;

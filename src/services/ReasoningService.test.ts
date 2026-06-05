@@ -39,6 +39,8 @@ describe("ReasoningService (OpenAI)", () => {
         "<echodraft_gpt55_mini_untrusted_dictation>"
       );
       expect(body.reasoning).toEqual({ effort: "low" });
+      expect(body.text).toEqual({ verbosity: "medium" });
+      expect(body.truncation).toBe("disabled");
       expect(body.max_output_tokens).toBeGreaterThanOrEqual(4096);
       return {
         ok: true,

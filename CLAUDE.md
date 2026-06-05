@@ -234,7 +234,7 @@ Environment variables persisted to `.env` (via `saveAllKeysToEnvFile()`):
   - **OpenAI** (Responses API):
     - GPT-5.5 Mini (`gpt-5.5-mini`) - Fast cleanup model with conservative edits
     - GPT-5.5 (`gpt-5.5`) - Latest frontier cleanup model
-    - GPT-5.3 Codex Spark (`gpt-5.3-codex-spark`) - Codex Spark cleanup option, subject to account/provider availability
+    - GPT-5.3 Codex Spark (`gpt-5.3-codex-spark`) - Codex Spark research-preview cleanup option; official Codex docs list no public API access, so provider support may vary
   - **Anthropic** (Via IPC bridge to avoid CORS):
     - Claude Sonnet 4.5 (`claude-sonnet-4-5`) - Balanced performance
     - Claude Haiku 4.5 (`claude-haiku-4-5`) - Fast with near-frontier intelligence

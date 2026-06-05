@@ -155,7 +155,7 @@
         {
           "id": "gpt-5.3-codex-spark",
           "name": "GPT-5.3 Codex Spark",
-          "description": "Latest Codex Spark cleanup option; availability may depend on account access"
+          "description": "Latest Codex Spark research-preview cleanup option; official Codex docs list no public API access, so provider support may vary"
         }
       ]
     },
