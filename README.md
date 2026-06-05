@@ -29,10 +29,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 🔐 **Account System**: Google OAuth and email/password sign-in with email verification
 - 💳 **Subscription Management**: Free tier (2,000 words/week), Pro tier (unlimited), 7-day free trial
 - 🎤 **Global Hotkey**: Customizable hotkey to start/stop dictation from anywhere (default: backtick `)
-- 🤖 **Multi-Provider AI Processing**: Choose between OpenAI, Anthropic Claude, Google Gemini, or local models
-- 🎯 **Agent Naming**: Personalize your AI assistant with a custom name for natural interactions
+- 🤖 **Multi-Provider AI Cleanup**: Choose between OpenAI, Anthropic Claude, Google Gemini, or local models
+- 🎯 **Agent Naming**: Personalize the cleanup assistant shown in trusted AI prompts
 - 🧠 **Multi-Provider AI**:
-  - **OpenAI**: GPT-5, GPT-4.1, o-series reasoning models
+  - **OpenAI cleanup**: GPT-5.5 Mini, GPT-5.5, and GPT-5.3 Codex Spark
   - **Anthropic**: Claude Opus 4.5, Claude Sonnet 4.5
   - **Google**: Gemini 2.5 Pro/Flash/Flash-Lite
   - **Groq**: Ultra-fast inference with Llama and Mixtral models
@@ -348,7 +348,7 @@ Once you've named your agent during setup, you can interact with it using multip
 
 **🤖 AI Provider Options**:
 
-- **OpenAI**: GPT-5, GPT-4.1, o-series reasoning models
+- **OpenAI cleanup**: GPT-5.5 Mini, GPT-5.5, and GPT-5.3 Codex Spark
 - **Anthropic**: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5
 - **Google**: Gemini 2.5 Pro/Flash/Flash-Lite
 - **Groq**: Ultra-fast Llama and Mixtral inference

@@ -29,7 +29,7 @@ export async function processWithOpenAiProvider({
   isCustomProvider: boolean;
   openAiBase: string;
   endpointCandidates: OpenAiEndpointCandidate[];
-  getSystemPrompt: (agentName: string | null) => string;
+  getSystemPrompt: (agentName: string | null, modelId?: string | null) => string;
   calculateMaxTokens: (
     inputLength: number,
     minTokens: number,
@@ -48,10 +48,13 @@ export async function processWithOpenAiProvider({
   });
 
   try {
-    const systemPrompt = getSystemPrompt(agentName);
-    const userPrompt = getUserPrompt(text);
-
-    const messages = [
+    const systemPrompt = getSystemPrompt(agentName, model);
+    const userPrompt = getUserPrompt(text, model);
+    const responsesInput = [
+      { role: "developer", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ];
+    const chatMessages = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ];
@@ -96,13 +99,18 @@ export async function processWithOpenAiProvider({
         const timeoutId = setTimeout(() => controller.abort(), 30000);
         try {
           const requestBody: any = { model };
+          const usesOpenAiReasoningControls =
+            !isCustomProvider && (model.startsWith("gpt-5") || model.includes("codex"));
 
           if (type === "responses") {
-            requestBody.input = messages;
+            requestBody.input = responsesInput;
             requestBody.store = false;
             requestBody.max_output_tokens = maxOutputTokens;
+            if (usesOpenAiReasoningControls) {
+              requestBody.reasoning = { effort: "low" };
+            }
           } else {
-            requestBody.messages = messages;
+            requestBody.messages = chatMessages;
             if (isOlderModel) {
               requestBody.temperature = config.temperature || 0.3;
             }
@@ -111,6 +119,9 @@ export async function processWithOpenAiProvider({
               requestBody.max_completion_tokens = maxOutputTokens;
             } else {
               requestBody.max_tokens = maxOutputTokens;
+            }
+            if (usesOpenAiReasoningControls) {
+              requestBody.reasoning_effort = "low";
             }
           }
 

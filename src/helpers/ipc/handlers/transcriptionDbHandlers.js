@@ -16,6 +16,10 @@ function registerTranscriptionDbHandlers(
     return databaseManager.getTranscriptions(limit);
   });
 
+  ipcMain.handle("db-get-latest-transcription", async () => {
+    return databaseManager.getLatestTranscription();
+  });
+
   ipcMain.handle("db-clear-transcriptions", async () => {
     const result = databaseManager.clearTranscriptions();
     if (result?.success) {

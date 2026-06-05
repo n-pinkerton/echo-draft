@@ -156,6 +156,19 @@ class DatabaseManager {
     }
   }
 
+  getLatestTranscription() {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+      const stmt = this.db.prepare("SELECT * FROM transcriptions ORDER BY timestamp DESC LIMIT 1");
+      return this.hydrateTranscriptionRow(stmt.get()) || null;
+    } catch (error) {
+      console.error("Error getting latest transcription:", error.message);
+      throw error;
+    }
+  }
+
   getAllTranscriptions() {
     try {
       if (!this.db) {

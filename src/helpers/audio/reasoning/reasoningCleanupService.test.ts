@@ -25,7 +25,7 @@ describe("ReasoningCleanupService", () => {
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService });
 
-    localStorage.setItem("reasoningModel", "gpt-5-mini");
+    localStorage.setItem("reasoningModel", "gpt-5.5-mini");
     localStorage.setItem("useReasoningModel", "false");
 
     const out = await svc.processTranscription(" hello  ", "openai", null);
@@ -48,7 +48,7 @@ describe("ReasoningCleanupService", () => {
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService, cacheTtlMs: 60_000 });
 
-    localStorage.setItem("reasoningModel", "gpt-5-mini");
+    localStorage.setItem("reasoningModel", "gpt-5.5-mini");
     localStorage.setItem("useReasoningModel", "true");
 
     expect(await svc.processTranscription("hello", "openai", null)).toBe("hello [cleaned]");
@@ -56,6 +56,23 @@ describe("ReasoningCleanupService", () => {
 
     expect(reasoningService.isAvailable).toHaveBeenCalledTimes(1);
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+  });
+
+  it("migrates retired OpenAI cleanup models before processing", async () => {
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async (text: string) => `${text} [cleaned]`),
+    };
+    const logger = { logReasoning: vi.fn() };
+    const svc = new ReasoningCleanupService({ logger, reasoningService });
+
+    localStorage.setItem("reasoningModel", "gpt-5-mini");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    expect(await svc.processTranscription("hello", "openai", null)).toBe("hello [cleaned]");
+    expect(reasoningService.processText).toHaveBeenCalledWith("hello", "gpt-5.5-mini", null);
+    expect(localStorage.getItem("reasoningModel")).toBe("gpt-5.5-mini");
   });
 
   it("falls back to raw text when reasoning service throws", async () => {
@@ -68,7 +85,7 @@ describe("ReasoningCleanupService", () => {
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService });
 
-    localStorage.setItem("reasoningModel", "gpt-5-mini");
+    localStorage.setItem("reasoningModel", "gpt-5.5-mini");
     localStorage.setItem("useReasoningModel", "true");
 
     await expect(svc.processTranscription(" hello  ", "openai", null)).resolves.toBe("hello");
@@ -82,7 +99,7 @@ describe("ReasoningCleanupService", () => {
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService });
 
-    localStorage.setItem("reasoningModel", "gpt-5-mini");
+    localStorage.setItem("reasoningModel", "gpt-5.5-mini");
     localStorage.setItem("useReasoningModel", "true");
 
     await expect(svc.processTranscription("alpha beta", "openai", null)).resolves.toBe("alpha - beta");

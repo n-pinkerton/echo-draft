@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Database functions
   saveTranscription: (text) => ipcRenderer.invoke("db-save-transcription", text),
   getTranscriptions: (limit) => ipcRenderer.invoke("db-get-transcriptions", limit),
+  getLatestTranscription: () => ipcRenderer.invoke("db-get-latest-transcription"),
   patchTranscriptionMeta: (id, metaPatch) =>
     ipcRenderer.invoke("db-patch-transcription-meta", id, metaPatch),
   exportTranscriptions: (format) => ipcRenderer.invoke("db-export-transcriptions", format),

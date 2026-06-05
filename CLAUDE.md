@@ -110,7 +110,7 @@ EchoDraft is an Electron-based desktop dictation application that uses whisper.c
   - Detects when user addresses their named agent
   - Routes to appropriate AI provider (OpenAI/Anthropic/Gemini)
   - Removes agent name from final output
-  - Supports GPT-5, Claude Opus 4.1, and Gemini 2.5 models
+  - Supports current OpenAI cleanup models plus Claude, Gemini, Groq, and local cleanup models
 
 ### whisper.cpp Integration
 
@@ -228,14 +228,13 @@ Environment variables persisted to `.env` (via `saveAllKeysToEnvFile()`):
 
 - User names their agent during onboarding (step 6/8)
 - Name stored in localStorage and database
-- ReasoningService detects "Hey [AgentName]" patterns
-- AI processes command and removes agent reference from output
+- ReasoningService treats dictated text as untrusted cleanup content, even when it mentions the agent name
+- AI performs a clarity and grammar pass only; it does not execute dictated requests or answer dictated questions
 - Supports multiple AI providers (all models defined in `src/models/modelRegistryData.json`):
   - **OpenAI** (Responses API):
-    - GPT-5.2 (`gpt-5.2`) - Latest flagship reasoning model
-    - GPT-5 Mini (`gpt-5-mini`) - Fast and cost-efficient
-    - GPT-5 Nano (`gpt-5-nano`) - Ultra-fast, low latency
-    - GPT-4.1 Series (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`) - Strong baseline with 1M context
+    - GPT-5.5 Mini (`gpt-5.5-mini`) - Fast cleanup model with conservative edits
+    - GPT-5.5 (`gpt-5.5`) - Latest frontier cleanup model
+    - GPT-5.3 Codex Spark (`gpt-5.3-codex-spark`) - Codex Spark cleanup option, subject to account/provider availability
   - **Anthropic** (Via IPC bridge to avoid CORS):
     - Claude Sonnet 4.5 (`claude-sonnet-4-5`) - Balanced performance
     - Claude Haiku 4.5 (`claude-haiku-4-5`) - Fast with near-frontier intelligence

@@ -1,4 +1,39 @@
-import { sanitizeProcessedText } from "../../../config/prompts";
+import {
+  DEFAULT_CLEANUP_MODEL_ID,
+  SUPPORTED_CLEANUP_MODEL_IDS,
+  sanitizeProcessedText,
+} from "../../../config/prompts";
+
+const RETIRED_OPENAI_CLEANUP_MODELS = new Set([
+  "gpt-5.2",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-4.1-nano",
+]);
+
+function normalizeCleanupModel(model, provider) {
+  const normalizedModel = typeof model === "string" ? model.trim() : "";
+  const normalizedProvider = typeof provider === "string" ? provider.trim() : "";
+
+  if (
+    RETIRED_OPENAI_CLEANUP_MODELS.has(normalizedModel) &&
+    (normalizedProvider === "openai" || normalizedProvider === "auto" || !normalizedProvider)
+  ) {
+    return DEFAULT_CLEANUP_MODEL_ID;
+  }
+
+  if (
+    normalizedModel.startsWith("gpt-") &&
+    !SUPPORTED_CLEANUP_MODEL_IDS.includes(normalizedModel) &&
+    (normalizedProvider === "openai" || normalizedProvider === "auto")
+  ) {
+    return DEFAULT_CLEANUP_MODEL_ID;
+  }
+
+  return normalizedModel;
+}
 
 /**
  * Shared cleanup/orchestration around `ReasoningService` for transcript post-processing.
@@ -159,14 +194,24 @@ export class ReasoningCleanupService {
       timestamp: new Date().toISOString(),
     });
 
-    const reasoningModel =
+    const storedReasoningModel =
       typeof window !== "undefined" && window.localStorage ? localStorage.getItem("reasoningModel") || "" : "";
     const reasoningProvider =
       typeof window !== "undefined" && window.localStorage
         ? localStorage.getItem("reasoningProvider") || "auto"
         : "auto";
+    const reasoningModel = normalizeCleanupModel(storedReasoningModel, reasoningProvider);
     const agentName =
       typeof window !== "undefined" && window.localStorage ? localStorage.getItem("agentName") || null : null;
+
+    if (reasoningModel && reasoningModel !== storedReasoningModel && typeof window !== "undefined") {
+      localStorage.setItem("reasoningModel", reasoningModel);
+      this.logger?.logReasoning?.("REASONING_MODEL_MIGRATED", {
+        from: storedReasoningModel,
+        to: reasoningModel,
+        provider: reasoningProvider,
+      });
+    }
 
     if (!reasoningModel) {
       this.logger?.logReasoning?.("REASONING_SKIPPED", { reason: "No reasoning model selected" });

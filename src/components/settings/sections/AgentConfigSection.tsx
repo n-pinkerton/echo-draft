@@ -16,7 +16,7 @@ export default function AgentConfigSection(props: Props) {
     <div className="space-y-5">
       <SectionHeader
         title="Voice Agent"
-        description="Name your AI assistant so you can address it directly during dictation"
+        description="Name the cleanup assistant shown in AI text enhancement prompts"
       />
 
       {/* Agent Name */}
@@ -37,7 +37,7 @@ export default function AgentConfigSection(props: Props) {
                     setAgentName(agentName.trim());
                     showAlertDialog({
                       title: "Agent Name Updated",
-                      description: `Your agent is now named "${agentName.trim()}". Address it by saying "Hey ${agentName.trim()}" followed by your instructions.`,
+                      description: `Your cleanup assistant is now named "${agentName.trim()}". Dictation remains cleanup-only even when the text mentions that name.`,
                     });
                   }}
                   disabled={!agentName.trim()}
@@ -60,9 +60,9 @@ export default function AgentConfigSection(props: Props) {
         <SettingsPanel>
           <SettingsPanelRow>
             <p className="text-[12px] text-muted-foreground leading-relaxed">
-              When you say <span className="font-medium text-foreground">"Hey {agentName}"</span>{" "}
-              followed by an instruction, the AI switches from cleanup mode to instruction mode.
-              Without the trigger phrase, it simply cleans up your dictation.
+              The assistant name personalizes the trusted cleanup prompt. Dictated text is always
+              treated as untrusted content to clean, so questions and requests are preserved rather
+              than answered or executed.
             </p>
           </SettingsPanelRow>
         </SettingsPanel>
@@ -75,15 +75,15 @@ export default function AgentConfigSection(props: Props) {
           <SettingsPanelRow>
             <div className="space-y-2.5">
               {[
-                { input: `Hey ${agentName}, write a formal email about the budget`, mode: "Instruction" },
-                { input: `Hey ${agentName}, make this more professional`, mode: "Instruction" },
-                { input: `Hey ${agentName}, convert this to bullet points`, mode: "Instruction" },
+                { input: `Hey ${agentName}, write a formal email about the budget`, mode: "Preserved" },
+                { input: `Hey ${agentName}, make this more professional`, mode: "Preserved" },
+                { input: `Hey ${agentName}, convert this to bullet points`, mode: "Preserved" },
                 { input: "We should schedule a meeting for next week", mode: "Cleanup" },
               ].map((example, i) => (
                 <div key={i} className="flex items-start gap-3">
                   <span
                     className={`shrink-0 mt-0.5 text-[10px] font-medium uppercase tracking-wider px-1.5 py-px rounded ${
-                      example.mode === "Instruction"
+                      example.mode === "Preserved"
                         ? "bg-primary/10 text-primary dark:bg-primary/15"
                         : "bg-muted text-muted-foreground"
                     }`}

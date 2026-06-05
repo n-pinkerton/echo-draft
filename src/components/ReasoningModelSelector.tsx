@@ -118,6 +118,33 @@ export default function ReasoningModelSelector({
   }, [selectedCloudProvider, openaiModelOptions, customEndpoint.displayedCustomModels]);
 
   useEffect(() => {
+    if (
+      !useReasoningModel ||
+      selectedMode !== "cloud" ||
+      selectedCloudProvider === "custom" ||
+      localReasoningProvider !== selectedCloudProvider ||
+      selectedCloudModels.length === 0
+    ) {
+      return;
+    }
+
+    const selectedModelStillSupported = selectedCloudModels.some(
+      (model) => model.value === reasoningModel
+    );
+    if (!selectedModelStillSupported) {
+      setReasoningModel(selectedCloudModels[0].value);
+    }
+  }, [
+    useReasoningModel,
+    selectedMode,
+    selectedCloudProvider,
+    selectedCloudModels,
+    localReasoningProvider,
+    reasoningModel,
+    setReasoningModel,
+  ]);
+
+  useEffect(() => {
     const localProviderIds = localProviders.map((p) => p.id);
     if (localProviderIds.includes(localReasoningProvider)) {
       setSelectedMode("local");

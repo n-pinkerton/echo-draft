@@ -32,7 +32,13 @@ describe("ReasoningService (OpenAI)", () => {
   it("aggregates all Responses API output_text parts and requests max_output_tokens", async () => {
     const fetchMock = vi.fn(async (_url: any, init: any) => {
       const body = JSON.parse(init.body);
-      expect(body.model).toBe("gpt-4o-mini");
+      expect(body.model).toBe("gpt-5.5-mini");
+      expect(body.input[0].role).toBe("developer");
+      expect(body.input[0].content).toContain("Selected cleanup model: GPT-5.5 mini");
+      expect(body.input[1].content).toContain(
+        "<echodraft_gpt55_mini_untrusted_dictation>"
+      );
+      expect(body.reasoning).toEqual({ effort: "low" });
       expect(body.max_output_tokens).toBeGreaterThanOrEqual(4096);
       return {
         ok: true,
@@ -54,7 +60,7 @@ describe("ReasoningService (OpenAI)", () => {
 
     vi.stubGlobal("fetch", fetchMock as any);
 
-    await expect(ReasoningService.processText("input", "gpt-4o-mini")).resolves.toBe(
+    await expect(ReasoningService.processText("input", "gpt-5.5-mini")).resolves.toBe(
       "I have also provided the rest."
     );
   });
@@ -78,7 +84,7 @@ describe("ReasoningService (OpenAI)", () => {
 
     vi.stubGlobal("fetch", fetchMock as any);
 
-    await expect(ReasoningService.processText("input", "gpt-4o-mini")).rejects.toThrow(
+    await expect(ReasoningService.processText("input", "gpt-5.5-mini")).rejects.toThrow(
       /max output tokens/i
     );
   });
@@ -98,8 +104,13 @@ describe("ReasoningService (OpenAI)", () => {
       expect(endpoint.endsWith("/chat/completions")).toBe(true);
 
       const body = JSON.parse(init.body);
-      expect(body.model).toBe("gpt-4o-mini");
-      expect(body.max_tokens).toBeGreaterThanOrEqual(4096);
+      expect(body.model).toBe("gpt-5.5-mini");
+      expect(body.messages[0].role).toBe("system");
+      expect(body.messages[1].content).toContain(
+        "<echodraft_gpt55_mini_untrusted_dictation>"
+      );
+      expect(body.max_completion_tokens).toBeGreaterThanOrEqual(4096);
+      expect(body.reasoning_effort).toBe("low");
 
       return {
         ok: true,
@@ -117,7 +128,7 @@ describe("ReasoningService (OpenAI)", () => {
 
     vi.stubGlobal("fetch", fetchMock as any);
 
-    await expect(ReasoningService.processText("input", "gpt-4o-mini")).rejects.toThrow(
+    await expect(ReasoningService.processText("input", "gpt-5.5-mini")).rejects.toThrow(
       /truncated/i
     );
   });

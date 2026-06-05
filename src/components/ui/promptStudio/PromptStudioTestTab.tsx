@@ -49,7 +49,7 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
     );
   }, [reasoningProvider]);
 
-  const isAgentAddressed = testText.toLowerCase().includes(agentName.toLowerCase());
+  const mentionsAgentName = testText.toLowerCase().includes(agentName.toLowerCase());
 
   const testPrompt = async () => {
     if (!testText.trim()) return;
@@ -150,12 +150,12 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
           {testText && (
             <span
               className={`text-[10px] font-medium uppercase tracking-wider px-1.5 py-px rounded ${
-                isAgentAddressed
+                mentionsAgentName
                   ? "bg-primary/10 text-primary dark:bg-primary/15"
                   : "bg-muted text-muted-foreground"
               }`}
             >
-              {isAgentAddressed ? "Instruction" : "Cleanup"}
+              {mentionsAgentName ? "Name mentioned" : "Cleanup"}
             </span>
           )}
         </div>
@@ -167,7 +167,7 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
           placeholder="Enter text to test..."
         />
         <p className="text-[10px] text-muted-foreground/40 mt-1.5">
-          Try addressing "{agentName}" to test instruction mode
+          Try questions or requests to confirm they are preserved instead of executed
         </p>
       </div>
 

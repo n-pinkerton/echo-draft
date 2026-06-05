@@ -16,7 +16,7 @@ export async function processWithIpcProvider({
   model: string;
   agentName: string | null;
   config: ReasoningConfig;
-  getSystemPrompt: (agentName: string | null) => string;
+  getSystemPrompt: (agentName: string | null, modelId?: string | null) => string;
   ipcCall: (userPrompt: string, model: string, agentName: string | null, options: any) => Promise<any>;
 }): Promise<string> {
   logger.logReasoning(`${providerName.toUpperCase()}_START`, {
@@ -36,8 +36,8 @@ export async function processWithIpcProvider({
     textLength: text.length,
   });
 
-  const systemPrompt = getSystemPrompt(agentName);
-  const userPrompt = getUserPrompt(text);
+  const systemPrompt = getSystemPrompt(agentName, model);
+  const userPrompt = getUserPrompt(text, model);
   const result = await ipcCall(userPrompt, model, agentName, {
     ...config,
     systemPrompt,

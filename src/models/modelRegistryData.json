@@ -143,34 +143,19 @@
       "name": "OpenAI",
       "models": [
         {
-          "id": "gpt-5.2",
-          "name": "GPT-5.2",
-          "description": "Latest flagship reasoning model"
+          "id": "gpt-5.5-mini",
+          "name": "GPT-5.5 Mini",
+          "description": "Fast cleanup model with conservative grammar and clarity edits"
         },
         {
-          "id": "gpt-5-mini",
-          "name": "GPT-5 Mini",
-          "description": "Fast and cost-efficient"
+          "id": "gpt-5.5",
+          "name": "GPT-5.5",
+          "description": "Latest frontier cleanup model for highest-quality preservation"
         },
         {
-          "id": "gpt-5-nano",
-          "name": "GPT-5 Nano",
-          "description": "Ultra-fast, low latency"
-        },
-        {
-          "id": "gpt-4.1",
-          "name": "GPT-4.1",
-          "description": "Strong baseline, 1M context"
-        },
-        {
-          "id": "gpt-4.1-mini",
-          "name": "GPT-4.1 Mini",
-          "description": "Smaller GPT-4.1 model"
-        },
-        {
-          "id": "gpt-4.1-nano",
-          "name": "GPT-4.1 Nano",
-          "description": "Lowest latency GPT-4.1"
+          "id": "gpt-5.3-codex-spark",
+          "name": "GPT-5.3 Codex Spark",
+          "description": "Latest Codex Spark cleanup option; availability may depend on account access"
         }
       ]
     },
@@ -401,7 +386,7 @@
           "name": "Mistral 7B Instruct v0.3",
           "size": "4.4GB",
           "sizeBytes": 4692635648,
-          "description": "Fast and efficient instruction model",
+          "description": "Fast and efficient cleanup-capable model",
           "fileName": "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
           "quantization": "q4_k_m",
           "contextLength": 32768,
@@ -413,7 +398,7 @@
           "name": "Mistral 7B Instruct v0.3 (Q5)",
           "size": "5.1GB",
           "sizeBytes": 5519900672,
-          "description": "Higher quality instruction model",
+          "description": "Higher quality cleanup-capable model",
           "fileName": "Mistral-7B-Instruct-v0.3-Q5_K_M.gguf",
           "quantization": "q5_k_m",
           "contextLength": 32768,

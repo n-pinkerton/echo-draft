@@ -6,7 +6,7 @@ export default function PromptsSection() {
     <div className="space-y-5">
       <SectionHeader
         title="Prompt Studio"
-        description="View, customize, and test the unified system prompt that powers text cleanup and instruction detection"
+        description="View, customize, and test the model-specific cleanup prompt and untrusted dictation wrapper"
       />
 
       <PromptStudio />

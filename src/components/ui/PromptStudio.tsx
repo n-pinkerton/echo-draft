@@ -54,7 +54,8 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
     setCurrentPrompt(editedPrompt);
     showAlertDialog({
       title: "Prompt Saved",
-      description: "Your custom prompt will be used for all future AI processing.",
+      description:
+        "Your custom notes will be included below the model-specific cleanup safety prompt.",
     });
   };
 

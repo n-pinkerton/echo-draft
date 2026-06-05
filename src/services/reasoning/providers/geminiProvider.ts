@@ -19,7 +19,7 @@ export async function processWithGeminiProvider({
   agentName: string | null;
   config: ReasoningConfig;
   apiKey: string;
-  getSystemPrompt: (agentName: string | null) => string;
+  getSystemPrompt: (agentName: string | null, modelId?: string | null) => string;
   calculateMaxTokens: (
     inputLength: number,
     minTokens: number,
@@ -34,8 +34,8 @@ export async function processWithGeminiProvider({
     hasApiKey: Boolean(apiKey),
   });
 
-  const systemPrompt = getSystemPrompt(agentName);
-  const userPrompt = getUserPrompt(text);
+  const systemPrompt = getSystemPrompt(agentName, model);
+  const userPrompt = getUserPrompt(text, model);
 
   const requestBody = {
     contents: [

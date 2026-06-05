@@ -23,8 +23,8 @@ export function PromptStudioViewTab({
           {[
             { mode: "Cleanup", desc: "Removes filler words, fixes grammar and punctuation" },
             {
-              mode: "Instruction",
-              desc: `Triggered by \"Hey ${agentName}\" — executes commands and cleans text`,
+              mode: "Trust",
+              desc: `Text mentioning \"${agentName}\" is still treated as dictation to clean, not commands to execute`,
             },
           ].map((item) => (
             <div key={item.mode} className="flex items-start gap-3">

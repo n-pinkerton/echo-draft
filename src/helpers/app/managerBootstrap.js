@@ -48,7 +48,7 @@ function bootstrapManagers() {
   clipboardManager.preWarmAccessibility();
   const whisperManager = new WhisperManager();
   const parakeetManager = new ParakeetManager();
-  const trayManager = new TrayManager();
+  const trayManager = new TrayManager({ databaseManager, clipboardManager });
   const updateManager = new UpdateManager();
   const globeKeyManager = new GlobeKeyManager();
   const windowsKeyManager = new WindowsKeyManager();

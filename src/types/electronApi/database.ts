@@ -12,6 +12,7 @@ export interface ElectronAPIDatabase {
         }
   ) => Promise<{ id: number; success: boolean; transcription?: TranscriptionItem }>;
   getTranscriptions: (limit?: number) => Promise<TranscriptionItem[]>;
+  getLatestTranscription?: () => Promise<TranscriptionItem | null>;
   patchTranscriptionMeta?: (
     id: number,
     metaPatch: Partial<TranscriptionMeta>

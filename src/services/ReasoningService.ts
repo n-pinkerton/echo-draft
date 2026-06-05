@@ -154,7 +154,7 @@ class ReasoningService extends BaseReasoningService {
         isCustomProvider,
         openAiBase,
         endpointCandidates,
-        getSystemPrompt: (value) => this.getSystemPrompt(value),
+        getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
         getStoredOpenAiPreference: (base) => this.openAiEndpointResolver.getStoredPreference(base, storage),
@@ -192,7 +192,7 @@ class ReasoningService extends BaseReasoningService {
       model,
       agentName,
       config,
-      getSystemPrompt: (value) => this.getSystemPrompt(value),
+      getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
       ipcCall: (userPrompt, modelName, agent, options) =>
         window.electronAPI.processAnthropicReasoning(userPrompt, modelName, agent, options),
     });
@@ -217,7 +217,7 @@ class ReasoningService extends BaseReasoningService {
       model,
       agentName,
       config,
-      getSystemPrompt: (value) => this.getSystemPrompt(value),
+      getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
       ipcCall: (userPrompt, modelName, agent, options) =>
         window.electronAPI.processLocalReasoning(userPrompt, modelName, agent, options),
     });
@@ -244,7 +244,7 @@ class ReasoningService extends BaseReasoningService {
         agentName,
         config,
         apiKey,
-        getSystemPrompt: (value) => this.getSystemPrompt(value),
+        getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
       });
@@ -285,7 +285,7 @@ class ReasoningService extends BaseReasoningService {
           agentName,
           config,
           providerName: "Groq",
-          getSystemPrompt: (value) => this.getSystemPrompt(value),
+          getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
           calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
             this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
         });

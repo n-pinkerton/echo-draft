@@ -71,7 +71,7 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
     <div className="space-y-4">
       <SectionHeader
         title="AI Text Enhancement"
-        description="Clean up transcriptions, handle commands, and fix errors while preserving your tone."
+        description="Clean up transcriptions and fix errors while preserving your tone."
       />
 
       {/* Enable toggle — always at top */}

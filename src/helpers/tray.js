@@ -1,14 +1,18 @@
-const { Tray, Menu, nativeImage, app } = require("electron");
+const { Tray, Menu, nativeImage, app, clipboard } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { getTrayIconAssetPath } = require("../config/iconPaths.cjs");
 
 class TrayManager {
-  constructor() {
+  constructor({ databaseManager = null, clipboardManager = null } = {}) {
     this.tray = null;
     this.mainWindow = null;
     this.controlPanelWindow = null;
     this.windowManager = null;
+    this.databaseManager = databaseManager;
+    this.clipboardManager = clipboardManager;
+    this.lastActionStatus = "";
+    this.lastActionStatusAt = 0;
     this.attachedControlPanels = new WeakSet();
   }
 
@@ -32,6 +36,15 @@ class TrayManager {
 
   setWindowManager(windowManager) {
     this.windowManager = windowManager;
+  }
+
+  setDatabaseManager(databaseManager) {
+    this.databaseManager = databaseManager;
+    this.updateTrayMenu?.();
+  }
+
+  setClipboardManager(clipboardManager) {
+    this.clipboardManager = clipboardManager;
   }
 
   setCreateControlPanelCallback(callback) {
@@ -106,6 +119,11 @@ class TrayManager {
     if (process.platform !== "darwin" && process.platform !== "win32") return;
 
     try {
+      if (this.tray && !this.tray.isDestroyed?.()) {
+        this.updateTrayMenu();
+        return;
+      }
+
       const trayIcon = await this.loadTrayIcon();
       if (!trayIcon || trayIcon.isEmpty()) {
         console.error("Failed to load tray icon");
@@ -231,10 +249,107 @@ class TrayManager {
     }
   }
 
+  getLatestTranscription() {
+    try {
+      if (!this.databaseManager?.getLatestTranscription) {
+        return null;
+      }
+      return this.databaseManager.getLatestTranscription();
+    } catch (error) {
+      console.error("Failed to load latest transcription for tray:", error.message);
+      return null;
+    }
+  }
+
+  formatLatestTranscriptionLabel(transcription) {
+    if (!transcription?.timestamp) {
+      return "Last: None";
+    }
+
+    const timestamp = new Date(transcription.timestamp);
+    if (Number.isNaN(timestamp.getTime())) {
+      return "Last: Saved";
+    }
+
+    return `Last: ${timestamp.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  }
+
+  getStatusLabel(dictationVisible) {
+    if (this.lastActionStatus && Date.now() - this.lastActionStatusAt < 2500) {
+      return this.lastActionStatus;
+    }
+    return dictationVisible ? "Status: Panel visible" : "Status: Ready";
+  }
+
+  setTemporaryStatus(status) {
+    this.lastActionStatus = status;
+    this.lastActionStatusAt = Date.now();
+    this.updateTrayMenu();
+
+    setTimeout(() => {
+      if (Date.now() - this.lastActionStatusAt >= 2500) {
+        this.lastActionStatus = "";
+        this.updateTrayMenu();
+      }
+    }, 2600);
+  }
+
+  async copyLastTranscription() {
+    const latest = this.getLatestTranscription();
+    const text = typeof latest?.text === "string" ? latest.text : "";
+
+    if (!text.trim()) {
+      this.setTemporaryStatus("Status: No saved dictation");
+      return;
+    }
+
+    try {
+      if (this.clipboardManager?.writeClipboard) {
+        await this.clipboardManager.writeClipboard(text);
+      } else {
+        clipboard.writeText(text);
+      }
+      this.setTemporaryStatus("Status: Copied last dictation");
+    } catch (error) {
+      console.error("Failed to copy latest transcription from tray:", error.message);
+      this.setTemporaryStatus("Status: Copy failed");
+    }
+  }
+
   buildContextMenuTemplate() {
     const dictationVisible = this.windowManager?.isDictationPanelVisible?.() ?? false;
+    const latestTranscription = this.getLatestTranscription();
+    const latestText =
+      typeof latestTranscription?.text === "string" ? latestTranscription.text.trim() : "";
+    const statusLabel = this.getStatusLabel(dictationVisible);
 
     return [
+      {
+        label: statusLabel,
+        enabled: false,
+      },
+      {
+        label: this.formatLatestTranscriptionLabel(latestTranscription),
+        enabled: false,
+      },
+      {
+        label: this.windowManager?.windowsPushToTalkAvailable
+          ? "Push-to-talk: Available"
+          : "Push-to-talk: Standard hotkey",
+        enabled: false,
+        visible: process.platform === "win32",
+      },
+      { type: "separator" },
+      {
+        label: "Copy Last Dictation",
+        enabled: Boolean(latestText),
+        click: async () => {
+          await this.copyLastTranscription();
+        },
+      },
       {
         label: dictationVisible ? "Hide Dictation Panel" : "Show Dictation Panel",
         click: () => {
@@ -268,7 +383,9 @@ class TrayManager {
     if (!this.tray) return;
 
     const contextMenu = Menu.buildFromTemplate(this.buildContextMenuTemplate());
-    this.tray.setToolTip("EchoDraft - Voice Dictation");
+    const dictationVisible = this.windowManager?.isDictationPanelVisible?.() ?? false;
+    const latestLabel = this.formatLatestTranscriptionLabel(this.getLatestTranscription());
+    this.tray.setToolTip(`EchoDraft - ${this.getStatusLabel(dictationVisible)} - ${latestLabel}`);
     this.tray.setContextMenu(contextMenu);
   }
 
@@ -279,7 +396,7 @@ class TrayManager {
 
     if (process.platform === "win32") {
       this.tray.on("click", () => {
-        void this.showControlPanelFromTray();
+        this.tray?.popUpContextMenu();
       });
       this.tray.on("right-click", () => {
         this.tray?.popUpContextMenu();

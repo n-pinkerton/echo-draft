@@ -24,7 +24,7 @@ export async function callChatCompletionsApi({
   agentName: string | null;
   config: ReasoningConfig;
   providerName: string;
-  getSystemPrompt: (agentName: string | null) => string;
+  getSystemPrompt: (agentName: string | null, modelId?: string | null) => string;
   calculateMaxTokens: (
     inputLength: number,
     minTokens: number,
@@ -33,8 +33,8 @@ export async function callChatCompletionsApi({
   ) => number;
   fetchFn?: typeof fetch;
 }): Promise<string> {
-  const systemPrompt = getSystemPrompt(agentName);
-  const userPrompt = getUserPrompt(text);
+  const systemPrompt = getSystemPrompt(agentName, model);
+  const userPrompt = getUserPrompt(text, model);
 
   const messages = [
     { role: "system", content: systemPrompt },
