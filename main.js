@@ -212,13 +212,14 @@ async function startApp() {
   // Create main window
   await windowManager.createMainWindow();
 
-  // Create control panel window
-  await windowManager.createControlPanelWindow();
-
   // Set up tray
   trayManager.setWindows(windowManager.mainWindow, windowManager.controlPanelWindow);
   trayManager.setWindowManager(windowManager);
-  trayManager.setCreateControlPanelCallback(() => windowManager.createControlPanelWindow());
+  trayManager.setCreateControlPanelCallback(async () => {
+    await windowManager.createControlPanelWindow();
+    trayManager.setWindows(windowManager.mainWindow, windowManager.controlPanelWindow);
+    updateManager.setWindows(windowManager.mainWindow, windowManager.controlPanelWindow);
+  });
   await trayManager.createTray();
 
   // Set windows for update manager and check for updates

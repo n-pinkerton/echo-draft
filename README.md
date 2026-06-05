@@ -47,7 +47,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 🧹 **Model Cleanup**: One-click removal of cached Whisper models with uninstall hooks to keep disks tidy
 - 🌐 **Cross-Platform**: Works on macOS, Windows, and Linux
 - ⚡ **Automatic Pasting**: Transcribed text automatically pastes at your cursor location
-- 🖱️ **Draggable Interface**: Move the dictation panel anywhere on your screen
+- 🧭 **Tray-First Interface**: Use the system tray icon for dictation status, last-copy actions, settings, and app access
 - 🔄 **OpenAI Responses API**: Using the latest Responses API for improved performance
 - 🌐 **Globe Key Toggle (macOS)**: Optional Fn/Globe key listener for a hardware-level dictation trigger
 - ⌨️ **Compound Hotkeys**: Support for multi-key combinations like `Cmd+Shift+K`
@@ -313,15 +313,15 @@ npm run build:linux  # Linux
 
 ### Basic Dictation
 
-1. **Start the app** - A small draggable panel appears on your screen
-2. **Press your hotkey** (default: backtick `) - Start dictating (panel shows recording animation)
-3. **Press your hotkey again** - Stop dictation and begin transcription (panel shows processing animation)
+1. **Start the app** - EchoDraft loads a persistent system tray icon
+2. **Press your hotkey** (default: backtick `) - Start dictating (the tray icon and tooltip show recording status)
+3. **Press your hotkey again** - Stop dictation and begin transcription (the tray icon and tooltip show processing status)
 4. **Text appears** - Transcribed text is automatically pasted at your cursor location
-5. **Drag the panel** - Click and drag to move the dictation panel anywhere on your screen
+5. **Use tray actions** - Click the tray icon to start clipboard dictation, copy the last dictation, open the Control Panel, or quit
 
 ### Control Panel
 
-- **Access**: Right-click the tray icon (macOS) or through the system menu
+- **Access**: Click the tray icon, then choose **Open Control Panel**
 - **Configure**: Choose between local and cloud processing
 - **History**: View, copy, and delete past transcriptions
 - **Models**: Download and manage local Whisper models
@@ -645,7 +645,7 @@ EchoDraft also supports NVIDIA Parakeet models via sherpa-onnx - a fast alternat
 ### Customization
 
 - **Hotkey**: Change in the Control Panel (default: backtick `) - fully customizable
-- **Panel Position**: Drag the dictation panel to any location on your screen`
+- **Tray Status**: Click the tray icon for current dictation state, last dictation copy, and Control Panel access
 - **Processing Method**: Choose local or cloud in Control Panel
 - **Whisper Model**: Select quality vs speed in Control Panel
 - **UI Theme**: Edit CSS variables in `src/index.css`

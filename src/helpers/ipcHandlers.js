@@ -44,6 +44,7 @@ class IPCHandlers {
     this.whisperManager = managers.whisperManager;
     this.parakeetManager = managers.parakeetManager;
     this.windowManager = managers.windowManager;
+    this.trayManager = managers.trayManager;
     this.updateManager = managers.updateManager;
     this.windowsKeyManager = managers.windowsKeyManager;
     this.sessionId = crypto.randomUUID();
@@ -85,6 +86,9 @@ class IPCHandlers {
     });
 
     registerWindowControlHandlers({ ipcMain, app }, { windowManager: this.windowManager });
+    ipcMain.on("tray-status-update", (_event, status) => {
+      this.trayManager?.updateDictationStatus?.(status);
+    });
     registerEnvironmentHandlers({ ipcMain }, { environmentManager: this.environmentManager });
 
     registerTranscriptionDbHandlers(

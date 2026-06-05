@@ -7,9 +7,11 @@
 **Symptoms:** EchoDraft runs in Task Manager but no window shows
 
 **Solutions:**
-1. Check system tray (click ^ caret) for EchoDraft icon
-2. Run with debug: `EchoDraft.exe --log-level=debug`
-3. Try disabling GPU: `EchoDraft.exe --disable-gpu`
+1. Check the system tray. On Windows, EchoDraft may be under the hidden-icons `^` caret until you pin it.
+2. To keep it visible, right-click the taskbar → Taskbar settings → Other system tray icons, then enable EchoDraft or drag EchoDraft from the hidden-icons menu into the visible tray.
+3. Click the EchoDraft tray icon for status, copy-last, dictation, Control Panel, and quit actions.
+4. Run with debug: `EchoDraft.exe --log-level=debug`
+5. Try disabling GPU: `EchoDraft.exe --disable-gpu`
 
 ### No Transcriptions
 

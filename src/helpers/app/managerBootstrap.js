@@ -93,6 +93,7 @@ function bootstrapManagers() {
     whisperManager,
     parakeetManager,
     windowManager,
+    trayManager,
     updateManager,
     windowsKeyManager,
   });

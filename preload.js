@@ -342,6 +342,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   notifyActivationModeChanged: (mode) => ipcRenderer.send("activation-mode-changed", mode),
   notifyHotkeyChanged: (hotkey) => ipcRenderer.send("hotkey-changed", hotkey),
   notifyClipboardHotkeyChanged: (hotkey) => ipcRenderer.send("clipboard-hotkey-changed", hotkey),
+  updateTrayStatus: (status) => ipcRenderer.send("tray-status-update", status),
 
   // Auto-start management
   getAutoStartEnabled: () => ipcRenderer.invoke("get-auto-start-enabled"),

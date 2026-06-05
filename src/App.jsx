@@ -1,42 +1,20 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useMemo } from "react";
 import "./index.css";
-import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useToast } from "./components/ui/toastContext";
-import { LoadingDots } from "./components/ui/LoadingDots";
-import DictationStatusBar from "./components/ui/DictationStatusBar";
-import { DictationTooltip } from "./components/dictationPanel/DictationTooltip";
-import { SoundWaveIcon, VoiceWaveIndicator } from "./components/dictationPanel/Indicators";
-import { getMicButtonProps, getMicState } from "./components/dictationPanel/micButtonUtils";
-import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useAuth } from "./hooks/useAuth";
 
 export default function App() {
-  const [isHovered, setIsHovered] = useState(false);
-  const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
-  const [isStatusCollapsed, setIsStatusCollapsed] = useState(false);
-  const commandMenuRef = useRef(null);
-  const buttonRef = useRef(null);
-  const { toast, toastCount, toastViewportSize } = useToast();
-  const { isDragging, handleMouseDown, handleMouseUp } = useWindowDrag();
+  const { toast } = useToast();
   const { isSignedIn } = useAuth();
-  const isWindows =
-    typeof window !== "undefined" && window.electronAPI?.getPlatform?.() === "win32";
-
-  const [dragStartPos, setDragStartPos] = useState(null);
-  const [hasDragged, setHasDragged] = useState(false);
-
-  const setWindowInteractivity = React.useCallback((shouldCapture) => {
-    window.electronAPI?.setMainWindowInteractivity?.(shouldCapture);
-  }, []);
-
-  useEffect(() => {
-    setWindowInteractivity(false);
-    return () => setWindowInteractivity(false);
-  }, [setWindowInteractivity]);
 
   useEffect(() => {
     const unsubscribeFallback = window.electronAPI?.onHotkeyFallbackUsed?.((data) => {
+      window.electronAPI?.updateTrayStatus?.({
+        stage: "done",
+        stageLabel: "Hotkey Changed",
+        message: data.message || "",
+      });
       toast({
         title: "Hotkey Changed",
         description: data.message,
@@ -45,6 +23,11 @@ export default function App() {
     });
 
     const unsubscribeFailed = window.electronAPI?.onHotkeyRegistrationFailed?.((_data) => {
+      window.electronAPI?.updateTrayStatus?.({
+        stage: "error",
+        stageLabel: "Hotkey Unavailable",
+        message: "Set a different hotkey in Settings.",
+      });
       toast({
         title: "Hotkey Unavailable",
         description: `Could not register hotkey. Please set a different hotkey in Settings.`,
@@ -55,6 +38,15 @@ export default function App() {
     const unsubscribeWindowsPtt = window.electronAPI?.onWindowsPushToTalkUnavailable?.((data) => {
       const reason = typeof data?.reason === "string" ? data.reason : "";
       const message = typeof data?.message === "string" ? data.message : "";
+      window.electronAPI?.updateTrayStatus?.({
+        stage: "error",
+        stageLabel: "Windows Listener Unavailable",
+        message:
+          message ||
+          (reason === "binary_not_found"
+            ? "Push-to-Talk native listener is missing."
+            : "Push-to-Talk native listener is unavailable."),
+      });
       toast({
         title: "Windows Key Listener Unavailable",
         description:
@@ -73,36 +65,6 @@ export default function App() {
     };
   }, [toast]);
 
-  useEffect(() => {
-    if (isCommandMenuOpen || toastCount > 0) {
-      setWindowInteractivity(true);
-    } else if (!isHovered) {
-      setWindowInteractivity(false);
-    }
-  }, [isCommandMenuOpen, isHovered, toastCount, setWindowInteractivity]);
-
-  useEffect(() => {
-    const resizeWindow = () => {
-      if (isCommandMenuOpen && toastCount > 0 && toastViewportSize === "default") {
-        window.electronAPI?.resizeMainWindow?.("EXPANDED");
-      } else if (isCommandMenuOpen) {
-        window.electronAPI?.resizeMainWindow?.("WITH_MENU");
-      } else if (toastCount > 0) {
-        window.electronAPI?.resizeMainWindow?.(
-          toastViewportSize === "compact" ? "WITH_COMPACT_TOAST" : "WITH_TOAST"
-        );
-      } else {
-        window.electronAPI?.resizeMainWindow?.("WITH_STATUS");
-      }
-    };
-    resizeWindow();
-  }, [isCommandMenuOpen, toastCount, toastViewportSize]);
-
-  const handleDictationToggle = React.useCallback(() => {
-    setIsCommandMenuOpen(false);
-    setWindowInteractivity(false);
-  }, [setWindowInteractivity]);
-
   const {
     isRecording,
     isProcessing,
@@ -110,13 +72,8 @@ export default function App() {
     jobs,
     transcript,
     partialTranscript,
-    toggleListening,
-    cancelRecording,
-    cancelProcessing,
     warmupStreaming,
-  } = useAudioRecording(toast, {
-    onToggle: handleDictationToggle,
-  });
+  } = useAudioRecording(toast);
 
   // Trigger streaming warmup when user signs in (covers first-time account creation)
   useEffect(() => {
@@ -125,372 +82,46 @@ export default function App() {
     }
   }, [isSignedIn, warmupStreaming]);
 
-  const handleClose = () => {
-    window.electronAPI.hideWindow();
-  };
+  const trayStatus = useMemo(() => {
+    const visibleJobs = Array.isArray(jobs)
+      ? jobs.filter((job) => job && typeof job === "object" && job.status !== "done")
+      : [];
+    const transcriptToCopy =
+      typeof partialTranscript === "string" && partialTranscript.trim()
+        ? partialTranscript
+        : transcript;
+
+    return {
+      stage: progress?.stage || "idle",
+      stageLabel: progress?.stageLabel || "Ready",
+      message: progress?.message || "",
+      recordedMs: typeof progress?.recordedMs === "number" ? progress.recordedMs : null,
+      elapsedMs: typeof progress?.elapsedMs === "number" ? progress.elapsedMs : null,
+      generatedWords:
+        typeof progress?.generatedWords === "number" ? progress.generatedWords : null,
+      jobCount: visibleJobs.length,
+      hasTranscript: Boolean(transcriptToCopy && transcriptToCopy.trim()),
+      outputMode: progress?.outputMode === "clipboard" ? "clipboard" : "insert",
+      provider: progress?.provider || "",
+      model: progress?.model || "",
+      isRecording,
+      isProcessing,
+    };
+  }, [jobs, partialTranscript, progress, transcript, isRecording, isProcessing]);
 
   useEffect(() => {
-    if (!isCommandMenuOpen) {
-      return;
-    }
-
-    const handleClickOutside = (event) => {
-      if (
-        commandMenuRef.current &&
-        !commandMenuRef.current.contains(event.target) &&
-        buttonRef.current &&
-        !buttonRef.current.contains(event.target)
-      ) {
-        setIsCommandMenuOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isCommandMenuOpen]);
+    window.electronAPI?.updateTrayStatus?.(trayStatus);
+  }, [trayStatus]);
 
   useEffect(() => {
-    const handleKeyPress = (e) => {
-      if (e.key === "Escape") {
-        if (isCommandMenuOpen) {
-          setIsCommandMenuOpen(false);
-        } else {
-          handleClose();
-        }
-      }
+    return () => {
+      window.electronAPI?.updateTrayStatus?.({
+        stage: "idle",
+        stageLabel: "Ready",
+        message: "",
+      });
     };
+  }, []);
 
-    document.addEventListener("keydown", handleKeyPress);
-    return () => document.removeEventListener("keydown", handleKeyPress);
-  }, [isCommandMenuOpen]);
-
-  const micState = getMicState({ isRecording, isProcessing, isHovered });
-  const micProps = getMicButtonProps(micState);
-  const shouldShowStatusBar = !isStatusCollapsed;
-  const visibleJobs = Array.isArray(jobs)
-    ? jobs.filter((job) => job && typeof job === "object" && job.status !== "done")
-    : [];
-  const stackedJobs = visibleJobs.slice(-3).reverse();
-
-  const transcriptToCopy =
-    typeof partialTranscript === "string" && partialTranscript.trim()
-      ? partialTranscript
-      : transcript;
-
-  const canCopyTranscript = Boolean(transcriptToCopy && transcriptToCopy.trim());
-
-  const copyLastTranscript = async () => {
-    const text = typeof transcriptToCopy === "string" ? transcriptToCopy.trim() : "";
-    if (!text) {
-      toast({
-        title: "Nothing to copy",
-        description: "No transcript yet.",
-        duration: 2000,
-      });
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      try {
-        await window.electronAPI?.writeClipboard?.(text);
-      } catch {
-        toast({
-          title: "Copy failed",
-          description: "Could not copy to clipboard.",
-          duration: 2500,
-        });
-        return;
-      }
-    }
-
-    toast({
-      title: "Copied",
-      description: "Copied transcript to clipboard.",
-      duration: 1500,
-      size: "compact",
-      variant: "success",
-    });
-  };
-
-  const openMainApp = async () => {
-    try {
-      await window.electronAPI?.showControlPanel?.();
-    } catch {
-      toast({
-        title: "Open failed",
-        description: "Could not open the main app window.",
-        duration: 2500,
-      });
-    }
-  };
-
-  const isWindowDragTarget = React.useCallback(
-    (target) => target instanceof Element && !target.closest("button,[data-no-window-drag='true']"),
-    []
-  );
-
-  const startWidgetDrag = React.useCallback(
-    (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      setIsCommandMenuOpen(false);
-      setDragStartPos({ x: event.clientX, y: event.clientY });
-      setHasDragged(false);
-      handleMouseDown(event);
-    },
-    [handleMouseDown]
-  );
-
-  const updateDragThreshold = React.useCallback(
-    (event) => {
-      if (dragStartPos && !hasDragged) {
-        const distance = Math.sqrt(
-          Math.pow(event.clientX - dragStartPos.x, 2) + Math.pow(event.clientY - dragStartPos.y, 2)
-        );
-        if (distance > 5) {
-          setHasDragged(true);
-        }
-      }
-    },
-    [dragStartPos, hasDragged]
-  );
-
-  const stopWidgetDrag = React.useCallback(
-    (event) => {
-      handleMouseUp(event);
-      setDragStartPos(null);
-    },
-    [handleMouseUp]
-  );
-
-  return (
-    <div className="dictation-window">
-      {/* Bottom-right voice button - window expands upward/leftward */}
-      <div className="fixed bottom-4 right-4 z-50">
-        <div
-          className="flex flex-col items-end gap-2"
-          onMouseDown={(event) => {
-            if (!isWindows || !isWindowDragTarget(event.target)) {
-              return;
-            }
-            startWidgetDrag(event);
-          }}
-          onMouseMove={(event) => {
-            if (!isWindows) {
-              return;
-            }
-            updateDragThreshold(event);
-          }}
-          onMouseUp={(event) => {
-            if (!isWindows) {
-              return;
-            }
-            stopWidgetDrag(event);
-          }}
-          onMouseEnter={() => {
-            setIsHovered(true);
-            setWindowInteractivity(true);
-          }}
-          onMouseLeave={() => {
-            setIsHovered(false);
-            if (!isCommandMenuOpen) {
-              setWindowInteractivity(false);
-            }
-          }}
-        >
-          {shouldShowStatusBar ? (
-            <div className="relative mb-2">
-              <DictationStatusBar
-                progress={progress}
-                canCopyTranscript={canCopyTranscript}
-                onCopyTranscript={copyLastTranscript}
-                onLaunchApp={openMainApp}
-              />
-              <button
-                type="button"
-                data-no-window-drag="true"
-                aria-label="Collapse dictation status"
-                title="Collapse dictation status"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setIsStatusCollapsed(true);
-                }}
-                className="absolute -bottom-2.5 left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-surface-2/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors duration-150 hover:bg-muted hover:text-foreground"
-              >
-                <ChevronDown size={12} />
-              </button>
-            </div>
-          ) : null}
-
-          <div className="relative flex items-center gap-2">
-            {((isRecording || isProcessing) && isHovered && !isStatusCollapsed) ||
-            (isStatusCollapsed && isRecording) ? (
-              <button
-                type="button"
-                data-no-window-drag="true"
-                aria-label={isRecording ? "Cancel recording" : "Cancel processing"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  isRecording ? cancelRecording() : cancelProcessing();
-                }}
-                className="group/cancel w-5 h-5 rounded-full bg-surface-2/90 hover:bg-destructive border border-border hover:border-destructive/70 flex items-center justify-center transition-all duration-150 shadow-sm backdrop-blur-sm"
-              >
-                <X
-                  size={10}
-                  strokeWidth={2.5}
-                  className="text-foreground group-hover/cancel:text-destructive-foreground transition-colors duration-150"
-                />
-              </button>
-            ) : null}
-            {visibleJobs.length > 1 ? (
-              <div className="flex flex-col items-end gap-1 pr-0.5" aria-label="Dictation jobs">
-                {stackedJobs.map((job) => {
-                  const status = String(job.status || "");
-                  const baseClass =
-                    "h-4 w-4 rounded-full border text-[9px] font-semibold tabular-nums flex items-center justify-center";
-                  const className =
-                    status === "recording"
-                      ? `${baseClass} bg-primary text-primary-foreground border-primary/70`
-                      : status === "processing"
-                        ? `${baseClass} bg-accent text-accent-foreground border-accent/70 animate-pulse`
-                        : status === "queued"
-                          ? `${baseClass} bg-muted text-muted-foreground border-border/70`
-                          : status === "error"
-                            ? `${baseClass} bg-destructive text-destructive-foreground border-destructive/70`
-                            : `${baseClass} bg-muted text-muted-foreground border-border/70`;
-
-                  return (
-                    <div key={String(job.sessionId)} className={className}>
-                      {job.jobId}
-                    </div>
-                  );
-                })}
-                {visibleJobs.length > 3 ? (
-                  <div className="h-4 w-4 rounded-full border border-border/70 bg-muted text-[8px] font-semibold tabular-nums flex items-center justify-center text-muted-foreground">
-                    +{visibleJobs.length - 3}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            <div className="relative">
-              <DictationTooltip content={micProps.tooltip}>
-                <button
-                  ref={buttonRef}
-                  onMouseDown={(e) => {
-                    startWidgetDrag(e);
-                  }}
-                  onMouseMove={updateDragThreshold}
-                  onMouseUp={stopWidgetDrag}
-                  onClick={(e) => {
-                    if (!hasDragged) {
-                      setIsCommandMenuOpen(false);
-                      toggleListening({ outputMode: "clipboard" });
-                    }
-                    e.preventDefault();
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    if (!hasDragged) {
-                      setWindowInteractivity(true);
-                      setIsCommandMenuOpen((prev) => !prev);
-                    }
-                  }}
-                  onFocus={() => setIsHovered(true)}
-                  onBlur={() => setIsHovered(false)}
-                  className={micProps.className}
-                  style={{
-                    ...micProps.style,
-                    cursor: isDragging ? "grabbing !important" : "pointer !important",
-                    transition:
-                      "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.25s ease-out",
-                  }}
-                >
-                  <div
-                    className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent transition-opacity duration-150"
-                    style={{ opacity: micState === "hover" ? 0.8 : 0 }}
-                  ></div>
-                  <div
-                    className="absolute inset-0 transition-colors duration-150"
-                    style={{
-                      backgroundColor: micState === "hover" ? "rgba(0,0,0,0.1)" : "transparent",
-                    }}
-                  ></div>
-
-                  {micState === "idle" || micState === "hover" ? (
-                    <SoundWaveIcon size={micState === "idle" ? 12 : 14} />
-                  ) : micState === "recording" ? (
-                    <LoadingDots />
-                  ) : micState === "processing" ? (
-                    <VoiceWaveIndicator isListening={true} />
-                  ) : null}
-
-                  {micState === "recording" && (
-                    <div className="absolute inset-0 rounded-full border-2 border-primary/50 animate-pulse"></div>
-                  )}
-
-                  {micState === "processing" && (
-                    <div className="absolute inset-0 rounded-full border-2 border-primary/30 opacity-50"></div>
-                  )}
-                </button>
-              </DictationTooltip>
-              {isStatusCollapsed ? (
-                <button
-                  type="button"
-                  data-no-window-drag="true"
-                  aria-label="Expand dictation status"
-                  title="Expand dictation status"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    event.preventDefault();
-                    setIsStatusCollapsed(false);
-                  }}
-                  className="absolute -bottom-2.5 left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border border-border/70 bg-surface-2/95 text-muted-foreground shadow-sm transition-colors duration-150 hover:bg-muted hover:text-foreground"
-                >
-                  <ChevronUp size={12} />
-                </button>
-              ) : null}
-            </div>
-            {isCommandMenuOpen && (
-              <div
-                ref={commandMenuRef}
-                data-no-window-drag="true"
-                className="absolute bottom-full right-0 mb-3 w-48 rounded-lg border border-border bg-popover text-popover-foreground shadow-lg backdrop-blur-sm"
-                onMouseEnter={() => {
-                  setWindowInteractivity(true);
-                }}
-                onMouseLeave={() => {
-                  if (!isHovered) {
-                    setWindowInteractivity(false);
-                  }
-                }}
-              >
-                <button
-                  className="w-full px-3 py-2 text-left text-sm font-medium hover:bg-muted focus:bg-muted focus:outline-none"
-                  onClick={() => {
-                    toggleListening({ outputMode: "clipboard" });
-                  }}
-                >
-                  {isRecording ? "Stop listening" : "Start listening"}
-                </button>
-                <div className="h-px bg-border" />
-                <button
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-muted focus:bg-muted focus:outline-none"
-                  onClick={() => {
-                    setIsCommandMenuOpen(false);
-                    setWindowInteractivity(false);
-                    handleClose();
-                  }}
-                >
-                  Hide this for now
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return null;
 }

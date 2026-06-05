@@ -49,7 +49,6 @@ async function createMainWindow(manager) {
 
   manager.mainWindow.webContents.on("did-finish-load", () => {
     manager.mainWindow.setTitle("EchoDraft");
-    enforceMainWindowOnTop(manager);
   });
 
   // Now load the window content
@@ -104,6 +103,14 @@ function resizeMainWindow(manager, sizeKey) {
 }
 
 function showDictationPanel(manager, options = {}) {
+  // The legacy floating dictation widget has been replaced by the durable tray
+  // surface. Keep this method as a no-op for older IPC callers.
+  void manager;
+  void options;
+  return { success: false, message: "Dictation widget is replaced by the tray icon" };
+}
+
+function showLegacyDictationPanel(manager, options = {}) {
   const { focus = false } = options;
   if (manager.mainWindow && !manager.mainWindow.isDestroyed()) {
     if (!manager.mainWindow.isVisible()) {
@@ -121,11 +128,7 @@ function showDictationPanel(manager, options = {}) {
 
 function hideDictationPanel(manager) {
   if (manager.mainWindow && !manager.mainWindow.isDestroyed()) {
-    if (process.platform === "darwin") {
-      manager.mainWindow.hide();
-    } else {
-      manager.mainWindow.minimize();
-    }
+    manager.mainWindow.hide();
   }
 }
 
@@ -146,27 +149,8 @@ function registerMainWindowEvents(manager) {
     return;
   }
 
-  // Safety timeout: force show the window if ready-to-show doesn't fire within 10 seconds
-  const showTimeout = setTimeout(() => {
-    if (manager.mainWindow && !manager.mainWindow.isDestroyed() && !manager.mainWindow.isVisible()) {
-      if (typeof manager.mainWindow.showInactive === "function") {
-        manager.mainWindow.showInactive();
-      } else {
-        manager.mainWindow.show();
-      }
-    }
-  }, 10000);
-
   manager.mainWindow.once("ready-to-show", () => {
-    clearTimeout(showTimeout);
-    enforceMainWindowOnTop(manager);
-    if (!manager.mainWindow.isVisible()) {
-      if (typeof manager.mainWindow.showInactive === "function") {
-        manager.mainWindow.showInactive();
-      } else {
-        manager.mainWindow.show();
-      }
-    }
+    hideDictationPanel(manager);
   });
 
   manager.mainWindow.on("show", () => {
@@ -199,4 +183,5 @@ module.exports = {
   resizeMainWindow,
   setMainWindowInteractivity,
   showDictationPanel,
+  showLegacyDictationPanel,
 };
