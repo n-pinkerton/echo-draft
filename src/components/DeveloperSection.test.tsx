@@ -79,15 +79,11 @@ describe("DeveloperSection", () => {
     await waitFor(() => expect(window.electronAPI.setDebugLogging).toHaveBeenCalledWith(true));
   });
 
-  it("requires confirmation before invoking the pathless purge API", async () => {
+  it("delegates deletion confirmation to the main-process purge API", async () => {
     render(<DeveloperSection />);
     const deleteButton = await screen.findByRole("button", { name: "Delete Diagnostic Data" });
 
     fireEvent.click(deleteButton);
-    expect(screen.getByRole("heading", { name: "Delete diagnostic data?" })).toBeInTheDocument();
-    expect(purgeDebugArtifacts).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Delete Data" }));
 
     await waitFor(() => expect(purgeDebugArtifacts).toHaveBeenCalledOnce());
     await waitFor(() =>

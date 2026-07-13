@@ -92,7 +92,7 @@ class TelemetryFileLogger {
     this.currentLogPath = null;
   }
 
-  async closeAndWait() {
+  async closeAndWait({ timeoutMs = 2000 } = {}) {
     const stream = this.stream;
     this.stream = null;
     this.currentDateKey = null;
@@ -103,15 +103,34 @@ class TelemetryFileLogger {
     }
 
     return await new Promise((resolve) => {
+      let settled = false;
+      let timeoutId = null;
+      const finish = (success) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        stream.removeListener("error", handleError);
+        if (!success && !stream.destroyed) {
+          try {
+            stream.destroy();
+          } catch {
+            // Best-effort shutdown after a close error or timeout.
+          }
+        }
+        resolve(success);
+      };
+      const handleError = () => finish(false);
       try {
         if (stream.writableEnded || stream.writableFinished || stream.destroyed) {
-          resolve(true);
+          finish(true);
           return;
         }
-        stream.end(() => resolve(true));
-        stream.once("error", () => resolve(false));
+        stream.once("error", handleError);
+        timeoutId = setTimeout(() => finish(false), Math.max(100, timeoutMs));
+        timeoutId.unref?.();
+        stream.end(() => finish(true));
       } catch {
-        resolve(false);
+        finish(false);
       }
     });
   }

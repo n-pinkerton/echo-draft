@@ -55,8 +55,11 @@ export interface ElectronAPIDebugLogging {
     directoriesDeleted?: number;
     bytesDeleted?: number;
     preservedEntries?: number;
+    residualArtifacts?: number;
     rootsScanned?: number;
     freshLogStarted?: boolean;
+    cancelled?: boolean;
+    busy?: boolean;
     errors?: string[];
     error?: string;
   }>;

@@ -179,7 +179,7 @@ class IPCHandlers {
     );
 
     registerDebugLoggingHandlers(
-      { ipcMain, app, path, shell, debugLogger, saveDebugAudioCapture },
+      { ipcMain, app, path, shell, dialog, BrowserWindow, debugLogger, saveDebugAudioCapture },
       { environmentManager: this.environmentManager }
     );
     registerUpdateHandlers({ ipcMain }, { updateManager: this.updateManager });

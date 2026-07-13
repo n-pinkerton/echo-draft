@@ -30,6 +30,7 @@ class DebugLogger {
     this.logsDirSource = null;
     this.nextFileLoggingInitAttemptAt = 0;
     this.lastFileLoggingInitError = null;
+    this.artifactPurgeInProgress = false;
 
     this.telemetryLogger = new TelemetryFileLogger({
       filePrefix: "echodraft-debug",
@@ -337,44 +338,83 @@ class DebugLogger {
       const identity = process.platform === "win32" ? resolved.toLowerCase() : resolved;
       if (seen.has(identity)) continue;
       seen.add(identity);
-      try {
-        if (fs.existsSync(resolved)) roots.push(resolved);
-      } catch {
-        // Ignore inaccessible fallback locations; the active root is reported below if needed.
-      }
+      roots.push(resolved);
     }
     return roots;
   }
 
+  isArtifactPurgeInProgress() {
+    return this.artifactPurgeInProgress;
+  }
+
   async purgeArtifacts() {
-    const roots = this.getDebugArtifactRoots();
+    if (this.artifactPurgeInProgress) {
+      return {
+        success: false,
+        filesDeleted: 0,
+        directoriesDeleted: 0,
+        bytesDeleted: 0,
+        preservedEntries: 0,
+        residualArtifacts: 0,
+        rootsScanned: 0,
+        freshLogStarted: false,
+        errors: ["Diagnostic cleanup is already in progress"],
+      };
+    }
+
+    this.artifactPurgeInProgress = true;
+    let roots = [];
     const shouldResumeFileLogging = this.debugMode;
+    const result = {
+      filesDeleted: 0,
+      directoriesDeleted: 0,
+      bytesDeleted: 0,
+      preservedEntries: 0,
+      residualArtifacts: 0,
+      errors: [],
+    };
 
-    this.fileLoggingEnabled = false;
-    this.fileLoggingPending = false;
-    await this.telemetryLogger.closeAndWait();
+    try {
+      roots = this.getDebugArtifactRoots();
+      this.fileLoggingEnabled = false;
+      this.fileLoggingPending = false;
+      const streamClosed = await this.telemetryLogger.closeAndWait();
+      if (!streamClosed) {
+        result.errors.push("The active diagnostic log could not be closed cleanly");
+      }
 
-    const rootResults = roots.map((root) => purgeDebugArtifactsAtRoot(root));
-    const result = rootResults.reduce(
-      (summary, entry) => ({
-        filesDeleted: summary.filesDeleted + entry.filesDeleted,
-        directoriesDeleted: summary.directoriesDeleted + entry.directoriesDeleted,
-        bytesDeleted: summary.bytesDeleted + entry.bytesDeleted,
-        preservedEntries: summary.preservedEntries + entry.preservedEntries,
-        errors: [...summary.errors, ...entry.errors],
-      }),
-      { filesDeleted: 0, directoriesDeleted: 0, bytesDeleted: 0, preservedEntries: 0, errors: [] }
-    );
-
-    if (shouldResumeFileLogging) {
-      this.fileLoggingPending = true;
-      this.ensureFileLogging();
+      for (const root of roots) {
+        try {
+          const entry = await purgeDebugArtifactsAtRoot(root);
+          result.filesDeleted += entry.filesDeleted;
+          result.directoriesDeleted += entry.directoriesDeleted;
+          result.bytesDeleted += entry.bytesDeleted;
+          result.preservedEntries += entry.preservedEntries;
+          result.residualArtifacts += entry.residualArtifacts || 0;
+          result.errors.push(...entry.errors);
+        } catch (error) {
+          result.errors.push(`Could not clean a verified logs folder: ${error?.message || error}`);
+        }
+      }
+    } finally {
+      try {
+        if (shouldResumeFileLogging) {
+          this.fileLoggingPending = true;
+          this.ensureFileLogging();
+        }
+      } catch (error) {
+        result.errors.push(
+          `Could not resume diagnostic logging after cleanup: ${error?.message || error}`
+        );
+      } finally {
+        this.artifactPurgeInProgress = false;
+      }
     }
 
     return {
       ...result,
       rootsScanned: roots.length,
-      success: result.errors.length === 0,
+      success: result.errors.length === 0 && result.residualArtifacts === 0,
       freshLogStarted: shouldResumeFileLogging && this.fileLoggingEnabled,
     };
   }

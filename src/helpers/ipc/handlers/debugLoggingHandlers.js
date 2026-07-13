@@ -1,7 +1,8 @@
 function registerDebugLoggingHandlers(
-  { ipcMain, app, path, shell, debugLogger, saveDebugAudioCapture },
+  { ipcMain, app, path, shell, dialog, BrowserWindow, debugLogger, saveDebugAudioCapture },
   { environmentManager }
 ) {
+  let purgeRequestInProgress = false;
   ipcMain.handle("get-debug-state", async () => {
     try {
       const logsDir = debugLogger.getArtifactLogsDir?.() || debugLogger.getLogsDir?.() || null;
@@ -75,10 +76,39 @@ function registerDebugLoggingHandlers(
     }
   });
 
-  ipcMain.handle("purge-debug-artifacts", async () => {
+  ipcMain.handle("purge-debug-artifacts", async (event) => {
+    if (purgeRequestInProgress) {
+      return { success: false, busy: true, error: "Diagnostic cleanup is already in progress" };
+    }
+
+    const senderWindow = BrowserWindow?.fromWebContents?.(event?.sender) || null;
+    const sentFromSubframe =
+      event?.senderFrame &&
+      event?.sender?.mainFrame &&
+      event.senderFrame !== event.sender.mainFrame;
+    if (!senderWindow || senderWindow.isDestroyed?.() || sentFromSubframe) {
+      return { success: false, error: "Diagnostic cleanup requires an active EchoDraft window" };
+    }
+
+    purgeRequestInProgress = true;
     try {
       if (typeof debugLogger.purgeArtifacts !== "function") {
         return { success: false, error: "Debug artifact cleanup is unavailable" };
+      }
+
+      const confirmation = await dialog.showMessageBox(senderWindow, {
+        type: "warning",
+        title: "Delete diagnostic data?",
+        message: "Permanently delete EchoDraft diagnostic data?",
+        detail:
+          "This deletes EchoDraft daily logs and captured debug recordings from verified logs folders. Other files are left untouched.",
+        buttons: ["Keep Data", "Delete Data"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (confirmation.response !== 1) {
+        return { success: false, cancelled: true };
       }
 
       const result = await debugLogger.purgeArtifacts();
@@ -89,10 +119,15 @@ function registerDebugLoggingHandlers(
     } catch (error) {
       debugLogger.error("Failed to purge debug artifacts:", error);
       return { success: false, error: error?.message || String(error) };
+    } finally {
+      purgeRequestInProgress = false;
     }
   });
 
   ipcMain.handle("debug-save-audio", async (_event, payload = {}) => {
+    if (debugLogger.isArtifactPurgeInProgress?.()) {
+      return { success: false, skipped: true, reason: "purge-in-progress" };
+    }
     if (!debugLogger.isEnabled?.() || !debugLogger.isEnabled()) {
       return { success: false, skipped: true, reason: "debug-disabled" };
     }

@@ -18,7 +18,6 @@ export default function DeveloperSection() {
   const [isToggling, setIsToggling] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const [enableDialogOpen, setEnableDialogOpen] = useState(false);
-  const [purgeDialogOpen, setPurgeDialogOpen] = useState(false);
   const [isPurging, setIsPurging] = useState(false);
   const { toast } = useToast();
 
@@ -138,6 +137,7 @@ export default function DeveloperSection() {
     try {
       setIsPurging(true);
       const result = await window.electronAPI.purgeDebugArtifacts();
+      if (result.cancelled) return;
       if (!result.success) {
         throw new Error(result.error || "Some debug artifacts could not be deleted");
       }
@@ -309,7 +309,7 @@ export default function DeveloperSection() {
             Open Logs Folder
           </Button>
           <Button
-            onClick={() => setPurgeDialogOpen(true)}
+            onClick={() => void handlePurgeDebugArtifacts()}
             variant="outline"
             size="sm"
             className="w-full text-destructive hover:text-destructive"
@@ -404,17 +404,6 @@ export default function DeveloperSection() {
         confirmText="Enable Debug Mode"
         cancelText="Cancel"
         onConfirm={() => void setDebugLogging(true)}
-      />
-
-      <ConfirmDialog
-        open={purgeDialogOpen}
-        onOpenChange={setPurgeDialogOpen}
-        title="Delete diagnostic data?"
-        description="This permanently deletes EchoDraft daily logs and captured debug recordings from its verified logs folders. Other files are left untouched. If debug mode remains on, EchoDraft starts a fresh log."
-        confirmText="Delete Data"
-        cancelText="Keep Data"
-        variant="destructive"
-        onConfirm={() => void handlePurgeDebugArtifacts()}
       />
     </div>
   );
