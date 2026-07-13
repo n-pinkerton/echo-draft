@@ -1,9 +1,6 @@
 export interface ElectronAPIAssemblyAiStreaming {
   // AssemblyAI Streaming
-  assemblyAiStreamingWarmup?: (options?: {
-    sampleRate?: number;
-    language?: string;
-  }) => Promise<{
+  assemblyAiStreamingWarmup?: (options?: { sampleRate?: number; language?: string }) => Promise<{
     success: boolean;
     alreadyWarm?: boolean;
     error?: string;
@@ -24,6 +21,10 @@ export interface ElectronAPIAssemblyAiStreaming {
     success: boolean;
     text?: string;
     error?: string;
+    audioDuration?: number | null;
+    audioStats?: Record<string, unknown> | null;
+    terminationConfirmed: boolean;
+    terminationTimedOut?: boolean;
   }>;
   assemblyAiStreamingStatus?: () => Promise<{
     isConnected: boolean;
@@ -36,4 +37,3 @@ export interface ElectronAPIAssemblyAiStreaming {
     callback: (data: { audioDuration?: number; text?: string }) => void
   ) => () => void;
 }
-

@@ -61,7 +61,18 @@ const getStatusClass = (status: string) => {
   if (status === "cancelled") {
     return "bg-muted text-muted-foreground";
   }
+  if (status === "delivery_issue") {
+    return "bg-warning/10 text-warning";
+  }
   return "bg-success/10 text-success";
+};
+
+const getStatusLabel = (status: string) => {
+  if (status === "delivery_issue") return "Delivery issue";
+  if (status === "success") return "Success";
+  if (status === "error") return "Error";
+  if (status === "cancelled") return "Cancelled";
+  return status;
 };
 
 export default function TranscriptionItem({
@@ -81,9 +92,22 @@ export default function TranscriptionItem({
   const status = meta.status || "success";
   const provider = meta.provider || meta.source || "unknown";
   const model = meta.model || "";
+  const cleanup = meta.cleanup ?? null;
+  const cleanupFallback = cleanup?.status === "fallback";
+  const cleanupFallbackDetail =
+    cleanup?.fallbackReason === "fidelity_rejected"
+      ? "safety check rejected the rewrite"
+      : cleanup?.fallbackReason === "not_configured"
+        ? "cleanup is not configured"
+        : cleanup?.fallbackReason === "unavailable"
+          ? "cleanup provider unavailable"
+          : "cleanup request failed";
   const rawTextFromDb = typeof item.raw_text === "string" ? item.raw_text : null;
   const hasRawText = Boolean(rawTextFromDb && rawTextFromDb.trim());
-  const rawTextForCopy = rawTextFromDb ?? item.text;
+  const delivery =
+    meta.delivery && typeof meta.delivery === "object"
+      ? (meta.delivery as { status?: string; error?: string })
+      : null;
   const outputModeLabel =
     outputMode === "clipboard" ? "Clipboard" : outputMode === "file" ? "File" : "Insert";
 
@@ -204,7 +228,7 @@ export default function TranscriptionItem({
                 getStatusClass(String(status))
               )}
             >
-              {String(status)}
+              {getStatusLabel(String(status))}
             </span>
             <span className="inline-flex items-center rounded-sm px-1.5 py-px text-[10px] font-medium bg-muted text-muted-foreground">
               {String(provider)}
@@ -212,6 +236,20 @@ export default function TranscriptionItem({
             {model ? (
               <span className="inline-flex items-center rounded-sm px-1.5 py-px text-[10px] font-medium bg-muted text-muted-foreground">
                 {String(model)}
+              </span>
+            ) : null}
+            {cleanupFallback ? (
+              <span className="inline-flex items-center rounded-sm bg-warning/10 px-1.5 py-px text-[10px] font-medium text-warning">
+                Original preserved
+              </span>
+            ) : null}
+            {delivery?.status === "clipboard_fallback" ? (
+              <span className="inline-flex items-center rounded-sm bg-warning/10 px-1.5 py-px text-[10px] font-medium text-warning">
+                Kept in clipboard
+              </span>
+            ) : delivery?.status === "failed" ? (
+              <span className="inline-flex items-center rounded-sm bg-destructive/10 px-1.5 py-px text-[10px] font-medium text-destructive">
+                Delivery failed
               </span>
             ) : null}
           </div>
@@ -238,7 +276,14 @@ export default function TranscriptionItem({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => onCopyRaw(rawTextForCopy)}
+              onClick={() => {
+                if (rawTextFromDb && hasRawText) onCopyRaw(rawTextFromDb);
+              }}
+              disabled={!hasRawText}
+              aria-label={
+                hasRawText ? "Copy raw transcript" : "Raw transcript unavailable for this item"
+              }
+              title={hasRawText ? "Copy raw transcript" : "Raw transcript was not stored"}
               className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
             >
               Raw
@@ -273,6 +318,7 @@ export default function TranscriptionItem({
               size="icon"
               variant="ghost"
               onClick={() => onDelete(item.id)}
+              aria-label={`Delete dictation ${total - index}`}
               className="h-6 w-6 rounded-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10"
             >
               <Trash2 size={12} />
@@ -323,6 +369,19 @@ export default function TranscriptionItem({
                 {meta.error ? (
                   <p className="mt-1 text-[11px] text-destructive break-words">
                     {String(meta.error)}
+                  </p>
+                ) : null}
+                {cleanup ? (
+                  <p
+                    className={cn(
+                      "mt-2 text-[11px]",
+                      cleanupFallback ? "text-warning" : "text-muted-foreground"
+                    )}
+                  >
+                    Cleanup:{" "}
+                    {cleanupFallback ? "original transcript preserved" : String(cleanup.status)}
+                    {cleanupFallback ? ` · ${cleanupFallbackDetail}` : ""}
+                    {cleanup.model ? ` · ${String(cleanup.model)}` : ""}
                   </p>
                 ) : null}
               </div>

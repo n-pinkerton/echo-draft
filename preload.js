@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
+  showRecordingIndicator: () => ipcRenderer.invoke("show-recording-indicator"),
   showControlPanel: () => ipcRenderer.invoke("show-control-panel"),
   onToggleDictation: registerListener(
     "toggle-dictation",
@@ -60,6 +61,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         e2eExportTranscriptions: (format, filePath) =>
           ipcRenderer.invoke("e2e-export-transcriptions", { format, filePath }),
         e2eGetHotkeyStatus: () => ipcRenderer.invoke("e2e-get-hotkey-status"),
+        e2eGetTrayStatus: () => ipcRenderer.invoke("e2e-get-tray-status"),
+        e2eGetMainWindowState: () => ipcRenderer.invoke("e2e-get-main-window-state"),
       }
     : {}),
   clearTranscriptions: () => ipcRenderer.invoke("db-clear-transcriptions"),
@@ -69,13 +72,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setDictionary: (words) => ipcRenderer.invoke("db-set-dictionary", words),
   importDictionaryFile: () => ipcRenderer.invoke("db-import-dictionary-file"),
   exportDictionary: (format) => ipcRenderer.invoke("db-export-dictionary", format),
-  selectAudioFileForTranscription: () =>
-    ipcRenderer.invoke("select-audio-file-for-transcription"),
+  selectAudioFileForTranscription: () => ipcRenderer.invoke("select-audio-file-for-transcription"),
   ...(IS_E2E_MODE
     ? {
         e2eExportDictionary: (format, filePath) =>
           ipcRenderer.invoke("e2e-export-dictionary", { format, filePath }),
-        e2eImportDictionary: (filePath) => ipcRenderer.invoke("e2e-import-dictionary", { filePath }),
+        e2eImportDictionary: (filePath) =>
+          ipcRenderer.invoke("e2e-import-dictionary", { filePath }),
       }
     : {}),
 

@@ -106,7 +106,10 @@ describe("createTranscriptionCompleteHandler", () => {
       },
       timings: expect.objectContaining({ recordDurationMs: 500 }),
     });
-    expect(updateStage).toHaveBeenCalledWith("saving", expect.objectContaining({ sessionId: "s-1" }));
+    expect(updateStage).toHaveBeenCalledWith(
+      "saving",
+      expect.objectContaining({ sessionId: "s-1" })
+    );
     expect(updateStage).toHaveBeenCalledWith("done", expect.objectContaining({ sessionId: "s-1" }));
     expect(playCompletionCue).toHaveBeenCalledTimes(1);
     expect(audioManagerRef.current.warmupStreamingConnection).toHaveBeenCalled();
@@ -208,8 +211,200 @@ describe("createTranscriptionCompleteHandler", () => {
       "inserting",
       expect.objectContaining({ sessionId: "s-1", jobId: 1 })
     );
-    expect(updateStage).toHaveBeenCalledWith("saving", expect.objectContaining({ sessionId: "s-1" }));
+    expect(updateStage).toHaveBeenCalledWith(
+      "saving",
+      expect.objectContaining({ sessionId: "s-1" })
+    );
     expect(updateStage).toHaveBeenCalledWith("done", expect.objectContaining({ sessionId: "s-1" }));
     expect(playCompletionCue).toHaveBeenCalledTimes(1);
+  });
+
+  it("records insertion failure as a delivery issue and guarantees clipboard fallback", async () => {
+    const saveTranscription = vi.fn(async () => ({ success: true, id: 99 }));
+    const writeClipboard = vi.fn(async () => ({ success: true }));
+    const toast = vi.fn();
+    const playCompletionCue = vi.fn();
+    const playErrorCue = vi.fn();
+    const handler = createTranscriptionCompleteHandler({
+      activeSessionRef: { current: null },
+      audioManagerRef: {
+        current: {
+          safePaste: vi.fn(async () => false),
+          saveTranscription,
+          warmupStreamingConnection: vi.fn(),
+        },
+      },
+      jobsBySessionIdRef: { current: new Map([["s-fail", { sessionId: "s-fail", jobId: 7 }]]) },
+      normalizeTriggerPayload: (payload: any) => ({
+        outputMode: payload.outputMode || "insert",
+        sessionId: payload.sessionId || "s-fail",
+        triggeredAt: 1,
+      }),
+      recordingSessionIdRef: { current: null },
+      removeJob: vi.fn(),
+      sessionsByIdRef: {
+        current: new Map([["s-fail", { sessionId: "s-fail", outputMode: "insert" }]]),
+      },
+      setProgress: vi.fn(),
+      setTranscript: vi.fn(),
+      toast,
+      updateStage: vi.fn(),
+      upsertJob: vi.fn(),
+      playCompletionCue,
+      playErrorCue,
+      electronAPI: { writeClipboard, patchTranscriptionMeta: vi.fn() },
+      localStorage: { getItem: () => null },
+    });
+
+    await handler({
+      success: true,
+      text: "Keep this delivered text",
+      rawText: "Keep this delivered text",
+      source: "openai",
+      context: { sessionId: "s-fail", outputMode: "insert" },
+    });
+
+    expect(writeClipboard).toHaveBeenCalledWith("Keep this delivered text");
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Insert failed—text kept in clipboard" })
+    );
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
+    expect((saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
+      status: "delivery_issue",
+      pasteSucceeded: false,
+      clipboardSucceeded: true,
+      delivery: { status: "clipboard_fallback", succeeded: false },
+    });
+    expect(playCompletionCue).not.toHaveBeenCalled();
+    expect(playErrorCue).toHaveBeenCalledTimes(1);
+  });
+
+  it("records clipboard copy failure without a success toast", async () => {
+    const saveTranscription = vi.fn(async () => ({ success: true, id: 100 }));
+    const toast = vi.fn();
+    const playCompletionCue = vi.fn();
+    const playErrorCue = vi.fn();
+    const handler = createTranscriptionCompleteHandler({
+      activeSessionRef: { current: null },
+      audioManagerRef: {
+        current: {
+          safePaste: vi.fn(),
+          saveTranscription,
+          warmupStreamingConnection: vi.fn(),
+        },
+      },
+      jobsBySessionIdRef: { current: new Map() },
+      normalizeTriggerPayload: (payload: any) => ({
+        outputMode: payload.outputMode || "clipboard",
+        sessionId: payload.sessionId || "s-clipboard-fail",
+        triggeredAt: 1,
+      }),
+      recordingSessionIdRef: { current: null },
+      removeJob: vi.fn(),
+      sessionsByIdRef: {
+        current: new Map([
+          ["s-clipboard-fail", { sessionId: "s-clipboard-fail", outputMode: "clipboard" }],
+        ]),
+      },
+      setProgress: vi.fn(),
+      setTranscript: vi.fn(),
+      toast,
+      updateStage: vi.fn(),
+      upsertJob: vi.fn(),
+      playCompletionCue,
+      playErrorCue,
+      electronAPI: {
+        writeClipboard: vi.fn(async () => {
+          throw new Error("clipboard locked");
+        }),
+        patchTranscriptionMeta: vi.fn(),
+      },
+      localStorage: { getItem: () => null },
+    });
+
+    await handler({
+      success: true,
+      text: "Retain this text",
+      rawText: "Retain this text",
+      source: "openai",
+      context: { sessionId: "s-clipboard-fail", outputMode: "clipboard" },
+    });
+
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Clipboard copy failed", variant: "destructive" })
+    );
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
+    expect((saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
+      status: "delivery_issue",
+      clipboardSucceeded: false,
+      delivery: { status: "failed", succeeded: false },
+    });
+    expect(playCompletionCue).not.toHaveBeenCalled();
+    expect(playErrorCue).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the total-delivery-failure message truthful when history saving also fails", async () => {
+    const saveTranscription = vi.fn(async () => ({ success: false }));
+    const toast = vi.fn();
+    const updateStage = vi.fn();
+    const setProgress = vi.fn();
+    const handler = createTranscriptionCompleteHandler({
+      activeSessionRef: { current: null },
+      audioManagerRef: {
+        current: {
+          safePaste: vi.fn(async () => false),
+          saveTranscription,
+          warmupStreamingConnection: vi.fn(),
+        },
+      },
+      jobsBySessionIdRef: { current: new Map() },
+      normalizeTriggerPayload: (payload: any) => ({
+        outputMode: payload.outputMode || "insert",
+        sessionId: payload.sessionId || "s-total-fail",
+        triggeredAt: 1,
+      }),
+      recordingSessionIdRef: { current: null },
+      removeJob: vi.fn(),
+      sessionsByIdRef: {
+        current: new Map([["s-total-fail", { sessionId: "s-total-fail", outputMode: "insert" }]]),
+      },
+      setProgress,
+      setTranscript: vi.fn(),
+      toast,
+      updateStage,
+      upsertJob: vi.fn(),
+      playCompletionCue: vi.fn(),
+      electronAPI: {
+        writeClipboard: vi.fn(async () => {
+          throw new Error("clipboard locked");
+        }),
+      },
+      localStorage: { getItem: () => null },
+    });
+
+    await handler({
+      success: true,
+      text: "Keep this recoverable text",
+      rawText: "Keep this recoverable text",
+      source: "openai",
+      context: { sessionId: "s-total-fail", outputMode: "insert" },
+    });
+
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "History Save Failed",
+        description: expect.stringContaining("Copy Last Dictation"),
+      })
+    );
+    expect(toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringContaining("copied to clipboard") })
+    );
+    expect(updateStage).toHaveBeenCalledWith(
+      "done",
+      expect.objectContaining({ message: "Automatic text delivery failed." })
+    );
+    expect(setProgress).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("Saved in") })
+    );
   });
 });

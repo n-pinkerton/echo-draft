@@ -23,11 +23,12 @@ export default function TranscriptionsHeader(props: Props) {
     <div className="flex items-center justify-between mb-3 px-1">
       <div className="flex items-center gap-2">
         <FileText size={14} className="text-primary" />
-        <h2 className="text-sm font-semibold text-foreground">Transcriptions</h2>
+        <h2 className="text-sm font-semibold text-foreground">Dictation history</h2>
         {historyLength > 0 && (
           <span className="text-[11px] text-muted-foreground tabular-nums">
-            ({filteredHistoryLength}
-            {filteredHistoryLength !== historyLength ? ` / ${historyLength}` : ""})
+            {filteredHistoryLength !== historyLength
+              ? `${filteredHistoryLength} of ${historyLength}`
+              : historyLength}
           </span>
         )}
       </div>
@@ -49,11 +50,10 @@ export default function TranscriptionsHeader(props: Props) {
             className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive hover:bg-destructive/10"
           >
             <Trash2 size={12} className="mr-1" />
-            Clear
+            Clear history
           </Button>
         )}
       </div>
     </div>
   );
 }
-

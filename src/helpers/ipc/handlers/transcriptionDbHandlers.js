@@ -1,3 +1,8 @@
+const {
+  flattenTranscriptionRow,
+  serializeTranscriptionCsv,
+} = require("../utils/transcriptionExport");
+
 function registerTranscriptionDbHandlers(
   { ipcMain, app, BrowserWindow, dialog, fs, path },
   { databaseManager, windowManager, broadcastToWindows }
@@ -55,41 +60,6 @@ function registerTranscriptionDbHandlers(
   ipcMain.handle("db-export-transcriptions", async (_event, format = "json") => {
     const exportFormat = format === "csv" ? "csv" : "json";
     const rows = databaseManager.getAllTranscriptions();
-    const flattenTranscriptionRow = (row) => {
-      const meta = row?.meta || {};
-      const timings = meta?.timings || {};
-      return {
-        id: row.id,
-        timestamp: row.timestamp,
-        text: row.text || "",
-        rawText: row.raw_text || "",
-        outputMode: meta.outputMode || "",
-        status: meta.status || "",
-        provider: meta.provider || meta.source || "",
-        model: meta.model || "",
-        source: meta.source || "",
-        pasteSucceeded:
-          meta.pasteSucceeded === true ? "true" : meta.pasteSucceeded === false ? "false" : "",
-        error: meta.error || "",
-        stopReason: meta.stopReason || timings.stopReason || "",
-        stopSource: meta.stopSource || timings.stopSource || "",
-        audioSizeBytes: timings.audioSizeBytes ?? "",
-        audioFormat: timings.audioFormat ?? "",
-        chunksCount: timings.chunksCount ?? "",
-        hotkeyToStartCallMs: timings.hotkeyToStartCallMs ?? "",
-        hotkeyToRecorderStartMs: timings.hotkeyToRecorderStartMs ?? "",
-        rawWords: meta.textMetrics?.rawWords ?? "",
-        cleanedWords: meta.textMetrics?.cleanedWords ?? "",
-        recordMs: timings.recordDurationMs ?? timings.recordMs ?? "",
-        transcribeMs:
-          timings.transcriptionProcessingDurationMs ?? timings.transcribeDurationMs ?? "",
-        cleanupMs: timings.reasoningProcessingDurationMs ?? timings.cleanupDurationMs ?? "",
-        pasteMs: timings.pasteDurationMs ?? "",
-        saveMs: timings.saveDurationMs ?? "",
-        totalMs: timings.totalDurationMs ?? "",
-      };
-    };
-
     const flattened = rows.map((row) => flattenTranscriptionRow(row));
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -124,20 +94,7 @@ function registerTranscriptionDbHandlers(
       };
     }
 
-    const headers = Object.keys(flattened[0] || { id: "", timestamp: "", text: "" });
-    const escapeCsvValue = (value) => {
-      const raw = value === null || value === undefined ? "" : String(value);
-      if (!/[",\n]/.test(raw)) {
-        return raw;
-      }
-      return `"${raw.replace(/\"/g, '\"\"')}"`;
-    };
-
-    const csvRows = [headers.join(",")];
-    for (const row of flattened) {
-      csvRows.push(headers.map((header) => escapeCsvValue(row[header])).join(","));
-    }
-    fs.writeFileSync(saveDialogResult.filePath, csvRows.join("\n"), "utf8");
+    fs.writeFileSync(saveDialogResult.filePath, serializeTranscriptionCsv(flattened), "utf8");
 
     return {
       success: true,

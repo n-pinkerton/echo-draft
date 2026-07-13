@@ -3,6 +3,7 @@ const { app, BrowserWindow, shell, dialog } = require("electron");
 const MenuManager = require("../menuManager");
 const DevServerManager = require("../devServerManager");
 const { CONTROL_PANEL_CONFIG } = require("../windowConfig");
+const { shouldSuppressWindowPresentation } = require("./e2eWindowPresentation");
 const { loadWindowContent } = require("./windowContentLoader");
 
 function openExternalUrl(url, { showError = true } = {}) {
@@ -34,7 +35,11 @@ async function loadControlPanel(manager) {
 }
 
 async function createControlPanelWindow(manager) {
+  const suppressPresentation = shouldSuppressWindowPresentation();
   if (manager.controlPanelWindow && !manager.controlPanelWindow.isDestroyed()) {
+    if (suppressPresentation) {
+      return;
+    }
     if (typeof app.focus === "function") {
       app.focus({ steal: true });
     }
@@ -83,15 +88,17 @@ async function createControlPanelWindow(manager) {
     }
   });
 
-  const visibilityTimer = setTimeout(() => {
-    if (!manager.controlPanelWindow || manager.controlPanelWindow.isDestroyed()) {
-      return;
-    }
-    if (!manager.controlPanelWindow.isVisible()) {
-      manager.controlPanelWindow.show();
-      manager.controlPanelWindow.focus();
-    }
-  }, 10000);
+  const visibilityTimer = suppressPresentation
+    ? null
+    : setTimeout(() => {
+        if (!manager.controlPanelWindow || manager.controlPanelWindow.isDestroyed()) {
+          return;
+        }
+        if (!manager.controlPanelWindow.isVisible()) {
+          manager.controlPanelWindow.show();
+          manager.controlPanelWindow.focus();
+        }
+      }, 10000);
 
   const clearVisibilityTimer = () => {
     clearTimeout(visibilityTimer);
@@ -99,6 +106,9 @@ async function createControlPanelWindow(manager) {
 
   manager.controlPanelWindow.once("ready-to-show", () => {
     clearVisibilityTimer();
+    if (suppressPresentation) {
+      return;
+    }
     // Show dock icon on macOS when control panel opens
     if (process.platform === "darwin" && app.dock) {
       app.dock.show();
@@ -138,10 +148,10 @@ async function createControlPanelWindow(manager) {
         return;
       }
       clearVisibilityTimer();
-      if (process.env.NODE_ENV !== "development") {
+      if (!suppressPresentation && process.env.NODE_ENV !== "development") {
         manager.showLoadFailureDialog("Control panel", errorCode, errorDescription, validatedURL);
       }
-      if (!manager.controlPanelWindow.isVisible()) {
+      if (!suppressPresentation && !manager.controlPanelWindow.isVisible()) {
         manager.controlPanelWindow.show();
         manager.controlPanelWindow.focus();
       }

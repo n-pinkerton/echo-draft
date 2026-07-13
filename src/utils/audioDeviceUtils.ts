@@ -36,3 +36,41 @@ export function isBuiltInMicrophone(label: string): boolean {
 
   return false;
 }
+
+export type SelectableAudioInput = {
+  deviceId: string;
+  label: string;
+  originalLabel: string;
+  isBuiltIn: boolean;
+};
+
+export function normalizeAudioInputDevices(
+  devices: Pick<MediaDeviceInfo, "kind" | "deviceId" | "label">[]
+): SelectableAudioInput[] {
+  const seenDeviceIds = new Set<string>();
+  let unnamedDeviceIndex = 0;
+
+  return devices.flatMap((device) => {
+    const deviceId = device.deviceId.trim();
+    if (
+      device.kind !== "audioinput" ||
+      !deviceId ||
+      deviceId === "default" ||
+      deviceId === "communications" ||
+      seenDeviceIds.has(deviceId)
+    ) {
+      return [];
+    }
+
+    seenDeviceIds.add(deviceId);
+    if (!device.label) unnamedDeviceIndex += 1;
+    return [
+      {
+        deviceId,
+        label: device.label || `Microphone ${unnamedDeviceIndex}`,
+        originalLabel: device.label,
+        isBuiltIn: isBuiltInMicrophone(device.label),
+      },
+    ];
+  });
+}

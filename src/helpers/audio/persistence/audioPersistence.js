@@ -1,16 +1,15 @@
-export async function safePaste(manager, text, options = {}) {
+import logger from "../../../utils/logger";
+
+export async function safePaste(_manager, text, options = {}) {
   try {
     await window.electronAPI.pasteText(text, options);
     return true;
   } catch (error) {
-    const message =
-      error?.message ?? (typeof error?.toString === "function" ? error.toString() : String(error));
-    manager.emitError(
-      {
-        title: "Paste Error",
-        description: `Failed to insert text automatically. ${message}`,
-      },
-      error
+    // Delivery orchestration owns the user-visible fallback, toast, stage, and single error cue.
+    logger.warn(
+      "Automatic insertion failed; delivery fallback will handle the result",
+      { error: error?.message || String(error) },
+      "paste"
     );
     return false;
   }
@@ -23,4 +22,3 @@ export async function saveTranscription(payload) {
     return { success: false, error: error?.message || String(error) };
   }
 }
-

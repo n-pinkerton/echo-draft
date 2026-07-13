@@ -1,6 +1,7 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 
 import { API_ENDPOINTS } from "../../config/constants";
+import { normalizeCleanupModelId } from "../../config/prompts";
 import { ECHO_DRAFT_CLOUD_MODE, normalizeCloudMode } from "../../utils/branding";
 import { useLocalStorage } from "../useLocalStorage";
 import type { ReasoningSettings } from "./settingsTypes";
@@ -38,6 +39,13 @@ export function useReasoningSettings() {
       deserialize: (value) => normalizeCloudMode(String(value)),
     }
   );
+
+  useEffect(() => {
+    const migratedModel = normalizeCleanupModelId(reasoningModel, reasoningProvider);
+    if (migratedModel && migratedModel !== reasoningModel) {
+      setReasoningModel(migratedModel);
+    }
+  }, [reasoningModel, reasoningProvider, setReasoningModel]);
 
   const updateReasoningSettings = useCallback(
     (settings: Partial<ReasoningSettings>) => {

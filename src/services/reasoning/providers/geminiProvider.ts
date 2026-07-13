@@ -70,7 +70,8 @@ export async function processWithGeminiProvider({
         endpoint: `${API_ENDPOINTS.GEMINI}/models/${model}:generateContent`,
         model,
         hasApiKey: Boolean(apiKey),
-        requestBody: JSON.stringify(requestBody).substring(0, 200),
+        inputTextLength: text.length,
+        maxOutputTokens: requestBody.generationConfig.maxOutputTokens,
       });
 
       const controller = new AbortController();
@@ -99,9 +100,8 @@ export async function processWithGeminiProvider({
           logger.logReasoning("GEMINI_API_ERROR_DETAIL", {
             status: res.status,
             statusText: res.statusText,
-            error: errorData,
+            errorCode: errorData.error?.code || errorData.code || null,
             errorMessage: errorData.error?.message || errorData.message || errorData.error,
-            fullResponse: errorText.substring(0, 500),
           });
 
           const errorMessage =
@@ -109,7 +109,13 @@ export async function processWithGeminiProvider({
             errorData.message ||
             errorData.error ||
             `Gemini API error: ${res.status}`;
-          throw new Error(errorMessage);
+          const apiError = new Error(errorMessage) as Error & {
+            status?: number;
+            response?: { status: number };
+          };
+          apiError.status = res.status;
+          apiError.response = { status: res.status };
+          throw apiError;
         }
 
         const jsonResponse = await res.json();
@@ -119,7 +125,6 @@ export async function processWithGeminiProvider({
           responseKeys: jsonResponse ? Object.keys(jsonResponse) : [],
           hasCandidates: Boolean(jsonResponse?.candidates),
           candidatesLength: jsonResponse?.candidates?.length || 0,
-          fullResponse: JSON.stringify(jsonResponse).substring(0, 500),
         });
 
         return jsonResponse;
@@ -143,7 +148,6 @@ export async function processWithGeminiProvider({
   if (!response.candidates || !response.candidates[0]) {
     logger.logReasoning("GEMINI_RESPONSE_ERROR", {
       model,
-      response: JSON.stringify(response).substring(0, 500),
       hasCandidate: Boolean(response.candidates),
       candidateCount: response.candidates?.length || 0,
     });
@@ -151,20 +155,32 @@ export async function processWithGeminiProvider({
   }
 
   const candidate = response.candidates[0];
+  const finishReason =
+    typeof candidate.finishReason === "string" ? candidate.finishReason.trim().toUpperCase() : null;
+  if (finishReason && finishReason !== "STOP") {
+    logger.logReasoning("GEMINI_OUTPUT_INCOMPLETE", {
+      model,
+      finishReason,
+      responseLength: candidate.content?.parts?.[0]?.text?.length || 0,
+    });
+    const error = new Error(
+      finishReason === "MAX_TOKENS"
+        ? "Gemini truncated the cleanup response at its output limit."
+        : `Gemini returned a non-complete cleanup response (${finishReason}).`
+    ) as Error & { code?: string; finishReason?: string };
+    error.code = "CLEANUP_INCOMPLETE";
+    error.finishReason = finishReason;
+    throw error;
+  }
+
   if (!candidate.content?.parts?.[0]?.text) {
     logger.logReasoning("GEMINI_EMPTY_RESPONSE", {
       model,
       finishReason: candidate.finishReason,
       hasContent: Boolean(candidate.content),
       hasParts: Boolean(candidate.content?.parts),
-      response: JSON.stringify(candidate).substring(0, 500),
     });
 
-    if (candidate.finishReason === "MAX_TOKENS") {
-      throw new Error(
-        "Gemini reached token limit before generating response. Try a shorter input or increase max tokens."
-      );
-    }
     throw new Error("Gemini returned empty response");
   }
 
@@ -179,4 +195,3 @@ export async function processWithGeminiProvider({
 
   return responseText;
 }
-

@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { SettingsSectionType } from "./SettingsModal";
 import { useDialogs } from "../hooks/useDialogs";
-import { useHotkey } from "../hooks/useHotkey";
 import { useToast } from "./ui/toastContext";
 import { useUpdater } from "../hooks/useUpdater";
 import { useSettings } from "../hooks/useSettings";
@@ -31,16 +30,28 @@ export default function ControlPanel() {
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [modeFilter, setModeFilter] = useState<"all" | "insert" | "clipboard" | "file">("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "success" | "error" | "cancelled">(
-    "all"
-  );
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "success" | "delivery_issue" | "error" | "cancelled"
+  >("all");
   const [providerFilter, setProviderFilter] = useState("all");
   const [isExporting, setIsExporting] = useState(false);
   const [showCloudMigrationBanner, setShowCloudMigrationBanner] = useState(false);
   const cloudMigrationProcessed = useRef(false);
-  const { hotkey } = useHotkey();
   const { toast } = useToast();
-  const { useReasoningModel, setUseLocalWhisper, setCloudTranscriptionMode } = useSettings();
+  const {
+    useReasoningModel,
+    reasoningModel,
+    cloudReasoningMode,
+    dictationKey,
+    dictationKeyClipboard,
+    activationMode,
+    preferBuiltInMic,
+    selectedMicDeviceId,
+    setPreferBuiltInMic,
+    setSelectedMicDeviceId,
+    setUseLocalWhisper,
+    setCloudTranscriptionMode,
+  } = useSettings();
   const { isSignedIn, isLoaded: authLoaded } = useAuth();
 
   const {
@@ -366,7 +377,15 @@ export default function ControlPanel() {
       filteredHistory={filteredHistory}
       providerOptions={providerOptions}
       isLoading={isLoading}
-      hotkey={hotkey}
+      hotkey={dictationKey}
+      clipboardHotkey={dictationKeyClipboard}
+      activationMode={activationMode}
+      cleanupModel={reasoningModel}
+      cleanupManagedByCloud={cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE && isSignedIn}
+      preferBuiltInMic={preferBuiltInMic}
+      selectedMicDeviceId={selectedMicDeviceId}
+      setPreferBuiltInMic={setPreferBuiltInMic}
+      setSelectedMicDeviceId={setSelectedMicDeviceId}
       searchQuery={searchQuery}
       setSearchQuery={setSearchQuery}
       modeFilter={modeFilter}

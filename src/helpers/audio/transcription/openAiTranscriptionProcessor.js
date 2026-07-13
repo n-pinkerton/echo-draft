@@ -35,6 +35,89 @@ const ASSISTANT_CONTENT_PATTERNS = [
 
 const hasOnlyPunctuation = (text = "") => /^[\s\p{P}\p{S}]+$/u.test(text);
 
+const getAgreementTokens = (text = "") =>
+  String(text)
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
+
+const getMultisetMatchCount = (sourceItems, candidateItems) => {
+  const remaining = new Map();
+  for (const item of candidateItems) {
+    remaining.set(item, (remaining.get(item) || 0) + 1);
+  }
+
+  let matched = 0;
+  for (const item of sourceItems) {
+    const count = remaining.get(item) || 0;
+    if (count > 0) {
+      matched += 1;
+      remaining.set(item, count - 1);
+    }
+  }
+  return matched;
+};
+
+const getAttemptAgreement = (primaryText, retryText) => {
+  const primaryTokens = getAgreementTokens(primaryText);
+  const retryTokens = getAgreementTokens(retryText);
+  if (primaryTokens.length === 0 || retryTokens.length === 0) {
+    return { agreed: false, tokenCoverage: 0, bigramCoverage: 0 };
+  }
+
+  const [shorterTokens, longerTokens] =
+    primaryTokens.length <= retryTokens.length
+      ? [primaryTokens, retryTokens]
+      : [retryTokens, primaryTokens];
+  const tokenMatches = getMultisetMatchCount(shorterTokens, longerTokens);
+  const tokenCoverage = tokenMatches / shorterTokens.length;
+  const symmetricTokenCoverage = tokenMatches / longerTokens.length;
+  const shorterBigrams = shorterTokens
+    .slice(0, -1)
+    .map((token, index) => `${token}\u0000${shorterTokens[index + 1]}`);
+  const longerBigrams = longerTokens
+    .slice(0, -1)
+    .map((token, index) => `${token}\u0000${longerTokens[index + 1]}`);
+  const bigramMatches = getMultisetMatchCount(shorterBigrams, longerBigrams);
+  const bigramCoverage =
+    shorterBigrams.length > 0 ? bigramMatches / shorterBigrams.length : tokenCoverage;
+  const symmetricBigramCoverage =
+    longerBigrams.length > 0 ? bigramMatches / longerBigrams.length : symmetricTokenCoverage;
+  const lengthRatio = longerTokens.length / shorterTokens.length;
+  const strictPrefixExtension =
+    shorterTokens.length < longerTokens.length &&
+    shorterTokens.every((token, index) => token === longerTokens[index]);
+  const baseAgreement =
+    tokenCoverage >= 0.72 && (shorterTokens.length < 4 || bigramCoverage >= 0.4);
+  const agreed =
+    baseAgreement &&
+    !strictPrefixExtension &&
+    symmetricTokenCoverage >= 0.9 &&
+    (longerTokens.length < 4 || symmetricBigramCoverage >= 0.8);
+  const requiresCorroboration = baseAgreement && !agreed && lengthRatio > 1.05;
+
+  return {
+    agreed,
+    baseAgreement,
+    requiresCorroboration,
+    tokenCoverage,
+    symmetricTokenCoverage,
+    bigramCoverage,
+    symmetricBigramCoverage,
+    lengthRatio,
+    strictPrefixExtension,
+  };
+};
+
+const createDisagreementError = (agreement) => {
+  const error = new Error(
+    "Transcription attempts disagreed, so EchoDraft will not choose the longer result automatically. Please retry."
+  );
+  error.code = "TRANSCRIPTION_ATTEMPTS_DISAGREE";
+  error.agreement = agreement;
+  return error;
+};
+
 const analyzeCandidate = (text, { durationSeconds = null, promptEchoDetected = false } = {}) => {
   const rawText = typeof text === "string" ? text : "";
   const trimmed = rawText.trim();
@@ -70,7 +153,8 @@ const analyzeCandidate = (text, { durationSeconds = null, promptEchoDetected = f
   if (
     promptEchoDetected &&
     wordsPerSecond === null &&
-    (words < PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS || chars < PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS)
+    (words < PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS ||
+      chars < PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS)
   ) {
     reasons.push("too-short-after-prompt-echo-retry");
   }
@@ -91,7 +175,8 @@ const analyzeCandidate = (text, { durationSeconds = null, promptEchoDetected = f
   if (
     promptEchoDetected &&
     wordsPerSecond === null &&
-    (words < PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS || chars < PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS)
+    (words < PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS ||
+      chars < PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS)
   ) {
     score -= 220;
   }
@@ -108,7 +193,10 @@ const analyzeCandidate = (text, { durationSeconds = null, promptEchoDetected = f
   };
 };
 
-const isHardReject = (analysis, { durationSeconds = null, promptEchoDetected = false } = {}) => {
+const isHardReject = (
+  analysis,
+  { durationSeconds = null, promptEchoDetected = false, corroboratedByRetry = false } = {}
+) => {
   if (!analysis.trimmed || hasOnlyPunctuation(analysis.trimmed)) {
     return true;
   }
@@ -118,7 +206,8 @@ const isHardReject = (analysis, { durationSeconds = null, promptEchoDetected = f
     typeof durationSeconds === "number" &&
     durationSeconds >= TRUNCATION_RETRY_MIN_DURATION_SECONDS &&
     analysis.words > 0 &&
-    analysis.wordsPerSecond < TRUNCATION_REJECT_MIN_WORDS_PER_SECOND
+    analysis.wordsPerSecond < TRUNCATION_REJECT_MIN_WORDS_PER_SECOND &&
+    !corroboratedByRetry
   ) {
     return true;
   }
@@ -144,12 +233,34 @@ const choosePreferredResult = (primaryResult, retryResult, context = {}) => {
   const retryText = typeof retryResult?.rawText === "string" ? retryResult.rawText : "";
   const primaryAnalysis = analyzeCandidate(primaryText, context);
   const retryAnalysis = analyzeCandidate(retryText, context);
+  const agreement = getAttemptAgreement(primaryText, retryText);
 
   if (retryAnalysis.score > primaryAnalysis.score) {
-    return { selected: retryResult, selectedName: "retry", primaryAnalysis, retryAnalysis };
+    if (context.requireAgreement === true && !agreement.agreed) {
+      return {
+        selected: null,
+        selectedName: "disagreement",
+        primaryAnalysis,
+        retryAnalysis,
+        agreement,
+      };
+    }
+    return {
+      selected: retryResult,
+      selectedName: "retry",
+      primaryAnalysis,
+      retryAnalysis,
+      agreement,
+    };
   }
 
-  return { selected: primaryResult, selectedName: "primary", primaryAnalysis, retryAnalysis };
+  return {
+    selected: primaryResult,
+    selectedName: "primary",
+    primaryAnalysis,
+    retryAnalysis,
+    agreement,
+  };
 };
 
 export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}, options = {}) {
@@ -188,9 +299,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
 
     const is4oModel = model.includes("gpt-4o");
     const shouldOptimize =
-      !is4oModel &&
-      !shouldSkipOptimizationForDuration &&
-      audioBlob.size > 1024 * 1024;
+      !is4oModel && !shouldSkipOptimizationForDuration && audioBlob.size > 1024 * 1024;
 
     transcriber.logger?.debug?.(
       "Audio optimization decision",
@@ -307,7 +416,6 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           model,
           provider,
           hasApiKey: !!apiKey,
-          apiKeyPreview: apiKey ? `${apiKey.substring(0, 8)}...` : "(none)",
         },
         "transcription"
       );
@@ -317,79 +425,112 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         headers.Authorization = `Bearer ${apiKey}`;
       }
 
-      const response = await fetch(endpoint, { method: "POST", headers, body: formData });
-      const responseContentType = response.headers.get("content-type") || "";
-      const requestId =
-        response.headers.get("x-request-id") ||
-        response.headers.get("openai-request-id") ||
-        null;
-
-      transcriber.logger?.debug?.(
-        "Transcription API response received",
-        {
-          status: response.status,
-          statusText: response.statusText,
-          contentType: responseContentType,
-          requestId,
-          ok: response.ok,
-        },
-        "transcription"
+      const requestTimeoutMs = Math.max(
+        60_000,
+        Math.min(300_000, 30_000 + (Number(durationSeconds) || 0) * 1_500)
       );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        transcriber.logger?.error?.(
-          "Transcription API error response",
-          { status: response.status, requestId, errorText },
-          "transcription"
-        );
-        throw new Error(`API Error: ${response.status} ${errorText}`);
-      }
-
-      let result;
-      const contentType = responseContentType;
-
-      if (contentType.includes("text/event-stream")) {
-        transcriber.logger?.debug?.(
-          "Processing streaming response",
-          { contentType, requestId },
-          "transcription"
-        );
-        const streamedText = await transcriber.readTranscriptionStream(response);
-        result = { text: streamedText };
-      } else {
-        const rawText = await response.text();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
+      try {
+        let response;
         try {
-          result = JSON.parse(rawText);
-        } catch (parseError) {
+          response = await fetch(endpoint, {
+            method: "POST",
+            headers,
+            body: formData,
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (error?.name === "AbortError") {
+            throw new Error(
+              `Transcription request timed out after ${Math.round(requestTimeoutMs / 1000)}s`
+            );
+          }
+          throw error;
+        }
+        const responseContentType = response.headers.get("content-type") || "";
+        const requestId =
+          response.headers.get("x-request-id") || response.headers.get("openai-request-id") || null;
+
+        transcriber.logger?.debug?.(
+          "Transcription API response received",
+          {
+            status: response.status,
+            statusText: response.statusText,
+            contentType: responseContentType,
+            requestId,
+            ok: response.ok,
+          },
+          "transcription"
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          let errorMessage = response.statusText || "Transcription request failed";
+          let errorCode = null;
+          try {
+            const errorData = JSON.parse(errorText);
+            errorMessage = errorData?.error?.message || errorData?.message || errorMessage;
+            errorCode = errorData?.error?.code || errorData?.code || null;
+          } catch {
+            // Keep the status text when a provider returns a non-JSON error page.
+          }
           transcriber.logger?.error?.(
-            "Failed to parse JSON response",
-            {
-              requestId,
-              parseError: parseError.message,
-              rawText: rawText.substring(0, 500),
-            },
+            "Transcription API error response",
+            { status: response.status, requestId, errorCode },
             "transcription"
           );
-          throw new Error(`Failed to parse API response: ${parseError.message}`);
+          throw new Error(`API Error: ${response.status} ${errorMessage}`);
         }
+
+        let result;
+        const contentType = responseContentType;
+
+        if (contentType.includes("text/event-stream")) {
+          transcriber.logger?.debug?.(
+            "Processing streaming response",
+            { contentType, requestId },
+            "transcription"
+          );
+          const streamedText = await transcriber.readTranscriptionStream(response);
+          result = { text: streamedText };
+        } else {
+          const rawText = await response.text();
+          try {
+            result = JSON.parse(rawText);
+          } catch (parseError) {
+            transcriber.logger?.error?.(
+              "Failed to parse JSON response",
+              {
+                requestId,
+                parseError: parseError.message,
+                responseLength: rawText.length,
+              },
+              "transcription"
+            );
+            throw new Error(`Failed to parse API response: ${parseError.message}`);
+          }
+        }
+
+        const attemptDurationMs = Math.round(performance.now() - apiCallStart);
+
+        if (result.text && result.text.trim().length > 0) {
+          return {
+            rawText: result.text,
+            source: "openai",
+            timings: { transcriptionProcessingDurationMs: attemptDurationMs },
+            dictionaryEntries: dictionaryEntriesUsed,
+            shouldAttachDictionaryPrompt,
+          };
+        }
+
+        throw new Error(
+          "No text transcribed - audio may be too short, silent, or in an unsupported format"
+        );
+      } finally {
+        // Keep the abort deadline active while the response body or SSE stream is consumed.
+        clearTimeout(timeoutId);
       }
-
-      const attemptDurationMs = Math.round(performance.now() - apiCallStart);
-
-      if (result.text && result.text.trim().length > 0) {
-        return {
-          rawText: result.text,
-          source: "openai",
-          timings: { transcriptionProcessingDurationMs: attemptDurationMs },
-          dictionaryEntries: dictionaryEntriesUsed,
-          shouldAttachDictionaryPrompt,
-        };
-      }
-
-      throw new Error(
-        "No text transcribed - audio may be too short, silent, or in an unsupported format"
-      );
     };
 
     const combineTranscriptionTimings = (attempts) => {
@@ -422,7 +563,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       ) {
         transcriber.logger?.warn?.(
           "Transcription appears to have echoed the dictionary prompt. Retrying without prompt.",
-          { model, provider, rawTextPreview: rawText.slice(0, 120) },
+          { model, provider, resultLength: rawText.length },
           "transcription"
         );
 
@@ -454,16 +595,40 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     };
 
     const attempts = [];
-    const primary = await transcribeWithDictionaryRetry({
-      attemptLabel: "primary",
-      attemptSkipDictionaryPrompt: skipDictionaryPrompt,
-      attemptForceNoStream: forceNoStream,
-    });
+    let recoveredFromIncompleteStream = false;
+    let incompleteStreamAttemptDurationMs = 0;
+    let primary;
+    const primaryStartedAt = performance.now();
+    try {
+      primary = await transcribeWithDictionaryRetry({
+        attemptLabel: "primary",
+        attemptSkipDictionaryPrompt: skipDictionaryPrompt,
+        attemptForceNoStream: forceNoStream,
+      });
+    } catch (error) {
+      if (!forceNoStream && error?.code === "TRANSCRIPTION_STREAM_INCOMPLETE") {
+        recoveredFromIncompleteStream = true;
+        incompleteStreamAttemptDurationMs = Math.round(performance.now() - primaryStartedAt);
+        transcriber.logger?.warn?.(
+          "Streaming transcription ended early; retrying with a complete non-streaming response",
+          { model, provider, durationSeconds },
+          "transcription"
+        );
+        primary = await transcribeWithDictionaryRetry({
+          attemptLabel: "retry-incomplete-stream",
+          attemptSkipDictionaryPrompt: skipDictionaryPrompt,
+          attemptForceNoStream: true,
+        });
+      } else {
+        throw error;
+      }
+    }
     attempts.push(...primary.attempts);
 
     let activeResult = primary.result;
     let effectiveSkipDictionaryPrompt = primary.skipDictionaryPrompt;
     let promptEchoDetected = primary.dictionaryPromptEchoDetected === true;
+    let corroboratedByRetry = false;
 
     const primaryText = typeof activeResult.rawText === "string" ? activeResult.rawText : "";
     const primaryAnalysis = analyzeCandidate(primaryText, {
@@ -472,9 +637,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     });
 
     const shouldRetryAssistantStyle =
-      !forceNoStream &&
-      primaryAnalysis.looksAssistantStyle &&
-      allowTruncationRetry;
+      !forceNoStream && primaryAnalysis.looksAssistantStyle && allowTruncationRetry;
 
     if (shouldRetryAssistantStyle) {
       transcriber.logger?.warn?.(
@@ -485,7 +648,6 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           durationSeconds,
           words: primaryAnalysis.words,
           assistantStyleScore: primaryAnalysis.assistantStyleScore,
-          preview: primaryText.slice(0, 160),
         },
         "transcription"
       );
@@ -576,8 +738,65 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         const selection = choosePreferredResult(activeResult, retry.result, {
           durationSeconds,
           promptEchoDetected,
+          requireAgreement: true,
         });
-        if (selection.selectedName === "retry") {
+        corroboratedByRetry = selection.agreement.agreed;
+        if (selection.selectedName === "disagreement") {
+          if (!selection.agreement.requiresCorroboration) {
+            throw createDisagreementError(selection.agreement);
+          }
+
+          transcriber.logger?.warn?.(
+            "Longer transcription needs an independent corroborating attempt",
+            {
+              model,
+              provider,
+              lengthRatio: Number(selection.agreement.lengthRatio.toFixed(3)),
+              symmetricTokenCoverage: Number(selection.agreement.symmetricTokenCoverage.toFixed(3)),
+            },
+            "transcription"
+          );
+
+          let corroboration;
+          try {
+            corroboration = await transcribeWithDictionaryRetry({
+              attemptLabel: "corroborate-truncation",
+              // Vary the prompt conditions so this is evidence from a distinct request path,
+              // not merely a repeat that can reproduce a prompt-correlated hallucination.
+              attemptSkipDictionaryPrompt: true,
+              attemptForceNoStream: true,
+            });
+          } catch (error) {
+            const disagreementError = createDisagreementError(selection.agreement);
+            disagreementError.cause = error;
+            throw disagreementError;
+          }
+          attempts.push(...corroboration.attempts);
+          promptEchoDetected =
+            promptEchoDetected || corroboration.dictionaryPromptEchoDetected === true;
+
+          const corroborationSelection = choosePreferredResult(retry.result, corroboration.result, {
+            durationSeconds,
+            promptEchoDetected,
+            requireAgreement: true,
+          });
+          if (!corroborationSelection.agreement.agreed) {
+            throw createDisagreementError(corroborationSelection.agreement);
+          }
+
+          corroboratedByRetry = true;
+          activeResult = corroborationSelection.selected;
+          transcriber.logger?.warn?.(
+            "Using independently corroborated truncation recovery",
+            {
+              selectedAttempt: corroborationSelection.selectedName,
+              tokenCoverage: Number(
+                corroborationSelection.agreement.symmetricTokenCoverage.toFixed(3)
+              ),
+            },
+            "transcription"
+          );
+        } else if (selection.selectedName === "retry") {
           transcriber.logger?.warn?.(
             "Using retry transcription result",
             {
@@ -602,6 +821,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           );
         }
       } catch (retryError) {
+        if (retryError?.code === "TRANSCRIPTION_ATTEMPTS_DISAGREE") {
+          throw retryError;
+        }
         transcriber.logger?.warn?.(
           "Truncation retry failed; continuing with primary transcription",
           { error: retryError?.message || String(retryError) },
@@ -615,7 +837,11 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       durationSeconds,
       promptEchoDetected,
     });
-    const hardReject = isHardReject(finalAnalysis, { durationSeconds, promptEchoDetected });
+    const hardReject = isHardReject(finalAnalysis, {
+      durationSeconds,
+      promptEchoDetected,
+      corroboratedByRetry,
+    });
     if (hardReject) {
       transcriber.logger?.warn?.(
         "Rejecting unreliable transcription output",
@@ -625,9 +851,10 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           durationSeconds,
           words: finalAnalysis.words,
           wordsPerSecond:
-            finalAnalysis.wordsPerSecond !== null ? Number(finalAnalysis.wordsPerSecond.toFixed(3)) : null,
+            finalAnalysis.wordsPerSecond !== null
+              ? Number(finalAnalysis.wordsPerSecond.toFixed(3))
+              : null,
           reasons: finalAnalysis.reasons,
-          preview: finalRawText.slice(0, 200),
           attemptsCount: attempts.length,
           promptEchoDetected,
         },
@@ -639,28 +866,63 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     }
 
     const combinedTimings = combineTranscriptionTimings(attempts);
-    timings.transcriptionProcessingDurationMs = combinedTimings.transcriptionProcessingDurationMs;
-    timings.transcriptionAttemptCount = combinedTimings.transcriptionAttemptCount;
-    if (combinedTimings.transcriptionRetried) {
+    timings.transcriptionProcessingDurationMs =
+      combinedTimings.transcriptionProcessingDurationMs + incompleteStreamAttemptDurationMs;
+    timings.transcriptionAttemptCount =
+      combinedTimings.transcriptionAttemptCount + (recoveredFromIncompleteStream ? 1 : 0);
+    if (combinedTimings.transcriptionRetried || recoveredFromIncompleteStream) {
       timings.transcriptionRetried = true;
+    }
+    if (recoveredFromIncompleteStream) {
+      timings.transcriptionStreamRecovery = true;
     }
 
     let cleanedText = finalRawText;
     let source = activeResult.source || "openai";
+    let cleanup = null;
 
     if (transcriber.shouldApplyReasoningCleanup?.()) {
       transcriber.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
       const reasoningStart = performance.now();
-      cleanedText = await transcriber.reasoningCleanupService.processTranscription(
-        finalRawText,
-        source,
-        transcriber.getCleanupEnabledOverride?.() ?? null
-      );
+      const cleanupEnabledOverride = transcriber.getCleanupEnabledOverride?.() ?? null;
+      if (
+        typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome === "function"
+      ) {
+        const cleanupResult =
+          await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
+            finalRawText,
+            source,
+            cleanupEnabledOverride
+          );
+        cleanedText = cleanupResult.text;
+        cleanup = cleanupResult.cleanup;
+      } else {
+        cleanedText = await transcriber.reasoningCleanupService.processTranscription(
+          finalRawText,
+          source,
+          cleanupEnabledOverride
+        );
+        cleanup = {
+          requested: true,
+          attempted: true,
+          applied: true,
+          status: cleanedText === finalRawText ? "unchanged" : "applied",
+        };
+      }
       timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
-      source = `${source}-reasoned`;
+      if (cleanup?.applied) {
+        source = `${source}-reasoned`;
+      }
     }
 
-    return { success: true, text: cleanedText || finalRawText, rawText: finalRawText, source, timings };
+    return {
+      success: true,
+      text: cleanedText || finalRawText,
+      rawText: finalRawText,
+      source,
+      timings,
+      ...(cleanup ? { cleanup } : {}),
+    };
   } catch (error) {
     const isOpenAIMode = localStorage.getItem("useLocalWhisper") !== "true";
 
@@ -674,13 +936,44 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
 
         const result = await window.electronAPI.transcribeLocalWhisper(arrayBuffer, options);
         if (result.success && result.text) {
-          const text = await transcriber.reasoningCleanupService.processTranscription(
-            result.text,
-            "local-fallback",
-            transcriber.getCleanupEnabledOverride?.() ?? null
-          );
-          if (text) {
-            return { success: true, text, source: "local-fallback" };
+          const rawText = result.text;
+          if (
+            typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome ===
+            "function"
+          ) {
+            const cleanupResult =
+              await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
+                rawText,
+                "local-fallback",
+                transcriber.getCleanupEnabledOverride?.() ?? null
+              );
+            if (cleanupResult.text) {
+              return {
+                success: true,
+                text: cleanupResult.text,
+                rawText,
+                source: cleanupResult.cleanup?.applied
+                  ? "local-fallback-reasoned"
+                  : "local-fallback",
+                timings,
+                cleanup: cleanupResult.cleanup,
+              };
+            }
+          } else {
+            const text = await transcriber.reasoningCleanupService.processTranscription(
+              rawText,
+              "local-fallback",
+              transcriber.getCleanupEnabledOverride?.() ?? null
+            );
+            if (text) {
+              return {
+                success: true,
+                text,
+                rawText,
+                source: "local-fallback-reasoned",
+                timings,
+              };
+            }
           }
         }
 

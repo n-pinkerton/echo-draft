@@ -138,7 +138,11 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
         if (event?.model) {
           modelRef.current = String(event.model);
         }
-        if (typeof event?.stage === "string" && event.stage && event.stage !== lastStageRef.current) {
+        if (
+          typeof event?.stage === "string" &&
+          event.stage &&
+          event.stage !== lastStageRef.current
+        ) {
           lastStageRef.current = event.stage;
           setFileTranscribeStageLabel(event.stageLabel || event.stage);
           setFileTranscribeMessage(typeof event.message === "string" ? event.message : null);
@@ -189,6 +193,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
               provider,
               model,
               cleanupEnabled: fileCleanupEnabled,
+              ...(result.cleanup ? { cleanup: result.cleanup } : {}),
               file: context.file,
               timings: {
                 ...(result.timings || {}),
@@ -201,11 +206,16 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
             throw new Error("Saved transcription to history failed");
           }
 
+          const cleanupFallback = Boolean(
+            result.cleanup?.requested && result.cleanup?.status === "fallback"
+          );
           toast({
-            title: "Transcribed",
-            description: "Saved to history.",
-            variant: "success",
-            duration: 2500,
+            title: cleanupFallback ? "Transcribed · original preserved" : "Transcribed",
+            description: cleanupFallback
+              ? "Cleanup was safely skipped and the original transcript was saved."
+              : "Saved to history.",
+            variant: cleanupFallback ? "default" : "success",
+            duration: cleanupFallback ? 5000 : 2500,
           });
 
           logger.info(
@@ -257,4 +267,3 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
     transcribeAudioFile,
   };
 }
-

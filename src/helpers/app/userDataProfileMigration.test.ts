@@ -47,10 +47,7 @@ describe("userDataProfileMigration", () => {
     writeFile(path.join(currentPath, "transcriptions.db"), Buffer.alloc(20480));
     writeFile(path.join(sourcePath, ".env"), "OPENAI_API_KEY=sk-test\nDICTATION_KEY=F10\n");
     writeFile(path.join(sourcePath, "transcriptions.db"), Buffer.alloc(200000));
-    writeFile(
-      path.join(sourcePath, "Local Storage", "leveldb", "000003.log"),
-      Buffer.alloc(4096)
-    );
+    writeFile(path.join(sourcePath, "Local Storage", "leveldb", "000003.log"), Buffer.alloc(4096));
 
     const currentStats = getProfileStats(currentPath);
     const sourceStats = getProfileStats(sourcePath);
@@ -75,7 +72,7 @@ describe("userDataProfileMigration", () => {
       path.join(legacyPath, "Local Storage", "leveldb", "000003.log"),
       "onboardingCompleted=true"
     );
-    writeFile(path.join(legacyPath, "Preferences"), "{\"window\":{\"x\":10}}");
+    writeFile(path.join(legacyPath, "Preferences"), '{"window":{"x":10}}');
 
     const app = {
       getPath: (name: string) => {
@@ -88,11 +85,36 @@ describe("userDataProfileMigration", () => {
     const result = migrateUserDataProfile({ app, platform: "win32", logger: { log: () => {} } });
 
     expect(result.migrated).toBe(true);
-    expect(fs.readFileSync(path.join(currentPath, ".env"), "utf8")).toContain("OPENAI_API_KEY=sk-test");
-    expect(fs.readFileSync(path.join(currentPath, "Preferences"), "utf8")).toContain("\"x\":10");
-    expect(
-      fs.existsSync(path.join(currentPath, "Local Storage", "leveldb", "000003.log"))
-    ).toBe(true);
+    expect(fs.readFileSync(path.join(currentPath, ".env"), "utf8")).toContain(
+      "OPENAI_API_KEY=sk-test"
+    );
+    expect(fs.readFileSync(path.join(currentPath, "Preferences"), "utf8")).toContain('"x":10');
+    expect(fs.existsSync(path.join(currentPath, "Local Storage", "leveldb", "000003.log"))).toBe(
+      true
+    );
     expect(fs.existsSync(path.join(currentPath, PROFILE_MIGRATION_MARKER))).toBe(true);
+  });
+
+  it("keeps E2E profiles isolated from real user data", () => {
+    const currentPath = "C:\\Temp\\EchoDraft-staging-e2e-run";
+    const app = {
+      getPath: (name: string) => {
+        if (name === "userData") return currentPath;
+        throw new Error(`E2E isolation should not inspect ${name}`);
+      },
+    };
+
+    const result = migrateUserDataProfile({
+      app,
+      env: { OPENWHISPR_E2E: "true" },
+      logger: { log: () => {} },
+    });
+
+    expect(result).toEqual({
+      migrated: false,
+      currentPath,
+      sourcePath: null,
+      reason: "e2e-isolated",
+    });
   });
 });

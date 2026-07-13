@@ -18,6 +18,8 @@ export const createAudioManagerCallbacks = (deps) => {
     updateStage,
     upsertJob,
     onTranscriptionComplete,
+    playErrorCue,
+    playStopCue,
   } = deps;
 
   return {
@@ -26,13 +28,18 @@ export const createAudioManagerCallbacks = (deps) => {
       setIsProcessing(isProcessing);
       setIsStreaming(isStreaming ?? false);
 
-      logger.trace("AudioManager state change", { isRecording, isProcessing, isStreaming }, "dictation");
+      logger.trace(
+        "AudioManager state change",
+        { isRecording, isProcessing, isStreaming },
+        "dictation"
+      );
 
       if (!isStreaming) {
         setPartialTranscript("");
       }
     },
     onError: (error) => {
+      void playErrorCue?.();
       activeSessionRef.current = null;
       const wasRecording = Boolean(recordingSessionIdRef.current);
       recordingSessionIdRef.current = null;
@@ -65,7 +72,12 @@ export const createAudioManagerCallbacks = (deps) => {
         return;
       }
 
-      const contextSessionId = typeof event?.context?.sessionId === "string" ? event.context.sessionId : null;
+      if (event.recordingClosed === true) {
+        void playStopCue?.();
+      }
+
+      const contextSessionId =
+        typeof event?.context?.sessionId === "string" ? event.context.sessionId : null;
       const jobIdFromEvent =
         typeof event?.jobId === "number" && Number.isFinite(event.jobId) ? event.jobId : null;
 
@@ -146,8 +158,10 @@ export const createAudioManagerCallbacks = (deps) => {
 
       setProgress((prev) => ({
         ...prev,
-        generatedChars: event.generatedChars !== undefined ? event.generatedChars : prev.generatedChars,
-        generatedWords: event.generatedWords !== undefined ? event.generatedWords : prev.generatedWords,
+        generatedChars:
+          event.generatedChars !== undefined ? event.generatedChars : prev.generatedChars,
+        generatedWords:
+          event.generatedWords !== undefined ? event.generatedWords : prev.generatedWords,
         provider: event.provider !== undefined ? event.provider : prev.provider,
         model: event.model !== undefined ? event.model : prev.model,
         message: event.message !== undefined ? event.message : prev.message,

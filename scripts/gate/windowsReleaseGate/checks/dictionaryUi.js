@@ -16,7 +16,17 @@ async function checkDictionaryUi(panel, record, exportDir, runId) {
   await panel.click('button[data-section-id="dictionary"]');
   await panel.waitForSelector('textarea[placeholder^="Paste one word"]', 15000);
 
-  const batchText = "EchoDraft\nKubernetes\nEchoDraft Cloud\n;Dr. Martinez,  \n\n";
+  const existingDictionary = await panel.eval(`(async () => window.electronAPI.getDictionary())()`);
+  const existingNormalized = Array.isArray(existingDictionary)
+    ? existingDictionary.map((word) => safeString(word).trim()).filter(Boolean)
+    : [];
+  const fixtureSuffix = runId.replace(/[^A-Za-z0-9]/g, "").slice(-18);
+  const expectedWords = [
+    `GateAlpha-${fixtureSuffix}`,
+    `GateBeta-${fixtureSuffix}`,
+    `GateGamma-${fixtureSuffix}`,
+  ];
+  const batchText = `${expectedWords[0]}\n${expectedWords[1]}\n${expectedWords[0].toLowerCase()}\n;${expectedWords[2]},  \n\n`;
   await panel.setInputValue('textarea[placeholder^="Paste one word"]', batchText);
   await sleep(250);
   const previewText = await panel.eval(`
@@ -28,7 +38,8 @@ async function checkDictionaryUi(panel, record, exportDir, runId) {
     `);
   record(
     "Dictionary preview shows dedupe counts",
-    safeString(previewText).includes("duplicates removed") && safeString(previewText).includes("1 duplicates removed"),
+    safeString(previewText).includes("duplicates removed") &&
+      safeString(previewText).includes("1 duplicates removed"),
     safeString(previewText)
   );
 
@@ -45,17 +56,23 @@ async function checkDictionaryUi(panel, record, exportDir, runId) {
     `);
   await sleep(700);
 
-  const dictWordsAfterMerge = await panel.eval(`(async () => window.electronAPI.getDictionary())()`);
+  const dictWordsAfterMerge = await panel.eval(
+    `(async () => window.electronAPI.getDictionary())()`
+  );
   const dictWordsNormalized = Array.isArray(dictWordsAfterMerge)
     ? dictWordsAfterMerge.map((word) => safeString(word).trim()).filter(Boolean)
     : [];
+  const missingWords = expectedWords.filter((word) => !dictWordsNormalized.includes(word));
   record(
     "Dictionary merge writes to DB",
-    dictWordsNormalized.length === 3 &&
-      dictWordsNormalized.includes("EchoDraft") &&
-      dictWordsNormalized.includes("Kubernetes") &&
-      dictWordsNormalized.includes("Dr. Martinez"),
-    JSON.stringify(dictWordsAfterMerge)
+    dictWordsNormalized.length === existingNormalized.length + expectedWords.length &&
+      missingWords.length === 0,
+    JSON.stringify({
+      beforeCount: existingNormalized.length,
+      afterCount: dictWordsNormalized.length,
+      expectedAdded: expectedWords.length,
+      missingCount: missingWords.length,
+    })
   );
 
   // Export dictionary via E2E IPC and round-trip import
@@ -63,12 +80,25 @@ async function checkDictionaryUi(panel, record, exportDir, runId) {
   const exportDictResult = await panel.eval(
     `(async () => window.electronAPI.e2eExportDictionary("txt", ${JSON.stringify(exportDictPath)}) )()`
   );
-  record("E2E export dictionary (TXT)", Boolean(exportDictResult?.success), JSON.stringify(exportDictResult));
+  record(
+    "E2E export dictionary (TXT)",
+    Boolean(exportDictResult?.success),
+    JSON.stringify({ success: exportDictResult?.success, count: exportDictResult?.count })
+  );
 
   const importDictResult = await panel.eval(
     `(async () => window.electronAPI.e2eImportDictionary(${JSON.stringify(exportDictPath)}) )()`
   );
-  record("E2E import dictionary (TXT)", Boolean(importDictResult?.success), JSON.stringify(importDictResult));
+  record(
+    "E2E import dictionary (TXT)",
+    Boolean(importDictResult?.success),
+    JSON.stringify({
+      success: importDictResult?.success,
+      parsedCount: importDictResult?.parsedCount,
+      uniqueCount: importDictResult?.uniqueCount,
+      duplicatesRemoved: importDictResult?.duplicatesRemoved,
+    })
+  );
 
   return { exportDictPath };
 }

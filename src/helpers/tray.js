@@ -30,6 +30,7 @@ class TrayManager {
     this.lastActionStatusAt = 0;
     this.attachedControlPanels = new WeakSet();
     this.dictationStatus = { stage: "idle", stageLabel: "Ready", message: "" };
+    this.transientTranscript = "";
     this.statusImages = new Map();
     this.baseTrayIcon = null;
   }
@@ -181,13 +182,7 @@ class TrayManager {
         candidatePaths.push(
           path.join(process.resourcesPath, "src", "assets", trayAssetFileName),
           path.join(process.resourcesPath, "assets", trayAssetFileName),
-          path.join(
-            process.resourcesPath,
-            "app.asar.unpacked",
-            "src",
-            "assets",
-            trayAssetFileName
-          ),
+          path.join(process.resourcesPath, "app.asar.unpacked", "src", "assets", trayAssetFileName),
           path.join(__dirname, "..", "..", "src", "assets", trayAssetFileName),
           path.join(app.getAppPath(), "src", "assets", trayAssetFileName)
         );
@@ -297,6 +292,12 @@ class TrayManager {
   }
 
   updateDictationStatus(status = {}) {
+    if (Object.prototype.hasOwnProperty.call(status, "transcriptToCopy")) {
+      // Keep the newest renderer transcript in memory so tray recovery still works if DB saving
+      // fails. This value is never logged, persisted, or included in status render snapshots.
+      this.transientTranscript =
+        typeof status.transcriptToCopy === "string" ? status.transcriptToCopy : "";
+    }
     const nextStatus = this.normalizeTrayStatus(status);
     const previousSnapshot = this.getStatusRenderSnapshot(this.dictationStatus);
     const nextSnapshot = this.getStatusRenderSnapshot(nextStatus);
@@ -350,9 +351,7 @@ class TrayManager {
   getStatusIconKey() {
     const stage = this.dictationStatus?.stage || "idle";
     if (stage === "idle") {
-      return this.lastActionStatus && Date.now() - this.lastActionStatusAt < 2500
-        ? "done"
-        : "idle";
+      return this.lastActionStatus && Date.now() - this.lastActionStatusAt < 2500 ? "done" : "idle";
     }
     return STATUS_ICON_COLORS[stage] ? stage : "idle";
   }
@@ -529,6 +528,9 @@ class TrayManager {
     if (status.stage === "error" && status.message) {
       return `Status: Error - ${status.message}`;
     }
+    if (status.stage === "done" && status.message) {
+      return `Status: ${status.message}`;
+    }
     return `Status: ${label}`;
   }
 
@@ -554,10 +556,16 @@ class TrayManager {
 
   async copyLastTranscription() {
     const latest = this.getLatestTranscription();
-    const text = typeof latest?.text === "string" ? latest.text : "";
+    const transientText =
+      typeof this.transientTranscript === "string" ? this.transientTranscript : "";
+    const text = transientText.trim()
+      ? transientText
+      : typeof latest?.text === "string"
+        ? latest.text
+        : "";
 
     if (!text.trim()) {
-      this.setTemporaryStatus("Status: No saved dictation");
+      this.setTemporaryStatus("Status: No dictation to copy");
       return;
     }
 
@@ -579,6 +587,7 @@ class TrayManager {
     const latestTranscription = this.getLatestTranscription();
     const latestText =
       typeof latestTranscription?.text === "string" ? latestTranscription.text.trim() : "";
+    const copyText = this.transientTranscript.trim() || latestText;
     const statusLabel = this.getStatusLabel(dictationVisible);
     const isRecording = this.dictationStatus?.stage === "listening";
     const isBusy = ["starting", "transcribing", "cleaning", "inserting", "saving"].includes(
@@ -618,7 +627,7 @@ class TrayManager {
       },
       {
         label: "Copy Last Dictation",
-        enabled: Boolean(latestText),
+        enabled: Boolean(copyText),
         click: async () => {
           await this.copyLastTranscription();
         },

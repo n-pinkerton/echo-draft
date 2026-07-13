@@ -185,24 +185,46 @@ function registerAssemblyAiStreamingHandlers(
   });
 
   ipcMain.handle("assemblyai-streaming-stop", async () => {
+    const session = streamingState.get();
+    if (!session) {
+      return {
+        success: false,
+        text: "",
+        error: "No active streaming session to finalize",
+        terminationConfirmed: false,
+        terminationTimedOut: false,
+      };
+    }
+
     try {
-      let result = { text: "" };
-      if (streamingState.get()) {
-        result = await streamingState.get().disconnect(true);
-        streamingState.get().cleanupAll();
-        streamingState.clear();
-      }
+      const result = await session.disconnect(true);
+      const terminationConfirmed = result?.terminationConfirmed === true;
 
       return {
-        success: true,
-        text: result?.text || "",
+        success: terminationConfirmed,
+        text: terminationConfirmed ? result?.text || "" : "",
+        ...(terminationConfirmed
+          ? {}
+          : { error: "The streaming service did not confirm transcription completion" }),
         audioDuration: result?.audioDuration ?? null,
         audioStats: result?.audioStats ?? null,
+        terminationConfirmed,
         terminationTimedOut: Boolean(result?.terminationTimedOut),
       };
     } catch (error) {
       debugLogger.error("AssemblyAI streaming stop error", { error: error.message });
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        text: "",
+        error: error.message,
+        terminationConfirmed: false,
+        terminationTimedOut: false,
+      };
+    } finally {
+      session.cleanupAll();
+      if (streamingState.get() === session) {
+        streamingState.clear();
+      }
     }
   });
 
@@ -215,4 +237,3 @@ function registerAssemblyAiStreamingHandlers(
 }
 
 module.exports = { registerAssemblyAiStreamingHandlers };
-

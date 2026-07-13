@@ -24,6 +24,11 @@ const VOLATILE_PROFILE_ENTRIES = new Set([
   "logs",
 ]);
 
+function isTruthyFlag(value) {
+  if (typeof value !== "string") return false;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
 function getCandidateUserDataPaths(appDataPath, platform, currentPath) {
   const candidates = [];
 
@@ -213,12 +218,22 @@ function migrateUserDataProfile({
   app,
   platform = process.platform,
   logger = console,
+  env = process.env,
 } = {}) {
   if (!app) {
     throw new Error("migrateUserDataProfile requires an Electron app instance");
   }
 
   const currentPath = app.getPath("userData");
+  if (isTruthyFlag(env?.OPENWHISPR_E2E)) {
+    return {
+      migrated: false,
+      currentPath,
+      sourcePath: null,
+      reason: "e2e-isolated",
+    };
+  }
+
   const appDataPath = app.getPath("appData");
   const candidatePaths = getCandidateUserDataPaths(appDataPath, platform, currentPath);
 
@@ -249,9 +264,7 @@ function migrateUserDataProfile({
     "utf8"
   );
 
-  logger.log?.(
-    `[ProfileMigration] migrated user data from ${sourceStats.path} to ${currentPath}`
-  );
+  logger.log?.(`[ProfileMigration] migrated user data from ${sourceStats.path} to ${currentPath}`);
 
   return {
     migrated: true,

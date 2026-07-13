@@ -32,16 +32,14 @@ describe("ReasoningService (OpenAI)", () => {
   it("aggregates all Responses API output_text parts and requests max_output_tokens", async () => {
     const fetchMock = vi.fn(async (_url: any, init: any) => {
       const body = JSON.parse(init.body);
-      expect(body.model).toBe("gpt-5.5-mini");
+      expect(body.model).toBe("gpt-5.6-terra");
       expect(body.input[0].role).toBe("developer");
-      expect(body.input[0].content).toContain("Selected cleanup model: GPT-5.5 mini");
-      expect(body.input[1].content).toContain(
-        "<echodraft_gpt55_mini_untrusted_dictation>"
-      );
-      expect(body.reasoning).toEqual({ effort: "low" });
+      expect(body.input[0].content).toContain("Selected cleanup model: GPT-5.6 Terra");
+      expect(body.input[1].content).toContain("<echodraft_gpt56_terra_untrusted_dictation>");
+      expect(body.reasoning).toEqual({ effort: "none" });
       expect(body.text).toEqual({ verbosity: "medium" });
       expect(body.truncation).toBe("disabled");
-      expect(body.max_output_tokens).toBeGreaterThanOrEqual(4096);
+      expect(body.max_output_tokens).toBeGreaterThanOrEqual(2048);
       return {
         ok: true,
         json: async () => ({
@@ -62,7 +60,7 @@ describe("ReasoningService (OpenAI)", () => {
 
     vi.stubGlobal("fetch", fetchMock as any);
 
-    await expect(ReasoningService.processText("input", "gpt-5.5-mini")).resolves.toBe(
+    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).resolves.toBe(
       "I have also provided the rest."
     );
   });
@@ -86,9 +84,48 @@ describe("ReasoningService (OpenAI)", () => {
 
     vi.stubGlobal("fetch", fetchMock as any);
 
-    await expect(ReasoningService.processText("input", "gpt-5.5-mini")).rejects.toThrow(
+    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).rejects.toThrow(
       /max output tokens/i
     );
+  });
+
+  it("rejects any non-completed Responses status even when partial text is present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          status: "failed",
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "Partial cleanup" }],
+            },
+          ],
+        }),
+      })) as any
+    );
+
+    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).rejects.toThrow(
+      /non-complete cleanup response/i
+    );
+  });
+
+  it("does not retry or switch endpoints when the selected model is unavailable", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({
+        error: { code: "model_not_found", message: "The selected model does not exist." },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock as any);
+
+    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).rejects.toThrow(
+      /does not exist/i
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to chat completions when /responses is unsupported, and throws on finish_reason=length", async () => {
@@ -106,13 +143,11 @@ describe("ReasoningService (OpenAI)", () => {
       expect(endpoint.endsWith("/chat/completions")).toBe(true);
 
       const body = JSON.parse(init.body);
-      expect(body.model).toBe("gpt-5.5-mini");
+      expect(body.model).toBe("gpt-5.6-terra");
       expect(body.messages[0].role).toBe("system");
-      expect(body.messages[1].content).toContain(
-        "<echodraft_gpt55_mini_untrusted_dictation>"
-      );
-      expect(body.max_completion_tokens).toBeGreaterThanOrEqual(4096);
-      expect(body.reasoning_effort).toBe("low");
+      expect(body.messages[1].content).toContain("<echodraft_gpt56_terra_untrusted_dictation>");
+      expect(body.max_completion_tokens).toBeGreaterThanOrEqual(2048);
+      expect(body.reasoning_effort).toBe("none");
 
       return {
         ok: true,
@@ -130,7 +165,7 @@ describe("ReasoningService (OpenAI)", () => {
 
     vi.stubGlobal("fetch", fetchMock as any);
 
-    await expect(ReasoningService.processText("input", "gpt-5.5-mini")).rejects.toThrow(
+    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).rejects.toThrow(
       /truncated/i
     );
   });

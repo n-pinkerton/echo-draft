@@ -32,7 +32,7 @@ function setupShortcuts(
   manager,
   hotkey = "Control+Super",
   callback,
-  { globalShortcut, debugLogger, platform = process.platform } = {}
+  { globalShortcut, debugLogger, platform = process.platform, forceRefresh = false } = {}
 ) {
   if (!callback) {
     throw new Error("Callback function is required for hotkey setup");
@@ -47,6 +47,7 @@ function setupShortcuts(
   // default value but it's not actually registered yet.
   const checkAccelerator = hotkey.startsWith("Fn+") ? hotkey.slice(3) : hotkey;
   if (
+    !forceRefresh &&
     hotkey === manager.currentHotkey &&
     hotkey !== "GLOBE" &&
     !isRightSideModifier(hotkey) &&
@@ -57,6 +58,23 @@ function setupShortcuts(
       `[HotkeyManager] Hotkey "${hotkey}" is already the current hotkey and registered, no change needed`
     );
     return { success: true, hotkey };
+  }
+
+  if (
+    forceRefresh &&
+    hotkey !== "GLOBE" &&
+    !isRightSideModifier(hotkey) &&
+    !isModifierOnlyHotkey(hotkey)
+  ) {
+    try {
+      // Force a real OS re-registration after resume/unlock. isRegistered() can still report
+      // true even when Windows has stopped delivering the accelerator to this process.
+      globalShortcut.unregister(checkAccelerator);
+    } catch (error) {
+      debugLogger?.warn?.(
+        `[HotkeyManager] Could not unregister "${checkAccelerator}" before recovery: ${error.message}`
+      );
+    }
   }
 
   const previousHotkey = manager.currentHotkey;
@@ -118,7 +136,9 @@ function setupShortcuts(
     const accelerator = hotkey.startsWith("Fn+") ? hotkey.slice(3) : hotkey;
 
     const alreadyRegistered = globalShortcut.isRegistered(accelerator);
-    debugLogger?.log?.(`[HotkeyManager] Is "${accelerator}" already registered? ${alreadyRegistered}`);
+    debugLogger?.log?.(
+      `[HotkeyManager] Is "${accelerator}" already registered? ${alreadyRegistered}`
+    );
 
     if (platform === "linux") {
       globalShortcut.unregister(accelerator);
@@ -164,4 +184,3 @@ module.exports = {
   restorePreviousHotkey,
   setupShortcuts,
 };
-

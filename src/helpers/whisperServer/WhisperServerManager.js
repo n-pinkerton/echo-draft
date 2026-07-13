@@ -279,18 +279,21 @@ class WhisperServerManager {
               statusCode: res.statusCode,
               elapsed: Date.now() - startTime,
               responseLength: data.length,
-              responsePreview: data.slice(0, 500),
             });
 
             if (res.statusCode !== 200) {
-              reject(new Error(`whisper-server returned status ${res.statusCode}: ${data}`));
+              reject(new Error(`whisper-server returned status ${res.statusCode}`));
               return;
             }
 
             try {
               resolve(JSON.parse(data));
             } catch (e) {
-              reject(new Error(`Failed to parse whisper-server response: ${e.message}`));
+              reject(
+                new Error(
+                  `Failed to parse whisper-server response (${data.length} bytes): ${e.message}`
+                )
+              );
             }
           });
         }

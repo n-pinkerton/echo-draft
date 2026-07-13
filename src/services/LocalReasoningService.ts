@@ -71,7 +71,6 @@ class LocalReasoningService extends BaseReasoningService {
         modelId,
         processingTimeMs: processingTime,
         resultLength: result.length,
-        resultPreview: result.substring(0, 100) + (result.length > 100 ? "..." : ""),
       });
 
       return result;

@@ -10,7 +10,9 @@ const { saveDebugAudioCapture } = require("./debugAudioCapture");
 const AssemblyAiStreaming = require("./assemblyAiStreaming");
 
 const { createCloudContext } = require("./ipc/cloud/cloudContext");
-const { registerAssemblyAiStreamingHandlers } = require("./ipc/handlers/assemblyAiStreamingHandlers");
+const {
+  registerAssemblyAiStreamingHandlers,
+} = require("./ipc/handlers/assemblyAiStreamingHandlers");
 const { registerAudioFileHandlers } = require("./ipc/handlers/audioFileHandlers");
 const { registerAuthHandlers } = require("./ipc/handlers/authHandlers");
 const { registerAutoStartHandlers } = require("./ipc/handlers/autoStartHandlers");
@@ -107,6 +109,7 @@ class IPCHandlers {
         {
           databaseManager: this.databaseManager,
           windowManager: this.windowManager,
+          trayManager: this.trayManager,
         }
       );
     }
@@ -189,4 +192,3 @@ class IPCHandlers {
 }
 
 module.exports = IPCHandlers;
-

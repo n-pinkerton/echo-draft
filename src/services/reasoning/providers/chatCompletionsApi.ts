@@ -68,7 +68,8 @@ export async function callChatCompletionsApi({
     endpoint,
     model,
     hasApiKey: Boolean(apiKey),
-    requestBody: JSON.stringify(requestBody).substring(0, 200),
+    inputTextLength: text.length,
+    maxOutputTokens: requestBody.max_tokens,
   });
 
   const response = await withRetry(async () => {
@@ -98,9 +99,8 @@ export async function callChatCompletionsApi({
         logger.logReasoning(`${providerName.toUpperCase()}_API_ERROR_DETAIL`, {
           status: res.status,
           statusText: res.statusText,
-          error: errorData,
+          errorCode: errorData.error?.code || errorData.code || null,
           errorMessage: errorData.error?.message || errorData.message || errorData.error,
-          fullResponse: errorText.substring(0, 500),
         });
 
         const errorMessage =
@@ -108,7 +108,13 @@ export async function callChatCompletionsApi({
           errorData.message ||
           errorData.error ||
           `${providerName} API error: ${res.status}`;
-        throw new Error(errorMessage);
+        const apiError = new Error(errorMessage) as Error & {
+          status?: number;
+          response?: { status: number };
+        };
+        apiError.status = res.status;
+        apiError.response = { status: res.status };
+        throw apiError;
       }
 
       const jsonResponse = await res.json();
@@ -118,7 +124,6 @@ export async function callChatCompletionsApi({
         responseKeys: jsonResponse ? Object.keys(jsonResponse) : [],
         hasChoices: Boolean(jsonResponse?.choices),
         choicesLength: jsonResponse?.choices?.length || 0,
-        fullResponse: JSON.stringify(jsonResponse).substring(0, 500),
       });
 
       return jsonResponse;
@@ -135,7 +140,6 @@ export async function callChatCompletionsApi({
   if (!response.choices || !response.choices[0]) {
     logger.logReasoning(`${providerName.toUpperCase()}_RESPONSE_ERROR`, {
       model,
-      response: JSON.stringify(response).substring(0, 500),
       hasChoices: Boolean(response.choices),
       choicesCount: response.choices?.length || 0,
     });
@@ -144,13 +148,30 @@ export async function callChatCompletionsApi({
 
   const choice = response.choices[0];
   const responseText = choice.message?.content?.trim() || "";
+  const finishReason =
+    typeof choice.finish_reason === "string" ? choice.finish_reason.trim().toLowerCase() : null;
+
+  if (finishReason && finishReason !== "stop") {
+    logger.logReasoning(`${providerName.toUpperCase()}_OUTPUT_INCOMPLETE`, {
+      model,
+      finishReason,
+      responseLength: responseText.length,
+    });
+    const error = new Error(
+      finishReason === "length"
+        ? `${providerName} truncated the cleanup response at its output limit.`
+        : `${providerName} returned a non-complete cleanup response (${finishReason}).`
+    ) as Error & { code?: string; finishReason?: string };
+    error.code = "CLEANUP_INCOMPLETE";
+    error.finishReason = finishReason;
+    throw error;
+  }
 
   if (!responseText) {
     logger.logReasoning(`${providerName.toUpperCase()}_EMPTY_RESPONSE`, {
       model,
       finishReason: choice.finish_reason,
       hasMessage: Boolean(choice.message),
-      response: JSON.stringify(choice).substring(0, 500),
     });
     throw new Error(`${providerName} returned empty response`);
   }
@@ -164,4 +185,3 @@ export async function callChatCompletionsApi({
 
   return responseText;
 }
-

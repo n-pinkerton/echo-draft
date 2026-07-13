@@ -10,6 +10,7 @@ import {
   BookOpen,
   ShieldCheck,
   Lock,
+  Keyboard,
 } from "lucide-react";
 import SidebarModal, { SidebarItem } from "./ui/SidebarModal";
 import SettingsPage, { SettingsSectionType } from "./SettingsPage";
@@ -35,7 +36,14 @@ export default function SettingsModal({ open, onOpenChange, initialSection }: Se
       id: "general",
       label: "Preferences",
       icon: Sliders,
-      description: "Appearance, hotkey & startup",
+      description: "Appearance, sound, language & startup",
+      group: "App",
+    },
+    {
+      id: "hotkeys",
+      label: "Shortcuts",
+      icon: Keyboard,
+      description: "Insert, clipboard & activation",
       group: "App",
     },
     {

@@ -13,10 +13,23 @@ async function checkHistoryAndExports(panel, record, runId, exportDir) {
 
   await panel.setInputValue('[data-testid="history-search"]', "InsertFail");
   await sleep(250);
-  const insertFailCount = await panel.eval(
-    `document.querySelectorAll('[data-testid="transcription-item"]').length`
+  const insertFailHistory = await panel.eval(`
+    (() => {
+      const items = Array.from(document.querySelectorAll('[data-testid="transcription-item"]'));
+      return {
+        count: items.length,
+        hasDeliveryIssue: items.some((item) => item.textContent?.includes("Delivery issue")),
+        hasClipboardFallback: items.some((item) => item.textContent?.includes("Kept in clipboard")),
+      };
+    })()
+  `);
+  record(
+    "History labels insert failure as a clipboard delivery fallback",
+    insertFailHistory?.count >= 1 &&
+      insertFailHistory?.hasDeliveryIssue &&
+      insertFailHistory?.hasClipboardFallback,
+    JSON.stringify(insertFailHistory)
   );
-  record("History retains text after insert failure", insertFailCount >= 1, `count=${insertFailCount}`);
 
   await panel.setInputValue('[data-testid="history-search"]', "Clipboard");
   await sleep(250);
@@ -35,33 +48,80 @@ async function checkHistoryAndExports(panel, record, runId, exportDir) {
   const exportJsonResult = await panel.eval(
     `(async () => window.electronAPI.e2eExportTranscriptions("json", ${JSON.stringify(exportJsonPath)}) )()`
   );
-  record("E2E export transcriptions (JSON)", Boolean(exportJsonResult?.success), JSON.stringify(exportJsonResult));
+  record(
+    "E2E export transcriptions (JSON)",
+    Boolean(exportJsonResult?.success),
+    JSON.stringify(exportJsonResult)
+  );
 
   const exportCsvResult = await panel.eval(
     `(async () => window.electronAPI.e2eExportTranscriptions("csv", ${JSON.stringify(exportCsvPath)}) )()`
   );
-  record("E2E export transcriptions (CSV)", Boolean(exportCsvResult?.success), JSON.stringify(exportCsvResult));
+  record(
+    "E2E export transcriptions (CSV)",
+    Boolean(exportCsvResult?.success),
+    JSON.stringify(exportCsvResult)
+  );
 
-  // D) Sanity check export content includes useful diagnostic fields (and no obvious secrets).
+  // D) Sanity check the gate-created rows include useful diagnostic fields.
   try {
     const exported = JSON.parse(fs.readFileSync(exportJsonPath, "utf8"));
     const rows = Array.isArray(exported) ? exported : [];
-    const hasOutputModes = rows.some((r) => r?.outputMode === "insert") && rows.some((r) => r?.outputMode === "clipboard");
-    const hasTimingCols = rows.some((r) => typeof r?.totalMs !== "undefined") && rows.some((r) => typeof r?.pasteMs !== "undefined");
-    const secretLike = JSON.stringify(rows).includes("sk-");
+    const gateRows = rows.filter(
+      (row) => safeString(row?.text).includes(runId) || safeString(row?.rawText).includes(runId)
+    );
+    const hasOutputModes =
+      gateRows.some((r) => r?.outputMode === "insert") &&
+      gateRows.some((r) => r?.outputMode === "clipboard");
+    const hasTimingCols =
+      gateRows.some((r) => typeof r?.totalMs !== "undefined") &&
+      gateRows.some((r) => typeof r?.pasteMs !== "undefined");
+    const secretLike = JSON.stringify(gateRows).includes("sk-");
+    const insertFailRows = gateRows.filter((row) => safeString(row?.text).includes("InsertFail"));
+    const hasTruthfulInsertFailure = insertFailRows.some(
+      (row) =>
+        row?.status === "delivery_issue" &&
+        row?.deliveryStatus === "clipboard_fallback" &&
+        row?.pasteSucceeded === "false" &&
+        row?.clipboardSucceeded === "true"
+    );
     record(
       "Export JSON includes diagnostics columns",
-      rows.length >= 2 && hasOutputModes && hasTimingCols && !secretLike,
-      JSON.stringify({ rows: rows.length, hasOutputModes, hasTimingCols, secretLike })
+      gateRows.length >= 2 &&
+        hasOutputModes &&
+        hasTimingCols &&
+        hasTruthfulInsertFailure &&
+        !secretLike,
+      JSON.stringify({
+        exportedRows: rows.length,
+        checkedGateRows: gateRows.length,
+        hasOutputModes,
+        hasTimingCols,
+        hasTruthfulInsertFailure,
+        secretLike,
+      })
     );
   } catch (error) {
-    record("Export JSON includes diagnostics columns", false, `parse_failed: ${safeString(error?.message || error)}`);
+    record(
+      "Export JSON includes diagnostics columns",
+      false,
+      `parse_failed: ${safeString(error?.message || error)}`
+    );
   }
 
   try {
     const csv = fs.readFileSync(exportCsvPath, "utf8");
     const header = safeString(csv.split(/\r?\n/)[0] || "");
-    const required = ["outputMode", "status", "provider", "model", "pasteSucceeded", "totalMs"];
+    const required = [
+      "outputMode",
+      "status",
+      "provider",
+      "model",
+      "pasteSucceeded",
+      "clipboardSucceeded",
+      "deliveryStatus",
+      "totalMs",
+    ];
     const missing = required.filter((key) => !header.includes(key));
     record(
       "Export CSV includes diagnostics columns",
@@ -69,7 +129,11 @@ async function checkHistoryAndExports(panel, record, runId, exportDir) {
       missing.length === 0 ? header : `missing=${missing.join("|")}`
     );
   } catch (error) {
-    record("Export CSV includes diagnostics columns", false, `read_failed: ${safeString(error?.message || error)}`);
+    record(
+      "Export CSV includes diagnostics columns",
+      false,
+      `read_failed: ${safeString(error?.message || error)}`
+    );
   }
 
   return { exportJsonPath, exportCsvPath };
@@ -78,4 +142,3 @@ async function checkHistoryAndExports(panel, record, runId, exportDir) {
 module.exports = {
   checkHistoryAndExports,
 };
-

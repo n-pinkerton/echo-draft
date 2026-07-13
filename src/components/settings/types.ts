@@ -1,6 +1,7 @@
 export type SettingsSectionType =
   | "account"
   | "general"
+  | "hotkeys"
   | "transcription"
   | "dictionary"
   | "aiModels"
@@ -9,4 +10,3 @@ export type SettingsSectionType =
   | "permissions"
   | "privacy"
   | "developer";
-

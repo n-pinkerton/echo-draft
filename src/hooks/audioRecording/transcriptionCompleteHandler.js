@@ -1,9 +1,5 @@
 import logger from "../../utils/logger";
-import {
-  ECHO_DRAFT_CLOUD_SOURCE,
-  getRendererLogLevel,
-  normalizeEchoDraftSource,
-} from "../../utils/branding";
+import { ECHO_DRAFT_CLOUD_SOURCE, normalizeEchoDraftSource } from "../../utils/branding";
 import { countWords } from "./textMetrics";
 
 export const createTranscriptionCompleteHandler = (deps) => {
@@ -21,11 +17,13 @@ export const createTranscriptionCompleteHandler = (deps) => {
     updateStage,
     upsertJob,
     playCompletionCue,
+    playErrorCue,
   } = deps;
 
   const electronAPI =
     deps.electronAPI || (typeof window !== "undefined" ? window.electronAPI : undefined);
-  const storage = deps.localStorage || (typeof window !== "undefined" ? window.localStorage : undefined);
+  const storage =
+    deps.localStorage || (typeof window !== "undefined" ? window.localStorage : undefined);
 
   return async (result) => {
     const audioManager = audioManagerRef.current;
@@ -61,6 +59,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
     }
 
     if (!result.success) {
+      void playErrorCue?.();
       if (!recordingSessionIdRef.current) {
         updateStage("error", { message: "Transcription did not complete." });
       }
@@ -74,6 +73,8 @@ export const createTranscriptionCompleteHandler = (deps) => {
     const rawText = result.rawText || result.text;
     const rawWords = countWords(rawText);
     const cleanedWords = countWords(result.text);
+    const cleanup = result?.cleanup && typeof result.cleanup === "object" ? result.cleanup : null;
+    const cleanupFallback = Boolean(cleanup?.requested && cleanup?.status === "fallback");
     logger.info(
       "Dictation transcription complete",
       {
@@ -90,27 +91,30 @@ export const createTranscriptionCompleteHandler = (deps) => {
         timings: result.timings || null,
         rawLength: rawText.length,
         cleanedLength: result.text.length,
+        cleanupStatus: cleanup?.status || null,
+        cleanupFallbackReason: cleanup?.fallbackReason || null,
       },
       "dictation"
     );
 
-    if (getRendererLogLevel() === "trace") {
-      logger.trace(
-        "Dictation transcript text",
-        {
-          sessionId: session.sessionId,
-          jobId,
-          source: result.source,
-          rawText,
-          cleanedText: result.text,
-        },
-        "dictation"
-      );
-    }
-
     setTranscript(result.text);
 
+    if (cleanupFallback) {
+      toast({
+        title: "Original transcript preserved",
+        description:
+          cleanup?.fallbackReason === "fidelity_rejected"
+            ? "AI cleanup changed too much, so EchoDraft kept every original word."
+            : "AI cleanup was unavailable, so EchoDraft used the original transcript.",
+        variant: "default",
+        duration: 5000,
+      });
+    }
+
     let pasteSucceeded = false;
+    let clipboardSucceeded = false;
+    let deliveryStatus = "pending";
+    let deliveryError = null;
     let pasteMs = null;
     const isForegroundAvailable = !recordingSessionIdRef.current;
 
@@ -145,6 +149,42 @@ export const createTranscriptionCompleteHandler = (deps) => {
       );
       pasteSucceeded = await audioManager.safePaste(result.text, pasteOptions);
       pasteMs = Math.round(performance.now() - pasteStart);
+      if (pasteSucceeded) {
+        deliveryStatus = "inserted";
+      } else {
+        try {
+          if (typeof electronAPI?.writeClipboard !== "function") {
+            throw new Error("Clipboard API unavailable");
+          }
+          const clipboardResult = await electronAPI.writeClipboard(result.text);
+          if (clipboardResult?.success === false) {
+            throw new Error(clipboardResult.error || "Clipboard write failed");
+          }
+          clipboardSucceeded = true;
+          deliveryStatus = "clipboard_fallback";
+          deliveryError = "Automatic insertion failed; text was kept in the clipboard.";
+          toast({
+            title: "Insert failed—text kept in clipboard",
+            description: "Paste it manually with Ctrl+V.",
+            variant: "default",
+            duration: 5000,
+          });
+        } catch (error) {
+          deliveryStatus = "failed";
+          deliveryError = `Automatic insertion and clipboard copy failed: ${error?.message || String(error)}`;
+          logger.warn(
+            "Failed to retain text in clipboard after insertion failure",
+            { error: error?.message || String(error) },
+            "clipboard"
+          );
+          toast({
+            title: "Text delivery failed",
+            description: "EchoDraft kept the text on screen and will try to save it in history.",
+            variant: "destructive",
+            duration: 6000,
+          });
+        }
+      }
 
       logger.info(
         "Paste timing",
@@ -159,12 +199,26 @@ export const createTranscriptionCompleteHandler = (deps) => {
       );
     } else {
       try {
-        await electronAPI?.writeClipboard?.(result.text);
+        if (typeof electronAPI?.writeClipboard !== "function") {
+          throw new Error("Clipboard API unavailable");
+        }
+        const clipboardResult = await electronAPI.writeClipboard(result.text);
+        if (clipboardResult?.success === false) {
+          throw new Error(clipboardResult.error || "Clipboard write failed");
+        }
+        clipboardSucceeded = true;
+        deliveryStatus = "clipboard";
       } catch (error) {
-        logger.warn("Failed to write clipboard", { error: error?.message }, "clipboard");
+        deliveryStatus = "failed";
+        deliveryError = `Clipboard copy failed: ${error?.message || String(error)}`;
+        logger.warn(
+          "Failed to write clipboard",
+          { error: error?.message || String(error) },
+          "clipboard"
+        );
       }
       logger.info(
-        "Copied to clipboard",
+        clipboardSucceeded ? "Copied to clipboard" : "Clipboard delivery failed",
         {
           sessionId: session.sessionId,
           jobId,
@@ -174,13 +228,22 @@ export const createTranscriptionCompleteHandler = (deps) => {
         "clipboard"
       );
 
-      toast({
-        title: jobId !== null ? `Job #${jobId} ready` : "Ready to paste",
-        description: "Copied to clipboard",
-        duration: 1800,
-        size: "compact",
-        variant: "success",
-      });
+      if (clipboardSucceeded) {
+        toast({
+          title: jobId !== null ? `Job #${jobId} ready` : "Ready to paste",
+          description: "Copied to clipboard",
+          duration: 1800,
+          size: "compact",
+          variant: "success",
+        });
+      } else {
+        toast({
+          title: "Clipboard copy failed",
+          description: "EchoDraft kept the text on screen and will try to save it in history.",
+          duration: 6000,
+          variant: "destructive",
+        });
+      }
     }
 
     if (isForegroundAvailable) {
@@ -215,6 +278,8 @@ export const createTranscriptionCompleteHandler = (deps) => {
     };
     const provider = job?.provider || result.source || "";
     const model = job?.model || "";
+    const deliverySucceeded = deliveryStatus === "inserted" || deliveryStatus === "clipboard";
+    const historyStatus = deliverySucceeded ? "success" : "delivery_issue";
 
     const saveResult = await audioManager.saveTranscription({
       text: result.text,
@@ -222,12 +287,19 @@ export const createTranscriptionCompleteHandler = (deps) => {
       meta: {
         sessionId: session.sessionId,
         outputMode: session.outputMode,
-        status: "success",
+        status: historyStatus,
         source: result.source,
         provider,
         model,
         insertionTarget: session.insertionTarget || null,
         pasteSucceeded,
+        clipboardSucceeded,
+        delivery: {
+          status: deliveryStatus,
+          succeeded: deliverySucceeded,
+          ...(deliveryError ? { error: deliveryError } : {}),
+        },
+        ...(deliveryError ? { error: deliveryError } : {}),
         ...(stopReason ? { stopReason } : {}),
         ...(stopSource ? { stopSource } : {}),
         textMetrics: {
@@ -236,6 +308,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
           rawChars: rawText.length,
           cleanedChars: result.text.length,
         },
+        ...(cleanup ? { cleanup } : {}),
         timings: baseTimings,
       },
     });
@@ -243,7 +316,9 @@ export const createTranscriptionCompleteHandler = (deps) => {
     const savedId = saveResult?.id || saveResult?.transcription?.id;
     const saveMs = Math.round(performance.now() - saveStart);
     const totalDurationMs =
-      typeof job?.startedAt === "number" && job.startedAt > 0 ? Math.max(0, Date.now() - job.startedAt) : null;
+      typeof job?.startedAt === "number" && job.startedAt > 0
+        ? Math.max(0, Date.now() - job.startedAt)
+        : null;
 
     if (saveSucceeded && savedId && electronAPI?.patchTranscriptionMeta) {
       try {
@@ -267,9 +342,11 @@ export const createTranscriptionCompleteHandler = (deps) => {
 
     if (!saveSucceeded) {
       const fallbackDescription =
-        session.outputMode === "insert" && pasteSucceeded
+        deliveryStatus === "inserted"
           ? "Text was inserted, but saving to history failed."
-          : "Text is copied to clipboard, but saving to history failed.";
+          : deliveryStatus === "clipboard" || deliveryStatus === "clipboard_fallback"
+            ? "Text is in the clipboard, but saving to history failed."
+            : "Clipboard delivery and history saving both failed. Use Copy Last Dictation in the EchoDraft tray menu to recover the text.";
       toast({
         title: "History Save Failed",
         description: fallbackDescription,
@@ -298,10 +375,14 @@ export const createTranscriptionCompleteHandler = (deps) => {
       });
     }
 
-    if (normalizeEchoDraftSource(result.source) === ECHO_DRAFT_CLOUD_SOURCE && result.limitReached) {
+    if (
+      normalizeEchoDraftSource(result.source) === ECHO_DRAFT_CLOUD_SOURCE &&
+      result.limitReached
+    ) {
       electronAPI?.notifyLimitReached?.({
         wordsUsed: result.wordsUsed,
-        limit: result.wordsRemaining !== undefined ? result.wordsUsed + result.wordsRemaining : 2000,
+        limit:
+          result.wordsRemaining !== undefined ? result.wordsUsed + result.wordsRemaining : 2000,
       });
     }
 
@@ -312,21 +393,30 @@ export const createTranscriptionCompleteHandler = (deps) => {
         ...(jobId !== null ? { jobId } : {}),
         stageProgress: 1,
         overallProgress: 1,
-        message: saveSucceeded
-          ? null
-          : session.outputMode === "insert" && pasteSucceeded
-            ? "Inserted, but history save failed."
-            : "Saved to clipboard, but history save failed.",
+        message:
+          deliveryStatus === "clipboard_fallback"
+            ? "Insert failed; text kept in clipboard."
+            : deliveryStatus === "failed"
+              ? "Automatic text delivery failed."
+              : saveSucceeded
+                ? cleanupFallback
+                  ? "Original transcript used; cleanup was not applied."
+                  : null
+                : session.outputMode === "insert" && pasteSucceeded
+                  ? "Inserted, but history save failed."
+                  : "Saved to clipboard, but history save failed.",
         provider,
         model,
         generatedChars: result.text.length,
         generatedWords: countWords(result.text),
       });
 
-      setProgress((prev) => ({
-        ...prev,
-        message: saveSucceeded && saveMs > 0 ? `Saved in ${saveMs}ms` : prev.message,
-      }));
+      if (deliverySucceeded && saveSucceeded && !cleanupFallback && saveMs > 0) {
+        setProgress((prev) => ({
+          ...prev,
+          message: `Saved in ${saveMs}ms`,
+        }));
+      }
     }
 
     if (resolvedSessionId) {
@@ -339,7 +429,11 @@ export const createTranscriptionCompleteHandler = (deps) => {
       setTimeout(() => removeJob(resolvedSessionId), 1500);
     }
 
-    void playCompletionCue?.();
+    if (deliverySucceeded) {
+      void playCompletionCue?.();
+    } else {
+      void playErrorCue?.();
+    }
     audioManager.warmupStreamingConnection();
   };
 };

@@ -96,5 +96,30 @@ describe("readOpenAiTranscriptionStream", () => {
     const text = await readOpenAiTranscriptionStream(response as any, { logger });
     expect(text).toBe("Hello world");
   });
-});
 
+  it("processes a completion marker that has no trailing newline", async () => {
+    const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
+    const chunks = [
+      'data: {"type":"transcript.text.delta","delta":"Hello world"}\n\n',
+      "data: [DONE]",
+    ];
+
+    await expect(
+      readOpenAiTranscriptionStream(makeResponseFromChunks(chunks) as any, { logger })
+    ).resolves.toBe("Hello world");
+  });
+
+  it("rejects a stream that closes without a completion marker", async () => {
+    const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
+    const chunks = ['data: {"type":"transcript.text.delta","delta":"Partial"}\n\n'];
+
+    await expect(
+      readOpenAiTranscriptionStream(makeResponseFromChunks(chunks) as any, { logger })
+    ).rejects.toMatchObject({ code: "TRANSCRIPTION_STREAM_INCOMPLETE" });
+    expect(logger.warn).toHaveBeenCalledWith(
+      "OpenAI transcription stream closed without a completion marker",
+      expect.any(Object),
+      "transcription"
+    );
+  });
+});

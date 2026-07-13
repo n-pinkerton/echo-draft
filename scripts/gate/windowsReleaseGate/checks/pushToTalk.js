@@ -39,12 +39,20 @@ async function checkPushToTalkRouting(panel, record) {
             status?.activationMode === "push" &&
             Boolean(status?.insertUsesNativeListener) &&
             Boolean(status?.clipboardUsesNativeListener) &&
+            Boolean(status?.insertNativeReady) &&
+            Boolean(status?.clipboardNativeReady) &&
+            Boolean(status?.insertGlobalRegistered) &&
+            Boolean(status?.clipboardGlobalRegistered) &&
             Boolean(status?.windowsPushToTalkAvailable);
           return {
             ok,
             activationMode: status?.activationMode,
             insertUsesNativeListener: status?.insertUsesNativeListener,
             clipboardUsesNativeListener: status?.clipboardUsesNativeListener,
+            insertNativeReady: status?.insertNativeReady,
+            clipboardNativeReady: status?.clipboardNativeReady,
+            insertGlobalRegistered: status?.insertGlobalRegistered,
+            clipboardGlobalRegistered: status?.clipboardGlobalRegistered,
             windowsPushToTalkAvailable: status?.windowsPushToTalkAvailable,
           };
         }, 15000);
@@ -80,4 +88,3 @@ async function checkPushToTalkRouting(panel, record) {
 module.exports = {
   checkPushToTalkRouting,
 };
-

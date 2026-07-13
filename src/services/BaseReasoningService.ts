@@ -1,9 +1,10 @@
-import { getSystemPrompt } from "../config/prompts";
+import { getSystemPrompt, type CleanupPromptMode } from "../config/prompts";
 
 export interface ReasoningConfig {
   maxTokens?: number;
   temperature?: number;
   contextSize?: number;
+  cleanupPromptMode?: CleanupPromptMode;
 }
 
 export abstract class BaseReasoningService {
@@ -26,9 +27,13 @@ export abstract class BaseReasoningService {
     return window.localStorage.getItem("preferredLanguage") || "auto";
   }
 
-  protected getSystemPrompt(agentName: string | null, modelId?: string | null): string {
+  protected getSystemPrompt(
+    agentName: string | null,
+    modelId?: string | null,
+    mode: CleanupPromptMode = "standard"
+  ): string {
     const language = this.getPreferredLanguage();
-    return getSystemPrompt(agentName, this.getCustomDictionary(), language, modelId);
+    return getSystemPrompt(agentName, this.getCustomDictionary(), language, modelId, mode);
   }
 
   protected calculateMaxTokens(

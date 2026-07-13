@@ -21,6 +21,7 @@ async function connectCdpTargets(port) {
   let targets = [];
   let panelTarget = null;
   let dictationTarget = null;
+  let panelOpenRequested = false;
   for (let i = 0; i < 80; i++) {
     try {
       targets = await fetchJson(listUrl, 1000);
@@ -29,6 +30,22 @@ async function connectCdpTargets(port) {
         dictationTarget = targets.find(
           (t) => t.type === "page" && safeString(t.url) && !safeString(t.url).includes("panel=true")
         );
+        if (!panelTarget && !panelOpenRequested && dictationTarget?.webSocketDebuggerUrl) {
+          const opener = new CdpClient(dictationTarget.webSocketDebuggerUrl);
+          try {
+            await opener.connect();
+            await opener.waitFor(
+              "window.electronAPI && typeof window.electronAPI.showControlPanel === 'function'",
+              10000
+            );
+            await opener.eval("window.electronAPI.showControlPanel()");
+            panelOpenRequested = true;
+          } catch {
+            // The renderer may still be booting. Leave the flag false so a later poll retries.
+          } finally {
+            await opener.close().catch(() => {});
+          }
+        }
         if (panelTarget?.webSocketDebuggerUrl && dictationTarget?.webSocketDebuggerUrl) {
           break;
         }
@@ -69,7 +86,10 @@ async function connectCdpTargets(port) {
   await dictation.waitFor("document.readyState === 'complete'", 15000);
 
   // Wait for E2E helper to exist in dictation panel
-  await dictation.waitFor("window.__echoDraftE2E && typeof window.__echoDraftE2E.getProgress === 'function'", 15000);
+  await dictation.waitFor(
+    "window.__echoDraftE2E && typeof window.__echoDraftE2E.getProgress === 'function'",
+    15000
+  );
 
   return { panel, dictation };
 }

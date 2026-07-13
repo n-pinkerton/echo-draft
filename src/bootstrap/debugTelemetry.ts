@@ -1,8 +1,5 @@
 import logger from "../utils/logger";
-import {
-  DEBUG_MODE_STORAGE_KEY,
-  LEGACY_DEBUG_MODE_STORAGE_KEY,
-} from "../utils/branding";
+import { DEBUG_MODE_STORAGE_KEY, LEGACY_DEBUG_MODE_STORAGE_KEY } from "../utils/branding";
 
 export const shouldRedactLocalStorageKey = (key = ""): boolean => {
   const normalized = String(key || "").toLowerCase();
@@ -17,7 +14,13 @@ export const shouldRedactLocalStorageKey = (key = ""): boolean => {
     normalized.includes("token") ||
     normalized.includes("password") ||
     normalized.includes("secret") ||
-    normalized.includes("authorization")
+    normalized.includes("authorization") ||
+    normalized.includes("dictionary") ||
+    normalized.includes("prompt") ||
+    normalized.includes("transcript") ||
+    normalized.includes("deviceid") ||
+    normalized.includes("email") ||
+    normalized === "agentname"
   );
 };
 
@@ -27,6 +30,18 @@ export const sanitizeLocalStorageValue = (key: string, value: string | null): st
     return "[REDACTED]";
   }
   return String(value);
+};
+
+export const sanitizeTelemetryUrl = (value: string): string => {
+  const raw = String(value || "");
+  try {
+    const parsed = new URL(raw);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return raw.split(/[?#]/, 1)[0];
+  }
 };
 
 const getLocalStorageSnapshot = (): Record<string, string | null> => {
@@ -99,7 +114,7 @@ export async function bootstrapDebugTelemetry(): Promise<void> {
       "Debug telemetry bootstrapped",
       {
         windowType: isControlPanel ? "control-panel" : "dictation-panel",
-        href: window.location.href,
+        href: sanitizeTelemetryUrl(window.location.href),
         logPath: state.logPath,
         logsDir: state.logsDir || null,
         logLevel: state.logLevel || null,
@@ -116,8 +131,7 @@ export async function bootstrapDebugTelemetry(): Promise<void> {
       "settings"
     );
 
-    // Log all localStorage changes while debug telemetry is on (settings + internal flags).
-    // This intentionally includes values unless they look like secrets/tokens.
+    // Log settings changes while keeping secrets and content-bearing values redacted.
     const originalSetItem = localStorage.setItem.bind(localStorage);
     const originalRemoveItem = localStorage.removeItem.bind(localStorage);
     const originalClear = localStorage.clear.bind(localStorage);
@@ -154,7 +168,11 @@ export async function bootstrapDebugTelemetry(): Promise<void> {
   } catch (e) {
     // Never block app startup for telemetry.
     try {
-      logger.warn("Debug telemetry bootstrap failed", { error: (e as Error)?.message }, "telemetry");
+      logger.warn(
+        "Debug telemetry bootstrap failed",
+        { error: (e as Error)?.message },
+        "telemetry"
+      );
     } catch {
       // Ignore
     }

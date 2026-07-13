@@ -26,6 +26,32 @@ export class LocalTranscriber {
     this.openAiTranscriber = deps.openAiTranscriber;
   }
 
+  async applyReasoningCleanup(rawText, source) {
+    const cleanupEnabledOverride = this.getCleanupEnabledOverride?.() ?? null;
+    if (typeof this.reasoningCleanupService?.processTranscriptionWithOutcome === "function") {
+      return await this.reasoningCleanupService.processTranscriptionWithOutcome(
+        rawText,
+        source,
+        cleanupEnabledOverride
+      );
+    }
+
+    const text = await this.reasoningCleanupService.processTranscription(
+      rawText,
+      source,
+      cleanupEnabledOverride
+    );
+    return {
+      text,
+      cleanup: {
+        requested: true,
+        attempted: true,
+        applied: true,
+        status: text === rawText ? "unchanged" : "applied",
+      },
+    };
+  }
+
   async processWithLocalWhisper(audioBlob, model = "base", metadata = {}) {
     const timings = {};
 
@@ -44,20 +70,21 @@ export class LocalTranscriber {
 
       const transcriptionStart = performance.now();
       const result = await window.electronAPI.transcribeLocalWhisper(arrayBuffer, options);
-      timings.transcriptionProcessingDurationMs = Math.round(performance.now() - transcriptionStart);
+      timings.transcriptionProcessingDurationMs = Math.round(
+        performance.now() - transcriptionStart
+      );
 
       if (result.success && result.text) {
         const rawText = result.text;
         let cleanedText = rawText;
+        let cleanup = null;
 
         if (this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
           const reasoningStart = performance.now();
-          cleanedText = await this.reasoningCleanupService.processTranscription(
-            rawText,
-            "local",
-            this.getCleanupEnabledOverride?.() ?? null
-          );
+          const cleanupResult = await this.applyReasoningCleanup(rawText, "local");
+          cleanedText = cleanupResult.text;
+          cleanup = cleanupResult.cleanup;
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
         }
 
@@ -67,6 +94,7 @@ export class LocalTranscriber {
           rawText,
           source: "local",
           timings,
+          ...(cleanup ? { cleanup } : {}),
         };
       }
 
@@ -85,7 +113,10 @@ export class LocalTranscriber {
 
       if (allowOpenAIFallback && isLocalMode) {
         try {
-          const fallbackResult = await this.openAiTranscriber.processWithOpenAIAPI(audioBlob, metadata);
+          const fallbackResult = await this.openAiTranscriber.processWithOpenAIAPI(
+            audioBlob,
+            metadata
+          );
           return { ...fallbackResult, source: "openai-fallback" };
         } catch (fallbackError) {
           throw new Error(
@@ -111,20 +142,21 @@ export class LocalTranscriber {
 
       const transcriptionStart = performance.now();
       const result = await window.electronAPI.transcribeLocalParakeet(arrayBuffer, options);
-      timings.transcriptionProcessingDurationMs = Math.round(performance.now() - transcriptionStart);
+      timings.transcriptionProcessingDurationMs = Math.round(
+        performance.now() - transcriptionStart
+      );
 
       if (result.success && result.text) {
         const rawText = result.text;
         let cleanedText = rawText;
+        let cleanup = null;
 
         if (this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
           const reasoningStart = performance.now();
-          cleanedText = await this.reasoningCleanupService.processTranscription(
-            rawText,
-            "local-parakeet",
-            this.getCleanupEnabledOverride?.() ?? null
-          );
+          const cleanupResult = await this.applyReasoningCleanup(rawText, "local-parakeet");
+          cleanedText = cleanupResult.text;
+          cleanup = cleanupResult.cleanup;
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
         }
 
@@ -134,6 +166,7 @@ export class LocalTranscriber {
           rawText,
           source: "local-parakeet",
           timings,
+          ...(cleanup ? { cleanup } : {}),
         };
       }
 
@@ -152,7 +185,10 @@ export class LocalTranscriber {
 
       if (allowOpenAIFallback && isLocalMode) {
         try {
-          const fallbackResult = await this.openAiTranscriber.processWithOpenAIAPI(audioBlob, metadata);
+          const fallbackResult = await this.openAiTranscriber.processWithOpenAIAPI(
+            audioBlob,
+            metadata
+          );
           return { ...fallbackResult, source: "openai-fallback" };
         } catch (fallbackError) {
           throw new Error(
@@ -165,4 +201,3 @@ export class LocalTranscriber {
     }
   }
 }
-

@@ -31,7 +31,11 @@ describe("AudioManager.stopStreamingRecording", () => {
     (window as any).electronAPI = {
       assemblyAiStreamingSend: vi.fn(),
       assemblyAiStreamingForceEndpoint: vi.fn(),
-      assemblyAiStreamingStop: vi.fn(async () => ({ success: true, text: "" })),
+      assemblyAiStreamingStop: vi.fn(async () => ({
+        success: true,
+        text: "",
+        terminationConfirmed: true,
+      })),
     };
 
     localStorage.setItem("useLocalWhisper", "true");
@@ -75,6 +79,51 @@ describe("AudioManager.stopStreamingRecording", () => {
     manager.cleanup();
   });
 
+  it("shares concurrent stop requests so finalization and delivery happen once", async () => {
+    vi.useFakeTimers();
+
+    const assemblyAiStreamingStop = vi.fn(async () => ({
+      success: true,
+      text: "one complete dictation",
+      terminationConfirmed: true,
+    }));
+    (window as any).electronAPI = {
+      assemblyAiStreamingForceEndpoint: vi.fn(),
+      assemblyAiStreamingStop,
+    };
+    localStorage.setItem("useLocalWhisper", "true");
+
+    const manager = new AudioManager();
+    const onProgress = vi.fn();
+    const onTranscriptionComplete = vi.fn();
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError: vi.fn(),
+      onTranscriptionComplete,
+      onPartialTranscript: vi.fn(),
+      onProgress,
+    });
+    manager.isStreaming = true;
+    manager.isRecording = true;
+    manager.streamingFinalText = "one complete dictation";
+
+    const firstStop = manager.stopStreamingRecording();
+    const repeatedStop = manager.stopStreamingRecording();
+    await vi.runAllTimersAsync();
+
+    await expect(Promise.all([firstStop, repeatedStop])).resolves.toEqual([true, true]);
+    expect(assemblyAiStreamingStop).toHaveBeenCalledTimes(1);
+    expect(onTranscriptionComplete).toHaveBeenCalledTimes(1);
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "transcribing", recordingClosed: true })
+    );
+    expect(onProgress.mock.calls.filter(([event]) => event?.recordingClosed === true)).toHaveLength(
+      1
+    );
+
+    manager.cleanup();
+  });
+
   it("preserves rawText when reasoning modifies streaming text", async () => {
     vi.useFakeTimers();
 
@@ -84,7 +133,11 @@ describe("AudioManager.stopStreamingRecording", () => {
     (window as any).electronAPI = {
       assemblyAiStreamingSend: vi.fn(),
       assemblyAiStreamingForceEndpoint: vi.fn(),
-      assemblyAiStreamingStop: vi.fn(async () => ({ success: true, text: "" })),
+      assemblyAiStreamingStop: vi.fn(async () => ({
+        success: true,
+        text: "",
+        terminationConfirmed: true,
+      })),
     };
 
     localStorage.setItem("useLocalWhisper", "true");
@@ -136,7 +189,11 @@ describe("AudioManager.stopStreamingRecording", () => {
     (window as any).electronAPI = {
       assemblyAiStreamingSend: vi.fn(),
       assemblyAiStreamingForceEndpoint: vi.fn(),
-      assemblyAiStreamingStop: vi.fn(async () => ({ success: true, text: "hello world" })),
+      assemblyAiStreamingStop: vi.fn(async () => ({
+        success: true,
+        text: "hello world",
+        terminationConfirmed: true,
+      })),
     };
 
     localStorage.setItem("useLocalWhisper", "true");
@@ -179,5 +236,47 @@ describe("AudioManager.stopStreamingRecording", () => {
 
     manager.cleanup();
   });
-});
 
+  it.each([
+    ["a failed termination", { success: false, error: "socket closed" }],
+    ["a timed-out termination", { success: true, text: "partial text", terminationTimedOut: true }],
+    ["a success response without explicit confirmation", { success: true, text: "partial text" }],
+  ])("does not deliver partial text after %s", async (_label, stopResult) => {
+    vi.useFakeTimers();
+
+    (window as any).electronAPI = {
+      assemblyAiStreamingForceEndpoint: vi.fn(),
+      assemblyAiStreamingStop: vi.fn(async () => stopResult),
+    };
+    localStorage.setItem("useLocalWhisper", "true");
+
+    const manager = new AudioManager();
+    const onError = vi.fn();
+    const onTranscriptionComplete = vi.fn();
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError,
+      onTranscriptionComplete,
+      onPartialTranscript: vi.fn(),
+      onProgress: vi.fn(),
+    });
+    manager.isStreaming = true;
+    manager.isRecording = true;
+    manager.streamingFinalText = "unconfirmed final text";
+    manager.streamingPartialText = "unconfirmed partial text";
+
+    const stopPromise = manager.stopStreamingRecording();
+    await vi.runAllTimersAsync();
+
+    await expect(stopPromise).resolves.toBe(false);
+    expect(onTranscriptionComplete).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Transcription incomplete",
+        description: expect.stringContaining("no partial text was inserted"),
+      })
+    );
+
+    manager.cleanup();
+  });
+});

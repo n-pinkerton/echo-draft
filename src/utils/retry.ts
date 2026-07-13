@@ -44,9 +44,8 @@ export function createApiRetryStrategy() {
   return {
     shouldRetry: (error: any) => {
       // Retry on network errors or 5xx status codes
-      if (!error.response) return true; // Network error
-
-      const status = error.response?.status || error.status;
+      const status = error.response?.status ?? error.status;
+      if (typeof status !== "number") return true; // Network error
       return status >= 500 && status < 600;
     },
   };

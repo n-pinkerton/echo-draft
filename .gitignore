@@ -190,6 +190,9 @@ build/
 
 # Generated Globe listener binary
 resources/bin/
+!resources/bin/
+resources/bin/*
+!resources/bin/windows-key-listener.exe
 
 # macOS
 .DS_Store

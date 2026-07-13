@@ -25,7 +25,7 @@ describe("ReasoningCleanupService", () => {
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService });
 
-    localStorage.setItem("reasoningModel", "gpt-5.5-mini");
+    localStorage.setItem("reasoningModel", "gpt-5.6-terra");
     localStorage.setItem("useReasoningModel", "false");
 
     const out = await svc.processTranscription(" hello  ", "openai", null);
@@ -48,7 +48,7 @@ describe("ReasoningCleanupService", () => {
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService, cacheTtlMs: 60_000 });
 
-    localStorage.setItem("reasoningModel", "gpt-5.5-mini");
+    localStorage.setItem("reasoningModel", "gpt-5.6-terra");
     localStorage.setItem("useReasoningModel", "true");
 
     expect(await svc.processTranscription("hello", "openai", null)).toBe("hello [cleaned]");
@@ -71,8 +71,8 @@ describe("ReasoningCleanupService", () => {
     localStorage.setItem("useReasoningModel", "true");
 
     expect(await svc.processTranscription("hello", "openai", null)).toBe("hello [cleaned]");
-    expect(reasoningService.processText).toHaveBeenCalledWith("hello", "gpt-5.5-mini", null);
-    expect(localStorage.getItem("reasoningModel")).toBe("gpt-5.5-mini");
+    expect(reasoningService.processText).toHaveBeenCalledWith("hello", "gpt-5.6-terra", null);
+    expect(localStorage.getItem("reasoningModel")).toBe("gpt-5.6-terra");
   });
 
   it("falls back to raw text when reasoning service throws", async () => {
@@ -85,7 +85,7 @@ describe("ReasoningCleanupService", () => {
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService });
 
-    localStorage.setItem("reasoningModel", "gpt-5.5-mini");
+    localStorage.setItem("reasoningModel", "gpt-5.6-terra");
     localStorage.setItem("useReasoningModel", "true");
 
     await expect(svc.processTranscription(" hello  ", "openai", null)).resolves.toBe("hello");
@@ -99,9 +99,76 @@ describe("ReasoningCleanupService", () => {
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService });
 
-    localStorage.setItem("reasoningModel", "gpt-5.5-mini");
+    localStorage.setItem("reasoningModel", "gpt-5.6-terra");
     localStorage.setItem("useReasoningModel", "true");
 
-    await expect(svc.processTranscription("alpha beta", "openai", null)).resolves.toBe("alpha - beta");
+    await expect(svc.processTranscription("alpha beta", "openai", null)).resolves.toBe(
+      "alpha - beta"
+    );
+  });
+
+  it("retries with strict preservation when the first cleanup over-summarises", async () => {
+    const original =
+      "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about release.";
+    const preserved =
+      "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about the release.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("Keep the important release details.")
+        .mockResolvedValueOnce(preserved),
+    };
+    const logger = { logReasoning: vi.fn() };
+    const svc = new ReasoningCleanupService({ logger, reasoningService });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-terra");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
+
+    expect(result.text).toBe(preserved);
+    expect(result.cleanup).toMatchObject({
+      attempted: true,
+      applied: true,
+      status: "applied",
+      retryCount: 1,
+    });
+    expect(reasoningService.processText).toHaveBeenNthCalledWith(
+      2,
+      original,
+      "gpt-5.6-terra",
+      null,
+      { cleanupPromptMode: "strict-preservation" }
+    );
+  });
+
+  it("keeps the original and records a truthful fallback when both cleanup attempts lose content", async () => {
+    const original =
+      "Keep reference 42, do not remove the budget caveat, preserve the Friday deadline, retain the July pilot example, and ask whether both teams approved release?";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => "Release summary complete."),
+    };
+    const logger = { logReasoning: vi.fn() };
+    const svc = new ReasoningCleanupService({ logger, reasoningService });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-terra");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
+
+    expect(result.text).toBe(original);
+    expect(result.cleanup).toMatchObject({
+      attempted: true,
+      applied: false,
+      status: "fallback",
+      fallbackReason: "fidelity_rejected",
+      retryCount: 1,
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(logger.logReasoning.mock.calls)).not.toContain(original);
   });
 });

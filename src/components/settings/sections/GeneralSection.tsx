@@ -1,9 +1,9 @@
 import type { AlertDialogState, ConfirmDialogState } from "../../../hooks/useDialogs";
 
 import AppearanceSection from "./general/AppearanceSection";
-import HotkeysSection from "./general/HotkeysSection";
 import LanguageSection from "./general/LanguageSection";
 import MicrophoneSection from "./general/MicrophoneSection";
+import SoundFeedbackSection from "./general/SoundFeedbackSection";
 import StartupSection from "./general/StartupSection";
 import UpdatesSection from "./general/UpdatesSection";
 
@@ -19,11 +19,10 @@ export default function GeneralSection(props: Props) {
     <div className="space-y-6">
       <UpdatesSection showConfirmDialog={showConfirmDialog} showAlertDialog={showAlertDialog} />
       <AppearanceSection />
+      <SoundFeedbackSection />
       <LanguageSection />
-      <HotkeysSection showAlertDialog={showAlertDialog} />
       <StartupSection />
       <MicrophoneSection />
     </div>
   );
 }
-

@@ -145,7 +145,7 @@ export default function DeveloperSection() {
               </div>
               <p className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed">
                 {debugEnabled
-                  ? "Capturing detailed telemetry (including transcripts) to a daily log file"
+                  ? "Capturing detailed metadata without transcript previews to a daily log file"
                   : "Enable to capture detailed diagnostic information (writes to disk)"}
               </p>
             </div>

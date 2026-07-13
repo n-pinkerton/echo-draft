@@ -1,4 +1,4 @@
-import { isBuiltInMicrophone } from "../../../utils/audioDeviceUtils";
+import { isBuiltInMicrophone, normalizeAudioInputDevices } from "../../../utils/audioDeviceUtils";
 
 const NO_AUDIO_PROCESSING_CONSTRAINTS = {
   // Disable browser audio processing — dictation doesn't need it and it adds latency.
@@ -32,32 +32,34 @@ export class MicrophoneService {
 
   async getAudioConstraints() {
     const preferBuiltIn =
-      typeof localStorage !== "undefined" ? localStorage.getItem("preferBuiltInMic") !== "false" : true;
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("preferBuiltInMic") !== "false"
+        : true;
     const selectedDeviceId =
       typeof localStorage !== "undefined" ? localStorage.getItem("selectedMicDeviceId") || "" : "";
 
     if (preferBuiltIn) {
-      if (this.cachedMicDeviceId) {
-        this.logger?.debug?.(
-          "Using cached microphone device ID",
-          { deviceId: this.cachedMicDeviceId },
-          "audio"
-        );
-        return {
-          audio: { deviceId: { exact: this.cachedMicDeviceId }, ...NO_AUDIO_PROCESSING_CONSTRAINTS },
-        };
-      }
-
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
-        const audioInputs = devices.filter((d) => d.kind === "audioinput");
-        const builtInMic = audioInputs.find((d) => this.isBuiltInMicrophoneFn(d.label));
+        const audioInputs = normalizeAudioInputDevices(devices);
+        const cachedMic = audioInputs.find((d) => d.deviceId === this.cachedMicDeviceId);
+        if (cachedMic) {
+          return {
+            audio: {
+              deviceId: { exact: cachedMic.deviceId },
+              ...NO_AUDIO_PROCESSING_CONSTRAINTS,
+            },
+          };
+        }
+
+        this.cachedMicDeviceId = null;
+        const builtInMic = audioInputs.find((d) => this.isBuiltInMicrophoneFn(d.originalLabel));
 
         if (builtInMic) {
           this.cachedMicDeviceId = builtInMic.deviceId;
           this.logger?.debug?.(
             "Using built-in microphone (cached for next time)",
-            { deviceId: builtInMic.deviceId, label: builtInMic.label },
+            { deviceSelected: true },
             "audio"
           );
           return {
@@ -73,9 +75,16 @@ export class MicrophoneService {
       }
     }
 
-    if (!preferBuiltIn && selectedDeviceId) {
-      this.logger?.debug?.("Using selected microphone", { deviceId: selectedDeviceId }, "audio");
-      return { audio: { deviceId: { exact: selectedDeviceId }, ...NO_AUDIO_PROCESSING_CONSTRAINTS } };
+    if (
+      !preferBuiltIn &&
+      selectedDeviceId &&
+      selectedDeviceId !== "default" &&
+      selectedDeviceId !== "communications"
+    ) {
+      this.logger?.debug?.("Using selected microphone", { deviceSelected: true }, "audio");
+      return {
+        audio: { deviceId: { exact: selectedDeviceId }, ...NO_AUDIO_PROCESSING_CONSTRAINTS },
+      };
     }
 
     this.logger?.debug?.("Using default microphone", {}, "audio");
@@ -83,23 +92,21 @@ export class MicrophoneService {
   }
 
   async cacheMicrophoneDeviceId() {
-    if (this.cachedMicDeviceId) return;
-
     const preferBuiltIn =
-      typeof localStorage !== "undefined" ? localStorage.getItem("preferBuiltInMic") !== "false" : true;
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("preferBuiltInMic") !== "false"
+        : true;
     if (!preferBuiltIn) return;
 
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const audioInputs = devices.filter((d) => d.kind === "audioinput");
-      const builtInMic = audioInputs.find((d) => this.isBuiltInMicrophoneFn(d.label));
+      const audioInputs = normalizeAudioInputDevices(devices);
+      const builtInMic = audioInputs.find((d) => this.isBuiltInMicrophoneFn(d.originalLabel));
       if (builtInMic) {
         this.cachedMicDeviceId = builtInMic.deviceId;
-        this.logger?.debug?.(
-          "Microphone device ID pre-cached",
-          { deviceId: builtInMic.deviceId },
-          "audio"
-        );
+        this.logger?.debug?.("Microphone device ID pre-cached", { deviceSelected: true }, "audio");
+      } else {
+        this.cachedMicDeviceId = null;
       }
     } catch (error) {
       this.logger?.debug?.(
@@ -135,7 +142,8 @@ export class MicrophoneService {
     this.micWarmupPromise = (async () => {
       const permissionState = await this.getMicrophonePermissionState();
       const persistedGrant =
-        typeof localStorage !== "undefined" && localStorage?.getItem?.("micPermissionGranted") === "true";
+        typeof localStorage !== "undefined" &&
+        localStorage?.getItem?.("micPermissionGranted") === "true";
 
       if (permissionState === "granted") {
         // ok
@@ -178,4 +186,3 @@ export class MicrophoneService {
     return await this.micWarmupPromise;
   }
 }
-

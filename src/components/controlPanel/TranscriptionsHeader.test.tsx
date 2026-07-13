@@ -18,12 +18,12 @@ describe("TranscriptionsHeader", () => {
       />
     );
 
-    expect(screen.getByText("(3 / 10)")).toBeInTheDocument();
+    expect(screen.getByText("3 of 10")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Transcribe Audio File…" }));
     expect(onOpenFileTranscribeDialog).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear history" }));
     expect(onClearHistory).toHaveBeenCalledTimes(1);
   });
 
@@ -38,7 +38,6 @@ describe("TranscriptionsHeader", () => {
       />
     );
 
-    expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear history" })).not.toBeInTheDocument();
   });
 });
-

@@ -2,7 +2,6 @@ import {
   ECHO_DRAFT_CLOUD_MODE,
   ECHO_DRAFT_CLOUD_MODEL,
   ECHO_DRAFT_CLOUD_SOURCE,
-  getRendererLogLevel,
   isEchoDraftCloudMode,
 } from "../../../utils/branding";
 import { analyzeAudioBlobLevel, getLowAudioRejection } from "../audioLevelAnalysis";
@@ -55,7 +54,8 @@ export class TranscriptionPipeline {
         localStorage.getItem("cloudTranscriptionMode") || ECHO_DRAFT_CLOUD_MODE;
       const isSignedIn = localStorage.getItem("isSignedIn") === "true";
 
-      const useCloud = !useLocalWhisper && isEchoDraftCloudMode(cloudTranscriptionMode) && isSignedIn;
+      const useCloud =
+        !useLocalWhisper && isEchoDraftCloudMode(cloudTranscriptionMode) && isSignedIn;
       this.logger.debug(
         "Transcription routing",
         { useLocalWhisper, useCloud, isSignedIn, cloudTranscriptionMode },
@@ -115,25 +115,6 @@ export class TranscriptionPipeline {
 
       if (!this.shouldContinue()) {
         return;
-      }
-
-      if (getRendererLogLevel() === "trace") {
-        const rawText = typeof result?.rawText === "string" ? result.rawText : null;
-        const cleanedText = typeof result?.text === "string" ? result.text : null;
-        this.logger.trace(
-          "Transcription result text",
-          {
-            context,
-            source: result?.source || null,
-            rawLength: rawText?.length ?? null,
-            cleanedLength: cleanedText?.length ?? null,
-            rawEqualsCleaned:
-              rawText != null && cleanedText != null ? rawText === cleanedText : null,
-            rawText,
-            cleanedText,
-          },
-          "transcription"
-        );
       }
 
       const metadataTimingsPatch = {
