@@ -4,6 +4,12 @@ import {
   ECHO_DRAFT_CLOUD_SOURCE,
   isEchoDraftCloudMode,
 } from "../../../utils/branding";
+import { raceWithAbort } from "../../../utils/retry";
+import {
+  createTranscriptionCancelledError,
+  isTranscriptionCancelled,
+  throwIfTranscriptionCancelled,
+} from "../pipeline/cancellation";
 import { getCustomDictionaryArray } from "../transcription/customDictionary";
 import { cleanupStreamingListeners } from "./assemblyAiStreamingCleanup";
 
@@ -39,18 +45,36 @@ export function stopStreamingRecording(manager) {
     return Promise.resolve(false);
   }
 
+  const controller = new AbortController();
+  manager.activeProcessingAbortController = controller;
   let guardedPromise;
-  guardedPromise = performStopStreamingRecording(manager).finally(() => {
-    if (manager.streamingStopPromise === guardedPromise) {
-      manager.streamingStopPromise = null;
-    }
-  });
+  guardedPromise = performStopStreamingRecording(manager, { signal: controller.signal })
+    .catch((error) => {
+      if (!isTranscriptionCancelled(error, controller.signal)) throw error;
+
+      manager.streamingAudioForwarding = false;
+      manager.isStreaming = false;
+      cleanupStreamingListeners(manager);
+      settleStreamingState(manager);
+      logger.info("Streaming processing cancelled before delivery", {}, "streaming");
+      return false;
+    })
+    .finally(() => {
+      if (manager.activeProcessingAbortController === controller) {
+        manager.activeProcessingAbortController = null;
+      }
+      if (manager.streamingStopPromise === guardedPromise) {
+        manager.streamingStopPromise = null;
+      }
+    });
   manager.streamingStopPromise = guardedPromise;
   return guardedPromise;
 }
 
-async function performStopStreamingRecording(manager) {
+async function performStopStreamingRecording(manager, runtime = {}) {
   if (!manager.isStreaming) return false;
+  const signal = runtime?.signal || null;
+  throwIfTranscriptionCancelled(signal);
 
   const durationSeconds = manager.recordingStartTime
     ? (Date.now() - manager.recordingStartTime) / 1000
@@ -106,13 +130,19 @@ async function performStopStreamingRecording(manager) {
   // 3. Wait for flushed buffer to travel: port → main thread → IPC → WebSocket → server.
   //    The worklet posts a FLUSH_DONE sentinel after posting the final buffer.
   if (flushWaiter) {
-    await Promise.race([
-      flushWaiter.promise,
-      new Promise((resolve) => setTimeout(resolve, STREAMING_WORKLET_FLUSH_TIMEOUT_MS)),
-    ]);
+    await raceWithAbort(
+      Promise.race([
+        flushWaiter.promise,
+        new Promise((resolve) => setTimeout(resolve, STREAMING_WORKLET_FLUSH_TIMEOUT_MS)),
+      ]),
+      signal
+    );
     manager.streamingWorklet.resolveFlushWaiter();
   }
-  await new Promise((resolve) => setTimeout(resolve, STREAMING_POST_FLUSH_GRACE_MS));
+  await raceWithAbort(
+    new Promise((resolve) => setTimeout(resolve, STREAMING_POST_FLUSH_GRACE_MS)),
+    signal
+  );
   manager.streamingAudioForwarding = false;
   manager.isStreaming = false;
 
@@ -120,12 +150,17 @@ async function performStopStreamingRecording(manager) {
   //    The server MUST process ALL remaining audio and send ALL Turn messages before
   //    responding with Termination — so awaiting this guarantees we get every word.
   window.electronAPI.assemblyAiStreamingForceEndpoint?.();
+  throwIfTranscriptionCancelled(signal);
   const tForceEndpoint = performance.now();
 
-  const stopResult = await window.electronAPI.assemblyAiStreamingStop().catch((e) => {
-    logger.debug("Streaming disconnect error", { error: e.message }, "streaming");
-    return { success: false };
-  });
+  const stopResult = await raceWithAbort(
+    window.electronAPI.assemblyAiStreamingStop().catch((e) => {
+      logger.debug("Streaming disconnect error", { error: e.message }, "streaming");
+      return { success: false };
+    }),
+    signal
+  );
+  throwIfTranscriptionCancelled(signal);
   const tTerminate = performance.now();
 
   const terminationConfirmed =
@@ -248,11 +283,14 @@ async function performStopStreamingRecording(manager) {
     try {
       if (isEchoDraftCloudMode(cloudReasoningMode)) {
         const reasonResult = await manager.withSessionRefresh(async () => {
-          const res = await window.electronAPI.cloudReason(finalText, {
-            agentName,
-            customDictionary: getCustomDictionaryArray(),
-            language: localStorage.getItem("preferredLanguage") || "auto",
-          });
+          const res = await raceWithAbort(
+            window.electronAPI.cloudReason(finalText, {
+              agentName,
+              customDictionary: getCustomDictionaryArray(),
+              language: localStorage.getItem("preferredLanguage") || "auto",
+            }),
+            signal
+          );
           if (!res.success) {
             const err = new Error(res.error || "Cloud reasoning failed");
             err.code = res.code;
@@ -307,7 +345,8 @@ async function performStopStreamingRecording(manager) {
           const result = await manager.reasoningCleanupService.processTranscriptionWithOutcome(
             rawText,
             "assemblyai-streaming",
-            null
+            null,
+            runtime
           );
           finalText = result.text || rawText;
           cleanup = result.cleanup;
@@ -317,13 +356,15 @@ async function performStopStreamingRecording(manager) {
               ? await manager.reasoningCleanupService.processWithReasoningModelResult(
                   rawText,
                   reasoningModel,
-                  agentName
+                  agentName,
+                  runtime
                 )
               : {
                   text: await manager.reasoningCleanupService.processWithReasoningModel(
                     rawText,
                     reasoningModel,
-                    agentName
+                    agentName,
+                    runtime
                   ),
                   retryCount: 0,
                   assessment: { metrics: {} },
@@ -360,6 +401,9 @@ async function performStopStreamingRecording(manager) {
         logger.info("Streaming BYOK reasoning complete", { reasoningDurationMs }, "streaming");
       }
     } catch (reasonError) {
+      if (isTranscriptionCancelled(reasonError, signal)) {
+        throw createTranscriptionCancelledError();
+      }
       finalText = rawText;
       const managedCleanup = isEchoDraftCloudMode(cloudReasoningMode);
       cleanup = {
@@ -386,6 +430,7 @@ async function performStopStreamingRecording(manager) {
     }
   }
 
+  throwIfTranscriptionCancelled(signal);
   if (finalText) {
     const tBeforePaste = performance.now();
     logger.info(
