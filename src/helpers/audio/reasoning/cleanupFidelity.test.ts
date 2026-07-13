@@ -132,6 +132,25 @@ describe("assessCleanupFidelity", () => {
     });
   });
 
+  it("rejects a sequenced action changed into an attached gerund", () => {
+    const original =
+      "Pause and assess efficiency, delegation, and sprint size, and then use a risk-based approach until the final gate.";
+    const cleaned =
+      "Pause and assess efficiency, delegation, sprint size, and then using a risk-based approach until the final gate.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["relation-verb-form-change"]),
+    });
+  });
+
+  it("allows a sequenced action to retain its verb form while fixing mechanics", () => {
+    const original = "check the options and then use the safer approach";
+    const cleaned = "Check the options, and then use the safer approach.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
+  });
+
   it("rejects execution-style answers that were not dictated", () => {
     const original = "Check the deployment notes and tell Sam to update the ticket.";
     const cleaned = "Certainly, I have checked the deployment notes and updated the ticket.";

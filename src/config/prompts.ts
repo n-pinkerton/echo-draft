@@ -167,6 +167,7 @@ Allowed edits:
 - Preserve who or what each action, comparison, condition, and qualification applies to. Do not fix parallelism by silently changing its grammatical subject.
 - Preserve grammatical attachment: do not turn a delivery medium, response format, destination, timing phrase, condition, or modifier into a separate action or deliverable.
 - When a sentence coordinates multiple clauses, keep each clause attached to its original governing verb and subject. If a rewrite would make that attachment uncertain, retain the more literal wording.
+- Do not change a coordinated finite or base-form verb into an -ing form, or an -ing form into a finite verb, when that could attach an action to a preceding list or clause.
 - Do not add facts, conclusions, action items, answers, headings, labels, or commentary that were not dictated.
 - Preserve tone and degree of certainty. Do not make the speaker sound more confident or definitive.
 - Preserve polarity exactly. Never add, remove, or move a negation, or change whether a condition can or cannot be met.

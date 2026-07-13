@@ -291,6 +291,37 @@ const countMarker = (normalizedText, marker) => {
   return matches?.length || 0;
 };
 
+const getSequencedActionVerbs = (normalizedText) =>
+  Array.from(
+    normalizedText.matchAll(/\b(?:and\s+)?(?:then|subsequently)\s+([\p{L}]+)\b/gu),
+    (match) => match[1]
+  );
+
+const getGerundBaseCandidates = (word) => {
+  if (!word.endsWith("ing") || word.length <= 4) return new Set();
+
+  const stem = word.slice(0, -3);
+  const candidates = new Set([stem, `${stem}e`]);
+  if (/(.)\1$/u.test(stem)) candidates.add(stem.slice(0, -1));
+  if (stem.endsWith("y")) candidates.add(`${stem.slice(0, -1)}ie`);
+  return candidates;
+};
+
+const hasSequencedVerbFormChange = (normalizedOriginal, normalizedCleaned) => {
+  const originalVerbs = getSequencedActionVerbs(normalizedOriginal);
+  const cleanedVerbs = getSequencedActionVerbs(normalizedCleaned);
+
+  return originalVerbs.some((originalVerb, index) => {
+    const cleanedVerb = cleanedVerbs[index];
+    return (
+      cleanedVerb &&
+      !originalVerb.endsWith("ing") &&
+      cleanedVerb.endsWith("ing") &&
+      getGerundBaseCandidates(cleanedVerb).has(originalVerb)
+    );
+  });
+};
+
 /**
  * Apply a deliberately conservative, content-free acceptance check to AI cleanup output.
  * It catches gross compression, prompt execution, and loss of high-risk literals while
@@ -424,6 +455,10 @@ export function assessCleanupFidelity(originalText, cleanedText) {
     ) {
       reasons.push("relation-marker-addition");
     }
+  }
+
+  if (hasSequencedVerbFormChange(normalizedOriginal, normalizedCleaned)) {
+    reasons.push("relation-verb-form-change");
   }
 
   if (original.includes("?") && !cleaned.includes("?")) {

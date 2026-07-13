@@ -305,6 +305,39 @@ describe("ReasoningCleanupService", () => {
     );
   });
 
+  it("rejects a Sol rescue that changes a sequenced action into an attached gerund", async () => {
+    const original =
+      "Pause and assess efficiency, delegation, and sprint size, and then use a risk-based approach until the final gate. Keep reference 42, the fallback owner, and the Friday deadline in the review.";
+    const rescued =
+      "Pause and assess efficiency, delegation, and sprint size, and then using a risk-based approach until the final gate. Keep reference 42, the fallback owner, and the Friday deadline in the review.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("Keep the important review details.")
+        .mockResolvedValueOnce(rescued),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
+
+    expect(result).toMatchObject({
+      text: original,
+      cleanup: {
+        status: "fallback",
+        fallbackReason: "fidelity_rejected",
+        retryCount: 1,
+      },
+    });
+  });
+
   it("still rejects a Sol rescue that loses a critical literal", async () => {
     const original =
       "Review reference 42, keep the budget caveat, retain the customer example, name the fallback owner, preserve the Friday deadline, and notify both teams before release.";

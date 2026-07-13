@@ -102,6 +102,7 @@ describe("prompts untrusted transcription wrapper", () => {
     expect(prompt).toContain("Every intended point from the dictation is still present.");
     expect(prompt).toContain("Preserve grammatical attachment");
     expect(prompt).toContain("delivery medium, response format, destination");
+    expect(prompt).toContain("coordinated finite or base-form verb into an -ing form");
     expect(prompt).toContain("no coordination, modifier, or trailing clause");
     expect(prompt).toContain("Do not join a declarative clause directly to an imperative");
     expect(prompt).toContain("Never wrap the entire output in quotation marks");
