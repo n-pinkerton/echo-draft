@@ -1,6 +1,11 @@
 import { API_ENDPOINTS, TOKEN_LIMITS } from "../../../config/constants";
 import { getUserPrompt } from "../../../config/prompts";
 import logger from "../../../utils/logger";
+import {
+  finiteNonNegativeNumber,
+  sanitizeEndpointForLogging,
+  sanitizeProviderCode,
+} from "../../../utils/diagnosticSanitizers";
 import { withRetry, createApiRetryStrategy } from "../../../utils/retry";
 import type { ReasoningConfig } from "../../BaseReasoningService";
 
@@ -68,7 +73,9 @@ export async function processWithGeminiProvider({
     response = await withRetry(
       async () => {
         logger.logReasoning("GEMINI_REQUEST", {
-          endpoint: `${API_ENDPOINTS.GEMINI}/models/${model}:generateContent`,
+          endpoint: sanitizeEndpointForLogging(
+            `${API_ENDPOINTS.GEMINI}/models/${model}:generateContent`
+          ),
           model,
           hasApiKey: Boolean(apiKey),
           inputTextLength: text.length,
@@ -97,32 +104,35 @@ export async function processWithGeminiProvider({
 
           if (!res.ok) {
             const errorText = await res.text();
-            let errorData: any = { error: res.statusText };
+            let errorData: any = {};
 
             try {
               errorData = JSON.parse(errorText);
             } catch {
-              errorData = { error: errorText || res.statusText };
+              errorData = {};
             }
+
+            const providerCode = sanitizeProviderCode(
+              errorData.error?.code || errorData.code || null
+            );
 
             logger.logReasoning("GEMINI_API_ERROR_DETAIL", {
               status: res.status,
-              statusText: res.statusText,
-              errorCode: errorData.error?.code || errorData.code || null,
-              errorMessage: errorData.error?.message || errorData.message || errorData.error,
+              errorCode: providerCode,
             });
 
-            const errorMessage =
-              errorData.error?.message ||
-              errorData.message ||
-              errorData.error ||
-              `Gemini API error: ${res.status}`;
-            const apiError = new Error(errorMessage) as Error & {
+            const apiError = new Error(
+              `Gemini cleanup request failed (HTTP ${res.status}).`
+            ) as Error & {
               status?: number;
               response?: { status: number };
+              code?: string;
+              providerCode?: string | null;
             };
             apiError.status = res.status;
             apiError.response = { status: res.status };
+            apiError.code = "REASONING_HTTP_ERROR";
+            apiError.providerCode = providerCode;
             throw apiError;
           }
 
@@ -130,7 +140,6 @@ export async function processWithGeminiProvider({
 
           logger.logReasoning("GEMINI_RAW_RESPONSE", {
             hasResponse: Boolean(jsonResponse),
-            responseKeys: jsonResponse ? Object.keys(jsonResponse) : [],
             hasCandidates: Boolean(jsonResponse?.candidates),
             candidatesLength: jsonResponse?.candidates?.length || 0,
           });
@@ -152,8 +161,9 @@ export async function processWithGeminiProvider({
     );
   } catch (fetchError) {
     logger.logReasoning("GEMINI_FETCH_ERROR", {
-      error: (fetchError as Error).message,
-      stack: (fetchError as Error).stack,
+      errorCategory: (fetchError as any)?.code || (fetchError as Error).name || "unknown",
+      status: finiteNonNegativeNumber((fetchError as any)?.status),
+      providerCode: sanitizeProviderCode((fetchError as any)?.providerCode),
     });
     throw fetchError;
   }
@@ -168,8 +178,13 @@ export async function processWithGeminiProvider({
   }
 
   const candidate = response.candidates[0];
-  const finishReason =
+  const rawFinishReason =
     typeof candidate.finishReason === "string" ? candidate.finishReason.trim().toUpperCase() : null;
+  const finishReason = ["STOP", "MAX_TOKENS", "SAFETY", "RECITATION"].includes(rawFinishReason)
+    ? rawFinishReason
+    : rawFinishReason
+      ? "OTHER"
+      : null;
   if (finishReason && finishReason !== "STOP") {
     logger.logReasoning("GEMINI_OUTPUT_INCOMPLETE", {
       model,
@@ -189,7 +204,7 @@ export async function processWithGeminiProvider({
   if (!candidate.content?.parts?.[0]?.text) {
     logger.logReasoning("GEMINI_EMPTY_RESPONSE", {
       model,
-      finishReason: candidate.finishReason,
+      finishReason,
       hasContent: Boolean(candidate.content),
       hasParts: Boolean(candidate.content?.parts),
     });
@@ -202,7 +217,7 @@ export async function processWithGeminiProvider({
   logger.logReasoning("GEMINI_RESPONSE", {
     model,
     responseLength: responseText.length,
-    tokensUsed: response.usageMetadata?.totalTokenCount || 0,
+    tokensUsed: finiteNonNegativeNumber(response.usageMetadata?.totalTokenCount) || 0,
     success: true,
   });
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { callChatCompletionsApi } from "./chatCompletionsApi";
 import { processWithGeminiProvider } from "./geminiProvider";
+import logger from "../../../utils/logger";
 
 const commonOptions = {
   text: "Keep every substantive point in this dictation.",
@@ -60,4 +61,20 @@ describe("cleanup provider termination handling", () => {
       ).rejects.toMatchObject({ code: "CLEANUP_INCOMPLETE", finishReason });
     }
   );
+
+  it("does not persist or rethrow an untrusted Gemini error body", async () => {
+    const secret = "dictation-secret-and-provider-cookie";
+    const logSpy = vi.spyOn(logger, "logReasoning");
+    const fetchFn = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      statusText: secret,
+      text: async () => JSON.stringify({ error: { code: "invalid_argument", message: secret } }),
+    }));
+
+    const pending = processWithGeminiProvider({ ...commonOptions, fetchFn: fetchFn as any });
+
+    await expect(pending).rejects.toThrow("Gemini cleanup request failed (HTTP 400).");
+    expect(JSON.stringify(logSpy.mock.calls)).not.toContain(secret);
+  });
 });
