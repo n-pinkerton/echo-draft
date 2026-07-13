@@ -1,12 +1,10 @@
 import { createAuthClient } from "@neondatabase/auth";
 import { BetterAuthReactAdapter } from "@neondatabase/auth/react";
 import { OPENWHISPR_API_URL } from "../config/constants";
-import {
-  LAST_SIGN_IN_STORAGE_KEY,
-  LEGACY_LAST_SIGN_IN_STORAGE_KEY,
-} from "../utils/branding";
+import { LAST_SIGN_IN_STORAGE_KEY, LEGACY_LAST_SIGN_IN_STORAGE_KEY } from "../utils/branding";
 import { openExternalLink } from "../utils/externalLinks";
 import logger from "../utils/logger";
+import { createAbortError, raceWithAbort, throwIfAborted } from "../utils/retry";
 
 export const NEON_AUTH_URL = import.meta.env.VITE_NEON_AUTH_URL || "";
 export const authClient = NEON_AUTH_URL
@@ -35,8 +33,7 @@ function loadLastSignInTimeFromStorage(): number | null {
   if (!storage) return null;
 
   const raw =
-    storage.getItem(LAST_SIGN_IN_STORAGE_KEY) ??
-    storage.getItem(LEGACY_LAST_SIGN_IN_STORAGE_KEY);
+    storage.getItem(LAST_SIGN_IN_STORAGE_KEY) ?? storage.getItem(LEGACY_LAST_SIGN_IN_STORAGE_KEY);
   if (!raw) return null;
 
   const parsed = Number(raw);
@@ -136,15 +133,37 @@ export async function signOut(): Promise<void> {
   }
 }
 
-export async function withSessionRefresh<T>(operation: () => Promise<T>): Promise<T> {
+async function waitForGraceRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  await new Promise<void>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort);
+      resolve();
+    }, delayMs);
+    const handleAbort = () => {
+      window.clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", handleAbort);
+      reject(createAbortError());
+    };
+    signal?.addEventListener("abort", handleAbort, { once: true });
+    if (signal?.aborted) handleAbort();
+  });
+}
+
+export async function withSessionRefresh<T>(
+  operation: () => Promise<T>,
+  { signal }: { signal?: AbortSignal } = {}
+): Promise<T> {
   const startedInGracePeriod = isWithinGracePeriod();
   let graceRetriesUsed = 0;
   let refreshAttempted = false;
 
   while (true) {
+    throwIfAborted(signal);
     try {
       return await operation();
     } catch (error: any) {
+      throwIfAborted(signal);
       const isAuthExpired =
         error?.code === "AUTH_EXPIRED" ||
         error?.message?.toLowerCase().includes("session expired") ||
@@ -157,13 +176,13 @@ export async function withSessionRefresh<T>(operation: () => Promise<T>): Promis
       if (startedInGracePeriod && graceRetriesUsed < GRACE_RETRY_COUNT) {
         const delayMs = INITIAL_GRACE_RETRY_DELAY_MS * Math.pow(2, graceRetriesUsed);
         graceRetriesUsed += 1;
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await waitForGraceRetry(delayMs, signal);
         continue;
       }
 
       if (!refreshAttempted) {
         refreshAttempted = true;
-        const refreshed = await refreshSession();
+        const refreshed = await raceWithAbort(refreshSession(), signal);
         if (refreshed) {
           continue;
         }

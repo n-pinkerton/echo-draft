@@ -30,6 +30,7 @@ describe("CloudTranscriber", () => {
     (window as any).electronAPI = {
       cloudTranscribe: vi.fn(),
       cloudReason: vi.fn(),
+      cancelIpcRequest: vi.fn(async () => ({ success: true })),
     };
   });
 
@@ -147,6 +148,35 @@ describe("CloudTranscriber", () => {
       code: "TRANSCRIPTION_CANCELLED",
       cancelled: true,
     });
+    const cleanupRequestId = (window as any).electronAPI.cloudReason.mock.calls[0][2];
+    expect((window as any).electronAPI.cancelIpcRequest).toHaveBeenCalledWith(cleanupRequestId);
+  });
+
+  it("cancels an in-flight managed transcription in the main process", async () => {
+    const controller = new AbortController();
+    (window as any).electronAPI.cloudTranscribe.mockImplementation(
+      async () => await new Promise(() => {})
+    );
+    const transcriber = new CloudTranscriber({
+      logger: createLogger(),
+      withSessionRefresh: async (fn: any) => await fn(),
+    });
+    const pending = transcriber.processWithEchoDraftCloud(
+      { arrayBuffer: vi.fn(async () => new ArrayBuffer(4)) } as any,
+      {},
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() =>
+      expect((window as any).electronAPI.cloudTranscribe).toHaveBeenCalledOnce()
+    );
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    const transcriptionRequestId = (window as any).electronAPI.cloudTranscribe.mock.calls[0][2];
+    expect((window as any).electronAPI.cancelIpcRequest).toHaveBeenCalledWith(
+      transcriptionRequestId
+    );
   });
 
   it("preserves raw cloud text when cleanup fails fidelity validation", async () => {

@@ -1,5 +1,6 @@
 import { getBaseLanguageCode } from "../../../utils/languageSupport";
 import { sanitizeOpaqueRequestId, sanitizeProviderCode } from "../../../utils/diagnosticSanitizers";
+import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import {
   buildCustomDictionaryPromptForTranscription,
   getCustomDictionaryArray,
@@ -461,7 +462,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           }
         }
 
-        const result = await window.electronAPI.proxyMistralTranscription(proxyData);
+        const result = await invokeCancelableIpc(externalSignal, (requestId) =>
+          window.electronAPI.proxyMistralTranscription(proxyData, requestId)
+        );
         throwIfTranscriptionCancelled(externalSignal);
         const proxyText = result?.text;
 

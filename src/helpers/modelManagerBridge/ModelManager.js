@@ -251,10 +251,15 @@ class ModelManager {
   async runInference(modelId, prompt, options = {}) {
     this.ensureInitialized();
     const startTime = Date.now();
+    const diagnosticOptions = { ...options };
+    delete diagnosticOptions.signal;
     debugLogger.logReasoning("INFERENCE_START", {
       modelId,
       promptLength: prompt.length,
-      options: { ...options, systemPrompt: options.systemPrompt ? "[set]" : "[not set]" },
+      options: {
+        ...diagnosticOptions,
+        systemPrompt: options.systemPrompt ? "[set]" : "[not set]",
+      },
     });
 
     if (!this.serverManager.isAvailable()) {
@@ -321,6 +326,7 @@ class ModelManager {
       const result = await this.serverManager.inference(messages, {
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens ?? 512,
+        signal: options.signal,
       });
 
       const totalTime = Date.now() - startTime;
@@ -331,6 +337,12 @@ class ModelManager {
 
       return result;
     } catch (error) {
+      if (error?.name === "AbortError" || options.signal?.aborted) {
+        throw Object.assign(new Error("Request cancelled"), {
+          name: "AbortError",
+          code: "REQUEST_CANCELLED",
+        });
+      }
       const totalTime = Date.now() - startTime;
       debugLogger.logReasoning("INFERENCE_FAILED", {
         totalTimeMs: totalTime,

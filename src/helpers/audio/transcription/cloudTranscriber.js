@@ -8,7 +8,7 @@ import {
 } from "../../../utils/branding";
 import { getCustomDictionaryArray } from "./customDictionary";
 import { isLikelyDictionaryPromptEcho } from "./dictionaryPromptEcho";
-import { raceWithAbort } from "../../../utils/retry";
+import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import {
   createTranscriptionCancelledError,
   isTranscriptionCancelled,
@@ -71,18 +71,20 @@ export class CloudTranscriber {
     if (dictionaryPrompt) opts.prompt = dictionaryPrompt;
 
     const transcriptionStart = performance.now();
-    const result = await this.withSessionRefresh(async () => {
-      const res = await raceWithAbort(
-        window.electronAPI.cloudTranscribe(arrayBuffer, opts),
-        signal
-      );
-      if (!res.success) {
-        const err = new Error(res.error || "Cloud transcription failed");
-        err.code = res.code;
-        throw err;
-      }
-      return res;
-    });
+    const result = await this.withSessionRefresh(
+      async () => {
+        const res = await invokeCancelableIpc(signal, (requestId) =>
+          window.electronAPI.cloudTranscribe(arrayBuffer, opts, requestId)
+        );
+        if (!res.success) {
+          const err = new Error(res.error || "Cloud transcription failed");
+          err.code = res.code;
+          throw err;
+        }
+        return res;
+      },
+      { signal }
+    );
     throwIfTranscriptionCancelled(signal);
     timings.transcriptionProcessingDurationMs = Math.round(performance.now() - transcriptionStart);
 
@@ -115,22 +117,28 @@ export class CloudTranscriber {
 
       try {
         if (cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE) {
-          const reasonResult = await this.withSessionRefresh(async () => {
-            const res = await raceWithAbort(
-              window.electronAPI.cloudReason(processedText, {
-                agentName,
-                customDictionary: getCustomDictionaryArray(),
-                language: localStorage.getItem("preferredLanguage") || "auto",
-              }),
-              signal
-            );
-            if (!res.success) {
-              const err = new Error(res.error || "Cloud reasoning failed");
-              err.code = res.code;
-              throw err;
-            }
-            return res;
-          });
+          const reasonResult = await this.withSessionRefresh(
+            async () => {
+              const res = await invokeCancelableIpc(signal, (requestId) =>
+                window.electronAPI.cloudReason(
+                  processedText,
+                  {
+                    agentName,
+                    customDictionary: getCustomDictionaryArray(),
+                    language: localStorage.getItem("preferredLanguage") || "auto",
+                  },
+                  requestId
+                )
+              );
+              if (!res.success) {
+                const err = new Error(res.error || "Cloud reasoning failed");
+                err.code = res.code;
+                throw err;
+              }
+              return res;
+            },
+            { signal }
+          );
 
           if (!reasonResult.success) {
             throw new Error("Cloud reasoning did not complete successfully.");

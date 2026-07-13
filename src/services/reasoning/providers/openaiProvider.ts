@@ -215,6 +215,22 @@ export async function processWithOpenAiProvider({
                 continue;
               }
 
+              if (rawErrorCode === "model_not_found" || rawErrorCode === "invalid_model") {
+                const modelError = new Error(
+                  "The selected cleanup model does not exist or is unavailable."
+                ) as Error & {
+                  status?: number;
+                  response?: { status: number };
+                  code?: string;
+                  providerCode?: string | null;
+                };
+                modelError.status = res.status;
+                modelError.response = { status: res.status };
+                modelError.code = "REASONING_MODEL_UNAVAILABLE";
+                modelError.providerCode = errorCode;
+                throw modelError;
+              }
+
               const apiError = new Error(
                 `Cleanup provider request failed (HTTP ${res.status}).`
               ) as Error & {

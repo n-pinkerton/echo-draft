@@ -2,7 +2,8 @@ export interface ElectronAPICloud {
   // EchoDraft Cloud API
   cloudTranscribe?: (
     audioBuffer: ArrayBuffer,
-    opts: { language?: string; prompt?: string }
+    opts: { language?: string; prompt?: string },
+    requestId: string
   ) => Promise<{
     success: boolean;
     text?: string;
@@ -14,7 +15,8 @@ export interface ElectronAPICloud {
   }>;
   cloudReason?: (
     text: string,
-    opts: { model?: string; agentName?: string; customDictionary?: string[] }
+    opts: { model?: string; agentName?: string; customDictionary?: string[] },
+    requestId: string
   ) => Promise<{
     success: boolean;
     text?: string;
@@ -23,6 +25,9 @@ export interface ElectronAPICloud {
     error?: string;
     code?: string;
   }>;
+  cancelIpcRequest?: (
+    requestId: string
+  ) => Promise<{ success: boolean; error?: string; code?: string }>;
   cloudUsage?: () => Promise<{
     success: boolean;
     wordsUsed?: number;
@@ -52,8 +57,5 @@ export interface ElectronAPICloud {
 
   // Usage limit events
   notifyLimitReached?: (data: { wordsUsed: number; limit: number }) => void;
-  onLimitReached?: (
-    callback: (data: { wordsUsed: number; limit: number }) => void
-  ) => () => void;
+  onLimitReached?: (callback: (data: { wordsUsed: number; limit: number }) => void) => () => void;
 }
-

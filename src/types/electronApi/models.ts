@@ -82,8 +82,9 @@ export interface ElectronAPIModels {
     text: string,
     modelId: string,
     agentName: string | null,
-    config: any
-  ) => Promise<{ success: boolean; text?: string; error?: string }>;
+    config: any,
+    requestId: string
+  ) => Promise<{ success: boolean; text?: string; error?: string; code?: string }>;
   checkLocalReasoningAvailable: () => Promise<boolean>;
 
   // Anthropic reasoning
@@ -91,8 +92,9 @@ export interface ElectronAPIModels {
     text: string,
     modelId: string,
     agentName: string | null,
-    config: any
-  ) => Promise<{ success: boolean; text?: string; error?: string }>;
+    config: any,
+    requestId: string
+  ) => Promise<{ success: boolean; text?: string; error?: string; code?: string }>;
 
   // llama.cpp management
   llamaCppCheck: () => Promise<{ isInstalled: boolean; version?: string }>;

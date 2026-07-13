@@ -208,8 +208,14 @@ class ReasoningService extends BaseReasoningService {
       config,
       getSystemPrompt: (value, selectedModel) =>
         this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
-      ipcCall: (userPrompt, modelName, agent, options) =>
-        window.electronAPI.processAnthropicReasoning(userPrompt, modelName, agent, options),
+      ipcCall: (userPrompt, modelName, agent, options, requestId) =>
+        window.electronAPI.processAnthropicReasoning(
+          userPrompt,
+          modelName,
+          agent,
+          options,
+          requestId
+        ),
     });
   }
 
@@ -234,8 +240,8 @@ class ReasoningService extends BaseReasoningService {
       config,
       getSystemPrompt: (value, selectedModel) =>
         this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
-      ipcCall: (userPrompt, modelName, agent, options) =>
-        window.electronAPI.processLocalReasoning(userPrompt, modelName, agent, options),
+      ipcCall: (userPrompt, modelName, agent, options, requestId) =>
+        window.electronAPI.processLocalReasoning(userPrompt, modelName, agent, options, requestId),
     });
   }
 
@@ -343,7 +349,8 @@ class ReasoningService extends BaseReasoningService {
         _config: config,
         getCustomDictionary: () => this.getCustomDictionary(),
         getPreferredLanguage: () => this.getPreferredLanguage(),
-        cloudReason: (input, payload) => (window as any).electronAPI.cloudReason(input, payload),
+        cloudReason: (input, payload, requestId) =>
+          (window as any).electronAPI.cloudReason(input, payload, requestId),
       });
     } catch (error) {
       logger.logReasoning("OPENWHISPR_ERROR", {

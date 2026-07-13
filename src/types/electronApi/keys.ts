@@ -27,12 +27,15 @@ export interface ElectronAPIKeys {
   // Mistral API key management
   getMistralKey: () => Promise<string | null>;
   saveMistralKey: (key: string) => Promise<void>;
-  proxyMistralTranscription: (data: {
-    audioBuffer: ArrayBuffer;
-    model?: string;
-    language?: string;
-    contextBias?: string[];
-  }) => Promise<{ text: string }>;
+  proxyMistralTranscription: (
+    data: {
+      audioBuffer: ArrayBuffer;
+      model?: string;
+      language?: string;
+      contextBias?: string[];
+    },
+    requestId: string
+  ) => Promise<{ text: string }>;
 
   // Custom endpoint API keys
   getCustomTranscriptionKey?: () => Promise<string | null>;
@@ -50,4 +53,3 @@ export interface ElectronAPIKeys {
   getActivationMode?: () => Promise<"tap" | "push">;
   saveActivationMode?: (mode: "tap" | "push") => Promise<void>;
 }
-

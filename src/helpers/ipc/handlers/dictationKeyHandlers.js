@@ -1,6 +1,9 @@
 const debugLogger = require("../../debugLogger");
 
-function registerDictationKeyHandlers({ ipcMain }, { environmentManager, syncStartupEnv }) {
+function registerDictationKeyHandlers(
+  { ipcMain },
+  { environmentManager, syncStartupEnv, cancelableRequests }
+) {
   ipcMain.handle("get-dictation-key", async () => {
     return environmentManager.getDictationKey();
   });
@@ -65,20 +68,45 @@ function registerDictationKeyHandlers({ ipcMain }, { environmentManager, syncSta
     syncStartupEnv(setVars, clearVars);
   });
 
-  ipcMain.handle("process-local-reasoning", async (_event, text, modelId, _agentName, config) => {
-    try {
-      const LocalReasoningService = require("../../../services/localReasoningBridge").default;
-      const result = await LocalReasoningService.processText(text, modelId, config);
-      return { success: true, text: result };
-    } catch (error) {
-      return { success: false, error: error.message };
+  ipcMain.handle(
+    "process-local-reasoning",
+    async (event, text, modelId, _agentName, config, requestId) => {
+      let requestScope;
+      try {
+        requestScope = cancelableRequests.createScope(event, requestId);
+        if (requestScope.signal.aborted) {
+          throw Object.assign(new Error("Request cancelled"), { name: "AbortError" });
+        }
+        const LocalReasoningService = require("../../../services/localReasoningBridge").default;
+        const result = await LocalReasoningService.processText(text, modelId, {
+          ...(config || {}),
+          signal: requestScope.signal,
+        });
+        return { success: true, text: result };
+      } catch (error) {
+        if (error?.name === "AbortError" || requestScope?.signal.aborted) {
+          return { success: false, error: "Request cancelled", code: "REQUEST_CANCELLED" };
+        }
+        return {
+          success: false,
+          error: "Local reasoning did not complete.",
+          code: error?.code || "LOCAL_REASONING_ERROR",
+        };
+      } finally {
+        requestScope?.finish();
+      }
     }
-  });
+  );
 
   ipcMain.handle(
     "process-anthropic-reasoning",
-    async (_event, text, modelId, _agentName, config) => {
+    async (event, text, modelId, _agentName, config, requestId) => {
+      let requestScope;
       try {
+        requestScope = cancelableRequests.createScope(event, requestId);
+        if (requestScope.signal.aborted) {
+          throw Object.assign(new Error("Request cancelled"), { name: "AbortError" });
+        }
         const apiKey = environmentManager.getAnthropicKey();
 
         if (!apiKey) {
@@ -108,26 +136,32 @@ function registerDictationKeyHandlers({ ipcMain }, { environmentManager, syncSta
             "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify(requestBody),
+          signal: requestScope.signal,
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          let errorData = { error: response.statusText };
-          try {
-            errorData = JSON.parse(errorText);
-          } catch {
-            errorData = { error: errorText || response.statusText };
-          }
-          throw new Error(
-            errorData.error?.message || errorData.error || `Anthropic API error: ${response.status}`
-          );
+          throw new Error(`Anthropic reasoning failed (HTTP ${response.status}).`);
         }
 
         const data = await response.json();
         return { success: true, text: data.content[0].text.trim() };
       } catch (error) {
-        debugLogger.error("Anthropic reasoning error:", error);
-        return { success: false, error: error.message };
+        if (error?.name === "AbortError" || requestScope?.signal.aborted) {
+          debugLogger.info("Anthropic reasoning cancelled", {}, "reasoning");
+          return { success: false, error: "Request cancelled", code: "REQUEST_CANCELLED" };
+        }
+        debugLogger.error(
+          "Anthropic reasoning error",
+          { errorCategory: error?.code || error?.name || "unknown" },
+          "reasoning"
+        );
+        return {
+          success: false,
+          error: "Anthropic reasoning did not complete.",
+          code: error?.code || "ANTHROPIC_REASONING_ERROR",
+        };
+      } finally {
+        requestScope?.finish();
       }
     }
   );
@@ -143,4 +177,3 @@ function registerDictationKeyHandlers({ ipcMain }, { environmentManager, syncSta
 }
 
 module.exports = { registerDictationKeyHandlers };
-

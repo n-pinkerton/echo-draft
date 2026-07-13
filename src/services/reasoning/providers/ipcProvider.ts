@@ -1,6 +1,6 @@
 import { getUserPrompt } from "../../../config/prompts";
 import logger from "../../../utils/logger";
-import { raceWithAbort } from "../../../utils/retry";
+import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import type { ReasoningConfig } from "../../BaseReasoningService";
 
 export async function processWithIpcProvider({
@@ -22,7 +22,8 @@ export async function processWithIpcProvider({
     userPrompt: string,
     model: string,
     agentName: string | null,
-    options: any
+    options: any,
+    requestId: string
   ) => Promise<any>;
 }): Promise<string> {
   logger.logReasoning(`${providerName.toUpperCase()}_START`, {
@@ -45,12 +46,17 @@ export async function processWithIpcProvider({
   const systemPrompt = getSystemPrompt(agentName, model);
   const userPrompt = getUserPrompt(text, model);
   const { signal, ...serializableConfig } = config;
-  const result = await raceWithAbort(
-    ipcCall(userPrompt, model, agentName, {
-      ...serializableConfig,
-      systemPrompt,
-    }),
-    signal
+  const result = await invokeCancelableIpc(signal, (requestId) =>
+    ipcCall(
+      userPrompt,
+      model,
+      agentName,
+      {
+        ...serializableConfig,
+        systemPrompt,
+      },
+      requestId
+    )
   );
 
   const processingTime = Date.now() - startTime;
@@ -67,7 +73,11 @@ export async function processWithIpcProvider({
   logger.logReasoning(`${providerName.toUpperCase()}_ERROR`, {
     model,
     processingTimeMs: processingTime,
-    error: result.error,
+    errorCategory: result.code || "provider_error",
   });
-  throw new Error(result.error);
+  const error = new Error(`${providerName} reasoning did not complete.`) as Error & {
+    code?: string;
+  };
+  error.code = result.code || "REASONING_PROVIDER_ERROR";
+  throw error;
 }

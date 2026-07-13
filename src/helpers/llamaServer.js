@@ -291,6 +291,15 @@ class LlamaServerManager {
 
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
+      const signal = options.signal;
+      let settled = false;
+      let handleAbort = () => {};
+      const settle = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", handleAbort);
+        callback(value);
+      };
 
       const req = http.request(
         {
@@ -316,7 +325,7 @@ class LlamaServerManager {
             });
 
             if (res.statusCode !== 200) {
-              reject(new Error(`llama-server returned status ${res.statusCode}: ${data}`));
+              settle(reject, new Error(`llama-server returned status ${res.statusCode}`));
               return;
             }
 
@@ -324,21 +333,40 @@ class LlamaServerManager {
               const response = JSON.parse(data);
               // Extract text from OpenAI-compatible response
               const text = response.choices?.[0]?.message?.content || "";
-              resolve(text.trim());
+              settle(resolve, text.trim());
             } catch (e) {
-              reject(new Error(`Failed to parse llama-server response: ${e.message}`));
+              settle(reject, new Error("Failed to parse llama-server response"));
             }
           });
         }
       );
 
+      handleAbort = () => {
+        const error = Object.assign(new Error("Request cancelled"), {
+          name: "AbortError",
+          code: "REQUEST_CANCELLED",
+        });
+        req.destroy(error);
+        settle(reject, error);
+      };
+
       req.on("error", (error) => {
-        reject(new Error(`llama-server request failed: ${error.message}`));
+        if (error?.name === "AbortError") {
+          settle(reject, error);
+          return;
+        }
+        settle(reject, new Error("llama-server request failed"));
       });
       req.on("timeout", () => {
         req.destroy();
-        reject(new Error("llama-server request timed out"));
+        settle(reject, new Error("llama-server request timed out"));
       });
+
+      signal?.addEventListener("abort", handleAbort, { once: true });
+      if (signal?.aborted) {
+        handleAbort();
+        return;
+      }
 
       req.write(body);
       req.end();

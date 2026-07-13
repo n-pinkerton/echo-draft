@@ -35,6 +35,10 @@ const { registerUtilityHandlers } = require("./ipc/handlers/utilityHandlers");
 const { registerWhisperHandlers } = require("./ipc/handlers/whisperHandlers");
 const { registerWindowControlHandlers } = require("./ipc/handlers/windowControlHandlers");
 const { isTruthyFlag } = require("./ipc/utils/flags");
+const {
+  CancelableRequestRegistry,
+  registerCancelableRequestHandler,
+} = require("./ipc/cancelableRequestRegistry");
 
 const IS_E2E_MODE = isTruthyFlag(process.env.OPENWHISPR_E2E);
 
@@ -51,6 +55,7 @@ class IPCHandlers {
     this.windowsKeyManager = managers.windowsKeyManager;
     this.sessionId = crypto.randomUUID();
     this.assemblyAiStreaming = null;
+    this.cancelableRequests = new CancelableRequestRegistry();
     this.setupHandlers();
   }
 
@@ -92,6 +97,7 @@ class IPCHandlers {
       this.trayManager?.updateDictationStatus?.(status);
     });
     registerEnvironmentHandlers({ ipcMain }, { environmentManager: this.environmentManager });
+    registerCancelableRequestHandler({ ipcMain }, { registry: this.cancelableRequests });
 
     registerTranscriptionDbHandlers(
       { ipcMain, app, BrowserWindow, dialog, fs, path },
@@ -141,11 +147,18 @@ class IPCHandlers {
 
     registerAutoStartHandlers({ ipcMain, app });
 
-    registerModelManagementHandlers({ ipcMain }, { environmentManager: this.environmentManager });
+    registerModelManagementHandlers(
+      { ipcMain },
+      {
+        environmentManager: this.environmentManager,
+        cancelableRequests: this.cancelableRequests,
+      }
+    );
     registerDictationKeyHandlers(
       { ipcMain },
       {
         environmentManager: this.environmentManager,
+        cancelableRequests: this.cancelableRequests,
         syncStartupEnv: (setVars, clearVars) => this._syncStartupEnv(setVars, clearVars),
       }
     );
@@ -157,7 +170,12 @@ class IPCHandlers {
 
     registerCloudApiHandlers(
       { ipcMain, app, http, https, shell },
-      { cloudContext, sessionId: this.sessionId, whisperManager: this.whisperManager }
+      {
+        cloudContext,
+        sessionId: this.sessionId,
+        whisperManager: this.whisperManager,
+        cancelableRequests: this.cancelableRequests,
+      }
     );
 
     registerDebugLoggingHandlers(

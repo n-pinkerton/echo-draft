@@ -2,7 +2,7 @@ const debugLogger = require("../../debugLogger");
 
 const MISTRAL_TRANSCRIPTION_URL = "https://api.mistral.ai/v1/audio/transcriptions";
 
-function registerModelManagementHandlers({ ipcMain }, { environmentManager }) {
+function registerModelManagementHandlers({ ipcMain }, { environmentManager, cancelableRequests }) {
   ipcMain.handle("model-get-all", async () => {
     try {
       debugLogger.debug("model-get-all called", undefined, "ipc");
@@ -24,14 +24,17 @@ function registerModelManagementHandlers({ ipcMain }, { environmentManager }) {
   ipcMain.handle("model-download", async (event, modelId) => {
     try {
       const modelManager = require("../../modelManagerBridge").default;
-      const result = await modelManager.downloadModel(modelId, (progress, downloadedSize, totalSize) => {
-        event.sender.send("model-download-progress", {
-          modelId,
-          progress,
-          downloadedSize,
-          totalSize,
-        });
-      });
+      const result = await modelManager.downloadModel(
+        modelId,
+        (progress, downloadedSize, totalSize) => {
+          event.sender.send("model-download-progress", {
+            modelId,
+            progress,
+            downloadedSize,
+            totalSize,
+          });
+        }
+      );
       return { success: true, path: result };
     } catch (error) {
       return {
@@ -132,39 +135,47 @@ function registerModelManagementHandlers({ ipcMain }, { environmentManager }) {
   // Proxy Mistral transcription through main process to avoid CORS
   ipcMain.handle(
     "proxy-mistral-transcription",
-    async (_event, { audioBuffer, model, language, contextBias }) => {
-      const apiKey = environmentManager.getMistralKey();
-      if (!apiKey) {
-        throw new Error("Mistral API key not configured");
-      }
-
-      const formData = new FormData();
-      const audioBlob = new Blob([Buffer.from(audioBuffer)], { type: "audio/webm" });
-      formData.append("file", audioBlob, "audio.webm");
-      formData.append("model", model || "voxtral-mini-latest");
-      if (language && language !== "auto") {
-        formData.append("language", language);
-      }
-      if (contextBias && contextBias.length > 0) {
-        for (const token of contextBias) {
-          formData.append("context_bias", token);
+    async (event, { audioBuffer, model, language, contextBias }, requestId) => {
+      const requestScope = cancelableRequests.createScope(event, requestId);
+      try {
+        if (requestScope.signal.aborted) {
+          throw Object.assign(new Error("Request cancelled"), { name: "AbortError" });
         }
+        const apiKey = environmentManager.getMistralKey();
+        if (!apiKey) {
+          throw new Error("Mistral API key not configured");
+        }
+
+        const formData = new FormData();
+        const audioBlob = new Blob([Buffer.from(audioBuffer)], { type: "audio/webm" });
+        formData.append("file", audioBlob, "audio.webm");
+        formData.append("model", model || "voxtral-mini-latest");
+        if (language && language !== "auto") {
+          formData.append("language", language);
+        }
+        if (contextBias && contextBias.length > 0) {
+          for (const token of contextBias) {
+            formData.append("context_bias", token);
+          }
+        }
+
+        const response = await fetch(MISTRAL_TRANSCRIPTION_URL, {
+          method: "POST",
+          headers: {
+            "x-api-key": apiKey,
+          },
+          body: formData,
+          signal: requestScope.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Mistral transcription failed (HTTP ${response.status}).`);
+        }
+
+        return await response.json();
+      } finally {
+        requestScope.finish();
       }
-
-      const response = await fetch(MISTRAL_TRANSCRIPTION_URL, {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Mistral API Error: ${response.status} ${errorText}`);
-      }
-
-      return await response.json();
     }
   );
 
@@ -186,4 +197,3 @@ function registerModelManagementHandlers({ ipcMain }, { environmentManager }) {
 }
 
 module.exports = { registerModelManagementHandlers };
-

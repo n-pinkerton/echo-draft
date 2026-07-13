@@ -40,6 +40,7 @@ class LocalReasoningService {
         contextSize: config.contextSize || 4096,
         threads: config.threads || 4,
         systemPrompt: config.systemPrompt || "",
+        signal: config.signal,
       };
 
       debugLogger.logReasoning("LOCAL_BRIDGE_INFERENCE", {
@@ -63,6 +64,12 @@ class LocalReasoningService {
 
       return result;
     } catch (error) {
+      if (error?.name === "AbortError" || config.signal?.aborted) {
+        throw Object.assign(new Error("Request cancelled"), {
+          name: "AbortError",
+          code: "REQUEST_CANCELLED",
+        });
+      }
       const processingTime = Date.now() - startTime;
 
       debugLogger.logReasoning("LOCAL_BRIDGE_ERROR", {

@@ -5,6 +5,7 @@ import {
   isEchoDraftCloudMode,
 } from "../../../utils/branding";
 import { raceWithAbort } from "../../../utils/retry";
+import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import {
   createTranscriptionCancelledError,
   isTranscriptionCancelled,
@@ -295,22 +296,28 @@ async function performStopStreamingRecording(manager, runtime = {}) {
 
     try {
       if (isEchoDraftCloudMode(cloudReasoningMode)) {
-        const reasonResult = await manager.withSessionRefresh(async () => {
-          const res = await raceWithAbort(
-            window.electronAPI.cloudReason(finalText, {
-              agentName,
-              customDictionary: getCustomDictionaryArray(),
-              language: localStorage.getItem("preferredLanguage") || "auto",
-            }),
-            signal
-          );
-          if (!res.success) {
-            const err = new Error(res.error || "Cloud reasoning failed");
-            err.code = res.code;
-            throw err;
-          }
-          return res;
-        });
+        const reasonResult = await manager.withSessionRefresh(
+          async () => {
+            const res = await invokeCancelableIpc(signal, (requestId) =>
+              window.electronAPI.cloudReason(
+                finalText,
+                {
+                  agentName,
+                  customDictionary: getCustomDictionaryArray(),
+                  language: localStorage.getItem("preferredLanguage") || "auto",
+                },
+                requestId
+              )
+            );
+            if (!res.success) {
+              const err = new Error(res.error || "Cloud reasoning failed");
+              err.code = res.code;
+              throw err;
+            }
+            return res;
+          },
+          { signal }
+        );
 
         if (!reasonResult.success) {
           throw new Error("Cloud reasoning did not complete successfully.");

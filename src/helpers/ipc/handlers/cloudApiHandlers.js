@@ -2,16 +2,29 @@ const debugLogger = require("../../debugLogger");
 
 function registerCloudApiHandlers(
   { ipcMain, app, http, https, shell },
-  { cloudContext, sessionId, whisperManager }
+  { cloudContext, sessionId, whisperManager, cancelableRequests }
 ) {
   const { getApiUrl, getSessionCookies } = cloudContext;
+  const throwIfCancelled = (signal) => {
+    if (!signal?.aborted) return;
+    const error = new Error("Request cancelled");
+    error.name = "AbortError";
+    error.code = "REQUEST_CANCELLED";
+    throw error;
+  };
+  const cancelledResult = { success: false, error: "Request cancelled", code: "REQUEST_CANCELLED" };
 
-  ipcMain.handle("cloud-transcribe", async (event, audioBuffer, opts = {}) => {
+  ipcMain.handle("cloud-transcribe", async (event, audioBuffer, opts = {}, requestId) => {
+    let requestScope;
     try {
+      requestScope = cancelableRequests.createScope(event, requestId);
+      const { signal } = requestScope;
+      throwIfCancelled(signal);
       const apiUrl = getApiUrl();
       if (!apiUrl) throw new Error("EchoDraft API URL not configured");
 
       const cookieHeader = await getSessionCookies(event);
+      throwIfCancelled(signal);
       if (!cookieHeader) throw new Error("No session cookies available");
 
       const audioData = Buffer.from(audioBuffer);
@@ -90,8 +103,17 @@ function registerCloudApiHandlers(
           },
           (res) => {
             let responseData = "";
-            res.on("data", (chunk) => (responseData += chunk));
+            res.on("data", (chunk) => {
+              responseData += chunk;
+              if (responseData.length > 10 * 1024 * 1024) {
+                req.destroy(new Error("Cloud transcription response exceeded 10 MB"));
+              }
+            });
             res.on("end", () => {
+              if (signal.aborted) {
+                reject(Object.assign(new Error("Request cancelled"), { name: "AbortError" }));
+                return;
+              }
               try {
                 const parsed = JSON.parse(responseData);
                 resolve({ statusCode: res.statusCode, data: parsed });
@@ -101,7 +123,16 @@ function registerCloudApiHandlers(
             });
           }
         );
+        const handleAbort = () => {
+          req.destroy(Object.assign(new Error("Request cancelled"), { name: "AbortError" }));
+        };
+        signal.addEventListener("abort", handleAbort, { once: true });
         req.on("error", reject);
+        req.on("close", () => signal.removeEventListener("abort", handleAbort));
+        if (signal.aborted) {
+          handleAbort();
+          return;
+        }
         req.write(body);
         req.end();
       });
@@ -121,7 +152,7 @@ function registerCloudApiHandlers(
         };
       }
       if (data.statusCode !== 200) {
-        throw new Error(data.data?.error || `API error: ${data.statusCode}`);
+        throw new Error(`Cloud transcription failed (HTTP ${data.statusCode}).`);
       }
 
       return {
@@ -133,13 +164,23 @@ function registerCloudApiHandlers(
         limitReached: data.data.limitReached || false,
       };
     } catch (error) {
+      if (error?.name === "AbortError" || error?.code === "REQUEST_CANCELLED") {
+        debugLogger.info("Cloud transcription cancelled", {}, "cloud-api");
+        return cancelledResult;
+      }
       debugLogger.error("Cloud transcription error", { error: error.message }, "cloud-api");
       return { success: false, error: error.message };
+    } finally {
+      requestScope?.finish();
     }
   });
 
-  ipcMain.handle("cloud-reason", async (event, text, opts = {}) => {
+  ipcMain.handle("cloud-reason", async (event, text, opts = {}, requestId) => {
+    let requestScope;
     try {
+      requestScope = cancelableRequests.createScope(event, requestId);
+      const { signal } = requestScope;
+      throwIfCancelled(signal);
       const apiUrl = getApiUrl();
       if (!apiUrl) throw new Error("EchoDraft API URL not configured");
 
@@ -155,6 +196,7 @@ function registerCloudApiHandlers(
       );
 
       const cookieHeader = await getSessionCookies(event);
+      throwIfCancelled(signal);
       if (!cookieHeader) throw new Error("No session cookies available");
 
       const fetchStart = Date.now();
@@ -174,7 +216,9 @@ function registerCloudApiHandlers(
           clientType: "desktop",
           appVersion: app.getVersion(),
         }),
+        signal,
       });
+      throwIfCancelled(signal);
       const fetchMs = Date.now() - fetchStart;
 
       debugLogger.debug(
@@ -187,15 +231,20 @@ function registerCloudApiHandlers(
         if (response.status === 401) {
           return { success: false, error: "Session expired", code: "AUTH_EXPIRED" };
         }
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `API error: ${response.status}`);
+        throw new Error(`Cloud reasoning failed (HTTP ${response.status}).`);
       }
 
       const data = await response.json();
       return { success: true, text: data.text, model: data.model, provider: data.provider };
     } catch (error) {
-      debugLogger.error("Cloud reasoning error:", error);
+      if (error?.name === "AbortError" || error?.code === "REQUEST_CANCELLED") {
+        debugLogger.info("Cloud reasoning cancelled", {}, "cloud-api");
+        return cancelledResult;
+      }
+      debugLogger.error("Cloud reasoning error", { error: error.message }, "cloud-api");
       return { success: false, error: error.message };
+    } finally {
+      requestScope?.finish();
     }
   });
 

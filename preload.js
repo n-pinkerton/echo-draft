@@ -223,7 +223,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Mistral API
   getMistralKey: () => ipcRenderer.invoke("get-mistral-key"),
   saveMistralKey: (key) => ipcRenderer.invoke("save-mistral-key", key),
-  proxyMistralTranscription: (data) => ipcRenderer.invoke("proxy-mistral-transcription", data),
+  proxyMistralTranscription: (data, requestId) =>
+    ipcRenderer.invoke("proxy-mistral-transcription", data, requestId),
 
   // Custom endpoint API keys
   getCustomTranscriptionKey: () => ipcRenderer.invoke("get-custom-transcription-key"),
@@ -245,13 +246,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   syncStartupPreferences: (prefs) => ipcRenderer.invoke("sync-startup-preferences", prefs),
 
   // Local reasoning
-  processLocalReasoning: (text, modelId, agentName, config) =>
-    ipcRenderer.invoke("process-local-reasoning", text, modelId, agentName, config),
+  processLocalReasoning: (text, modelId, agentName, config, requestId) =>
+    ipcRenderer.invoke("process-local-reasoning", text, modelId, agentName, config, requestId),
   checkLocalReasoningAvailable: () => ipcRenderer.invoke("check-local-reasoning-available"),
 
   // Anthropic reasoning
-  processAnthropicReasoning: (text, modelId, agentName, config) =>
-    ipcRenderer.invoke("process-anthropic-reasoning", text, modelId, agentName, config),
+  processAnthropicReasoning: (text, modelId, agentName, config, requestId) =>
+    ipcRenderer.invoke("process-anthropic-reasoning", text, modelId, agentName, config, requestId),
 
   // llama.cpp
   llamaCppCheck: () => ipcRenderer.invoke("llama-cpp-check"),
@@ -282,8 +283,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   authClearSession: () => ipcRenderer.invoke("auth-clear-session"),
 
   // EchoDraft Cloud API
-  cloudTranscribe: (audioBuffer, opts) => ipcRenderer.invoke("cloud-transcribe", audioBuffer, opts),
-  cloudReason: (text, opts) => ipcRenderer.invoke("cloud-reason", text, opts),
+  cloudTranscribe: (audioBuffer, opts, requestId) =>
+    ipcRenderer.invoke("cloud-transcribe", audioBuffer, opts, requestId),
+  cloudReason: (text, opts, requestId) => ipcRenderer.invoke("cloud-reason", text, opts, requestId),
+  cancelIpcRequest: (requestId) => ipcRenderer.invoke("cancel-ipc-request", requestId),
   cloudUsage: () => ipcRenderer.invoke("cloud-usage"),
   cloudCheckout: () => ipcRenderer.invoke("cloud-checkout"),
   cloudBillingPortal: () => ipcRenderer.invoke("cloud-billing-portal"),
