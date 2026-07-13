@@ -38,6 +38,9 @@
 2. Ensure "Allow apps to access your microphone" is ON
 3. Ensure EchoDraft is listed and enabled
 4. You can also click "Open Privacy Settings" button in the app
+5. In EchoDraft, open **Settings → General → Microphone** and click **Test**. The level test runs only on request and stops after 15 seconds.
+
+If a specifically selected microphone is unplugged, EchoDraft labels it as disconnected and uses the system default until it returns. Select **Use default** to make that fallback permanent.
 
 **Linux:**
 1. Check your audio settings (e.g., `pavucontrol`)
@@ -60,6 +63,24 @@
 3. Clear caches: `rm -rf ~/.cache/whisper`
 4. Try a different hotkey
 5. Re-run onboarding
+
+### Slow or Stuck Cloud Transcription
+
+**Symptoms:** The tray remains on Transcribing for much longer than usual.
+
+**What EchoDraft does:**
+
+- Shows the current stage elapsed time and a slow-provider message after 10 seconds.
+- Allows the active job to be cancelled from the tray. EchoDraft aborts a supported in-flight transcription request and suppresses any late cleanup or delivery result.
+- Makes at most one sequential retry for timeouts, network failures, HTTP 408/429, or server errors. Ordinary client errors are not retried.
+- Records request timing and the provider request ID in History details and redacted diagnostics.
+
+**Fix:**
+
+1. Wait for the slow-provider message to confirm which stage is delayed.
+2. Cancel if the text is no longer needed; cancelled output is not pasted later.
+3. Check your internet connection and provider status before retrying the dictation.
+4. If it repeats, enable Debug mode and compare the time-to-headers and response-read timings.
 
 ### FFmpeg Not Found
 

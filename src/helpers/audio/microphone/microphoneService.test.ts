@@ -104,6 +104,34 @@ describe("MicrophoneService", () => {
     expect(constraints.audio.deviceId.exact).toBe("selected-99");
   });
 
+  it("falls back clearly to system default when the selected microphone is disconnected", async () => {
+    localStorage.setItem("preferBuiltInMic", "false");
+    localStorage.setItem("selectedMicDeviceId", "missing-usb-mic");
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: {
+        enumerateDevices: vi.fn(async () => [
+          { kind: "audioinput", deviceId: "available-default", label: "Built-in microphone" },
+        ]),
+      },
+      configurable: true,
+    });
+    const logger = { debug: vi.fn(), warn: vi.fn() };
+    const service = new MicrophoneService({ logger });
+
+    await expect(service.getAudioConstraints()).resolves.toEqual({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Selected microphone unavailable; using system default",
+      { selectedDeviceAvailable: false },
+      "audio"
+    );
+  });
+
   it("warmupMicrophoneDriver skips when permission is prompt", async () => {
     const logger = { debug: vi.fn() };
     const service = new MicrophoneService({ logger, isBuiltInMicrophoneFn: vi.fn() as any });

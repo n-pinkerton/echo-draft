@@ -315,7 +315,7 @@ npm run build:linux  # Linux
 ### Basic Dictation
 
 1. **Start the app** - EchoDraft loads a persistent system tray icon
-2. **Press your hotkey** (default: backtick `) - A rising cue confirms recording and a click-through `REC` timer remains visible while the microphone is live
+2. **Press your hotkey** (default: backtick `) - A rising cue confirms recording and a click-through `REC` timer remains visible while the microphone is live. After one minute it can highlight **Still recording** as a silent reminder.
 3. **Press your hotkey again** - A lower falling cue confirms recording has stopped and processing has begun
 4. **Text appears** - Transcribed text is automatically pasted at your cursor location, followed by a distinct completion chime
 5. **Use tray actions** - Click the tray icon to start clipboard dictation, copy the last dictation, open the Control Panel, or quit
@@ -327,7 +327,7 @@ npm run build:linux  # Linux
 - **History**: View, copy, and delete past transcriptions
 - **Models**: Download and manage local Whisper models
 - **Storage Cleanup**: Remove downloaded Whisper models from cache to reclaim space
-- **Settings**: Configure API keys, customize hotkeys, select the microphone, preview or adjust dictation sounds, and manage permissions
+- **Settings**: Configure API keys, customize hotkeys, select or test the microphone, preview or adjust dictation sounds, and manage permissions. If a selected microphone disconnects, EchoDraft shows the fallback and temporarily uses the system default.
 
 ### Uninstall & Cache Cleanup
 
@@ -692,8 +692,8 @@ EchoDraft is designed with privacy and security in mind:
    - Add EchoDraft and enable the checkbox
    - Use "Fix Permission Issues" in Control Panel if needed
 3. **API key errors** (cloud processing only): Ensure your OpenAI API key is valid and has credits
-   - Set key through Control Panel or .env file
-   - Check logs for "OpenAI API Key present: Yes/No"
+   - Set the key through the Control Panel or an environment variable
+   - EchoDraft deliberately redacts credentials from diagnostic logs
 4. **Local Whisper issues**:
    - whisper.cpp is bundled with the app
    - If bundled binary fails, install via `brew install whisper-cpp` (macOS)
@@ -706,6 +706,8 @@ EchoDraft is designed with privacy and security in mind:
    - Linux Wayland: Install `wtype` or `ydotool` for paste simulation (ensure `ydotoold` daemon is running)
    - All platforms: Text is always copied to clipboard - use Ctrl+V (Cmd+V on macOS) to paste manually
 7. **Panel position**: If the panel appears off-screen, restart the app to reset position
+8. **Microphone uncertainty**: Open **Settings → General → Microphone** and run the 15-second level test. It starts only when clicked and releases the microphone when stopped, completed, or closed.
+9. **Slow cloud transcription**: After ten seconds EchoDraft shows the elapsed transcription time. You can cancel the active request; transient network, timeout, rate-limit, and server failures receive at most one sequential transport retry.
 
 ### Debug Logs (Local)
 

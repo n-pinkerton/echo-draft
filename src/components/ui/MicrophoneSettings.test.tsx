@@ -128,4 +128,27 @@ describe("MicrophoneSettings", () => {
     );
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
+
+  it("prominently explains selected-device fallback and lets the user keep the default", async () => {
+    mediaDevices.enumerateDevices.mockResolvedValue([
+      { kind: "audioinput", deviceId: "built-in", label: "Built-in microphone" },
+    ]);
+    const onDeviceSelect = vi.fn();
+
+    render(
+      <MicrophoneSettings
+        preferBuiltInMic={false}
+        selectedMicDeviceId="missing-usb"
+        onPreferBuiltInChange={vi.fn()}
+        onDeviceSelect={onDeviceSelect}
+      />
+    );
+
+    expect(await screen.findByText("Selected microphone disconnected")).toBeInTheDocument();
+    expect(screen.getByText(/Dictation will use System Default/i)).toBeInTheDocument();
+    expect(screen.getByText(/Testing System Default because/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use default" }));
+    expect(onDeviceSelect).toHaveBeenCalledWith("");
+  });
 });

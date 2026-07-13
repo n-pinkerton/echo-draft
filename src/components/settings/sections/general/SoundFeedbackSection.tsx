@@ -48,6 +48,11 @@ export default function SoundFeedbackSection() {
     true,
     { serialize: serializeBoolean, deserialize: deserializeBoolean }
   );
+  const [longRecordingReminderEnabled, setLongRecordingReminderEnabled] = useLocalStorage<boolean>(
+    DICTATION_FEEDBACK_STORAGE_KEYS.longRecordingReminderEnabled,
+    true,
+    { serialize: serializeBoolean, deserialize: deserializeBoolean }
+  );
 
   return (
     <div>
@@ -102,6 +107,20 @@ export default function SoundFeedbackSection() {
               checked={recordingIndicatorEnabled}
               onChange={setRecordingIndicatorEnabled}
               ariaLabel="Show recording timer"
+            />
+          </SettingsRow>
+        </SettingsPanelRow>
+
+        <SettingsPanelRow>
+          <SettingsRow
+            label="Long recording reminder"
+            description='After one minute, the recording timer highlights "Still recording" without playing a sound'
+          >
+            <Toggle
+              checked={longRecordingReminderEnabled}
+              onChange={setLongRecordingReminderEnabled}
+              ariaLabel="Show long recording reminder"
+              disabled={!recordingIndicatorEnabled}
             />
           </SettingsRow>
         </SettingsPanelRow>

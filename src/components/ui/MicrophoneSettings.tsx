@@ -5,6 +5,7 @@ import { Button } from "./button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select";
 import { SettingsRow } from "./SettingsSection";
 import { Toggle } from "./toggle";
+import MicrophoneLevelTest from "./MicrophoneLevelTest";
 
 interface MicrophoneSettingsProps {
   preferBuiltInMic: boolean;
@@ -30,6 +31,11 @@ export const MicrophoneSettings = ({
   } = useAudioInputDevices();
   const builtInDevice = devices.find((device) => device.isBuiltIn);
   const selectedDevice = devices.find((device) => device.deviceId === selectedMicDeviceId);
+  const selectedDeviceUnavailable =
+    !preferBuiltInMic && Boolean(selectedMicDeviceId) && hasLoaded && !selectedDevice;
+  const builtInFallback =
+    preferBuiltInMic && hasLoaded && !hasHiddenLabels && !builtInDevice && devices.length > 0;
+  const effectiveTestDevice = preferBuiltInMic ? builtInDevice : selectedDevice;
 
   return (
     <div className="space-y-4">
@@ -125,6 +131,29 @@ export const MicrophoneSettings = ({
         </div>
       )}
 
+      {selectedDeviceUnavailable && (
+        <div
+          className="flex items-start justify-between gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 dark:bg-warning/15"
+          role="status"
+        >
+          <div>
+            <p className="text-sm font-medium text-warning">Selected microphone disconnected</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Dictation will use System Default until this microphone is available again.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => onDeviceSelect("")}
+          >
+            Use default
+          </Button>
+        </div>
+      )}
+
       {error && (
         <div
           className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3"
@@ -161,6 +190,18 @@ export const MicrophoneSettings = ({
           </Button>
         </div>
       )}
+
+      <MicrophoneLevelTest
+        deviceId={effectiveTestDevice?.deviceId}
+        deviceLabel={effectiveTestDevice?.label || "System Default"}
+        fallbackMessage={
+          selectedDeviceUnavailable
+            ? "Testing System Default because the selected microphone is unavailable."
+            : builtInFallback
+              ? "Testing System Default because no built-in microphone was detected."
+              : null
+        }
+      />
     </div>
   );
 };

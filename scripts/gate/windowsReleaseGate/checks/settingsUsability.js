@@ -121,6 +121,17 @@ async function checkSettingsUsability(panel, record, outputDir, runId, options =
       const preferenceSelect = document.querySelector(
         '[role="combobox"][aria-label="Input device"]'
       );
+      const microphoneTest = document.querySelector('[data-testid="microphone-level-test"]');
+      const microphoneTestButton = microphoneTest?.querySelector(
+        'button[aria-label="Start microphone test"]'
+      );
+      const microphoneTestIsIdle = !microphoneTest?.querySelector(
+        '[role="progressbar"][aria-label="Live microphone input level"]'
+      );
+      const microphoneTestRect = microphoneTest?.getBoundingClientRect();
+      const microphoneTestVisible = Boolean(
+        microphoneTestRect && microphoneTestRect.width > 0 && microphoneTestRect.height > 0
+      );
       const preferencesShowDefault =
         preferenceToggle?.getAttribute("aria-checked") === "false" &&
         preferenceSelect?.textContent?.includes("System Default");
@@ -136,10 +147,19 @@ async function checkSettingsUsability(panel, record, outputDir, runId, options =
       await sleep(100);
 
       return {
-        ok: quickSavedDefault && preferencesShowDefault && preferencesUpdateQuickControl,
+        ok:
+          quickSavedDefault &&
+          preferencesShowDefault &&
+          preferencesUpdateQuickControl &&
+          microphoneTestVisible &&
+          Boolean(microphoneTestButton) &&
+          microphoneTestIsIdle,
         quickSavedDefault,
         preferencesShowDefault,
         preferencesUpdateQuickControl,
+        microphoneTestVisible,
+        microphoneTestButtonPresent: Boolean(microphoneTestButton),
+        microphoneTestIsIdle,
       };
     })()
   `);
@@ -175,18 +195,30 @@ async function checkSettingsUsability(panel, record, outputDir, runId, options =
       const timerToggle = document.querySelector(
         'button[role="switch"][aria-label="Show recording timer"]'
       );
+      const reminderToggle = document.querySelector(
+        'button[role="switch"][aria-label="Show long recording reminder"]'
+      );
       const volumeSlider = document.querySelector(
         'input[type="range"][aria-label="Dictation sound volume"]'
       );
       const previewButton = document.querySelector(
         'button[aria-label="Preview recording started sound"]'
       );
-      if (!heading || !soundToggle || !timerToggle || !volumeSlider || !previewButton) {
+      if (
+        !heading ||
+        !soundToggle ||
+        !timerToggle ||
+        !reminderToggle ||
+        !volumeSlider ||
+        !previewButton
+      ) {
         return { ok: false, error: "Sound feedback controls missing" };
       }
 
       const originalSoundState = soundToggle.getAttribute("aria-checked") === "true";
       const originalTimerState = timerToggle.getAttribute("aria-checked") === "true";
+      const originalReminderState = reminderToggle.getAttribute("aria-checked") === "true";
+      const originalReminderStorage = localStorage.getItem("longRecordingReminderEnabled");
       const originalVolume = volumeSlider.value;
       soundToggle.click();
       await sleep(100);
@@ -198,6 +230,18 @@ async function checkSettingsUsability(panel, record, outputDir, runId, options =
       const timerTogglePersisted =
         localStorage.getItem("recordingIndicatorEnabled") === String(!originalTimerState);
 
+      if (timerToggle.getAttribute("aria-checked") !== "true") {
+        timerToggle.click();
+        await sleep(100);
+      }
+      reminderToggle.click();
+      await sleep(100);
+      const reminderTogglePersisted =
+        localStorage.getItem("longRecordingReminderEnabled") ===
+        String(!originalReminderState);
+      reminderToggle.click();
+      await sleep(100);
+
       setNativeInputValue(volumeSlider, "45");
       await sleep(100);
       const volumePersisted = localStorage.getItem("dictationSoundVolume") === "45";
@@ -206,17 +250,30 @@ async function checkSettingsUsability(panel, record, outputDir, runId, options =
       await sleep(50);
 
       soundToggle.click();
-      timerToggle.click();
+      if ((timerToggle.getAttribute("aria-checked") === "true") !== originalTimerState) {
+        timerToggle.click();
+      }
       setNativeInputValue(volumeSlider, originalVolume);
       await sleep(100);
+      if (originalReminderStorage === null) {
+        localStorage.removeItem("longRecordingReminderEnabled");
+      } else {
+        localStorage.setItem("longRecordingReminderEnabled", originalReminderStorage);
+      }
 
       const rect = heading.getBoundingClientRect();
       const visible = rect.width > 0 && rect.height > 0;
       return {
-        ok: visible && soundTogglePersisted && timerTogglePersisted && volumePersisted,
+        ok:
+          visible &&
+          soundTogglePersisted &&
+          timerTogglePersisted &&
+          reminderTogglePersisted &&
+          volumePersisted,
         visible,
         soundTogglePersisted,
         timerTogglePersisted,
+        reminderTogglePersisted,
         volumePersisted,
         previewPresent: Boolean(previewButton),
       };

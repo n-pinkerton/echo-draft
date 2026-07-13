@@ -16,6 +16,7 @@ vi.mock("../../../../utils/dictationCues", () => ({
     soundsEnabled: "dictationSoundsEnabled",
     soundVolume: "dictationSoundVolume",
     recordingIndicatorEnabled: "recordingIndicatorEnabled",
+    longRecordingReminderEnabled: "longRecordingReminderEnabled",
   },
   ...cueMocks,
 }));
@@ -45,5 +46,14 @@ describe("SoundFeedbackSection", () => {
 
     await user.click(screen.getByRole("switch", { name: "Show recording timer" }));
     expect(localStorage.getItem("recordingIndicatorEnabled")).toBe("false");
+  });
+
+  it("stores the optional silent long-recording reminder", async () => {
+    const user = userEvent.setup();
+    render(<SoundFeedbackSection />);
+
+    await user.click(screen.getByRole("switch", { name: "Show long recording reminder" }));
+
+    expect(localStorage.getItem("longRecordingReminderEnabled")).toBe("false");
   });
 });

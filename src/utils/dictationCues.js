@@ -4,6 +4,7 @@ export const DICTATION_FEEDBACK_STORAGE_KEYS = Object.freeze({
   soundsEnabled: "dictationSoundsEnabled",
   soundVolume: "dictationSoundVolume",
   recordingIndicatorEnabled: "recordingIndicatorEnabled",
+  longRecordingReminderEnabled: "longRecordingReminderEnabled",
 });
 
 export const DEFAULT_DICTATION_SOUND_VOLUME = 65;

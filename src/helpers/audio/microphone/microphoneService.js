@@ -81,6 +81,28 @@ export class MicrophoneService {
       selectedDeviceId !== "default" &&
       selectedDeviceId !== "communications"
     ) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const selectedDeviceAvailable = normalizeAudioInputDevices(devices).some(
+          (device) => device.deviceId === selectedDeviceId
+        );
+        if (!selectedDeviceAvailable) {
+          this.logger?.warn?.(
+            "Selected microphone unavailable; using system default",
+            { selectedDeviceAvailable: false },
+            "audio"
+          );
+          return { audio: NO_AUDIO_PROCESSING_CONSTRAINTS };
+        }
+      } catch (error) {
+        // If enumeration itself fails, preserve the explicit selection and let getUserMedia
+        // return the authoritative device or permission error.
+        this.logger?.debug?.(
+          "Could not verify selected microphone availability",
+          { error: error?.message || String(error) },
+          "audio"
+        );
+      }
       this.logger?.debug?.("Using selected microphone", { deviceSelected: true }, "audio");
       return {
         audio: { deviceId: { exact: selectedDeviceId }, ...NO_AUDIO_PROCESSING_CONSTRAINTS },

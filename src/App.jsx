@@ -18,6 +18,11 @@ export default function App() {
     true,
     { serialize: serializeBoolean, deserialize: deserializeBoolean }
   );
+  const [longRecordingReminderEnabled] = useLocalStorage(
+    DICTATION_FEEDBACK_STORAGE_KEYS.longRecordingReminderEnabled,
+    true,
+    { serialize: serializeBoolean, deserialize: deserializeBoolean }
+  );
 
   useEffect(() => {
     const unsubscribeFallback = window.electronAPI?.onHotkeyFallbackUsed?.((data) => {
@@ -156,5 +161,10 @@ export default function App() {
     return null;
   }
 
-  return <RecordingIndicator recordedMs={progress?.recordedMs || 0} />;
+  return (
+    <RecordingIndicator
+      recordedMs={progress?.recordedMs || 0}
+      longRecordingReminderEnabled={longRecordingReminderEnabled}
+    />
+  );
 }
