@@ -1,5 +1,21 @@
 const debugLogger = require("../../debugLogger");
 
+const CLOUD_CLEANUP_MODELS = new Set(["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"]);
+const SAFE_METADATA_TOKEN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+
+const normalizeCleanupModel = (value) => {
+  const model = typeof value === "string" ? value.trim() : "";
+  return CLOUD_CLEANUP_MODELS.has(model) ? model : null;
+};
+
+const normalizeMetadataToken = (value) => {
+  const token = typeof value === "string" ? value.trim() : "";
+  return SAFE_METADATA_TOKEN.test(token) ? token : undefined;
+};
+
+const finiteNumber = (value) =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
 function registerCloudApiHandlers(
   { ipcMain, app, http, https, shell },
   { cloudContext, sessionId, whisperManager, cancelableRequests }
@@ -148,20 +164,25 @@ function registerCloudApiHandlers(
           error: "Daily word limit reached",
           code: "LIMIT_REACHED",
           limitReached: true,
-          ...data.data,
+          wordsUsed: finiteNumber(data.data?.wordsUsed),
+          wordsRemaining: finiteNumber(data.data?.wordsRemaining),
+          plan: normalizeMetadataToken(data.data?.plan),
         };
       }
       if (data.statusCode !== 200) {
         throw new Error(`Cloud transcription failed (HTTP ${data.statusCode}).`);
       }
+      if (typeof data.data?.text !== "string") {
+        throw new Error("Cloud transcription returned an invalid response");
+      }
 
       return {
         success: true,
         text: data.data.text,
-        wordsUsed: data.data.wordsUsed,
-        wordsRemaining: data.data.wordsRemaining,
-        plan: data.data.plan,
-        limitReached: data.data.limitReached || false,
+        wordsUsed: finiteNumber(data.data?.wordsUsed),
+        wordsRemaining: finiteNumber(data.data?.wordsRemaining),
+        plan: normalizeMetadataToken(data.data?.plan),
+        limitReached: data.data?.limitReached === true,
       };
     } catch (error) {
       if (error?.name === "AbortError" || error?.code === "REQUEST_CANCELLED") {
@@ -183,13 +204,18 @@ function registerCloudApiHandlers(
       throwIfCancelled(signal);
       const apiUrl = getApiUrl();
       if (!apiUrl) throw new Error("EchoDraft API URL not configured");
+      const requestedModel = normalizeCleanupModel(opts.model);
+      if (opts.model && !requestedModel) {
+        throw new Error("Unsupported EchoDraft cloud cleanup model");
+      }
 
       debugLogger.debug(
         "cloud-reason request",
         {
-          model: opts.model || null,
-          agentName: opts.agentName || null,
-          language: opts.language || null,
+          model: requestedModel,
+          agentNamePresent: Boolean(opts.agentName),
+          agentNameLength: typeof opts.agentName === "string" ? opts.agentName.length : 0,
+          language: normalizeMetadataToken(opts.language),
           textLength: text?.length || 0,
         },
         "cloud-api"
@@ -208,7 +234,7 @@ function registerCloudApiHandlers(
         },
         body: JSON.stringify({
           text,
-          model: opts.model,
+          model: requestedModel || undefined,
           agentName: opts.agentName,
           customDictionary: opts.customDictionary,
           language: opts.language,
@@ -235,7 +261,15 @@ function registerCloudApiHandlers(
       }
 
       const data = await response.json();
-      return { success: true, text: data.text, model: data.model, provider: data.provider };
+      if (typeof data?.text !== "string") {
+        throw new Error("Cloud reasoning returned an invalid response");
+      }
+      return {
+        success: true,
+        text: data.text,
+        model: requestedModel,
+        provider: requestedModel ? "openai" : "echodraft-cloud",
+      };
     } catch (error) {
       if (error?.name === "AbortError" || error?.code === "REQUEST_CANCELLED") {
         debugLogger.info("Cloud reasoning cancelled", {}, "cloud-api");

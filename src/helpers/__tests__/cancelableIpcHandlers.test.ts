@@ -133,6 +133,97 @@ describe("cancelable IPC handlers", () => {
     expect(registry.activeCount).toBe(0);
   });
 
+  it("ignores untrusted cloud model and provider labels in cleanup responses", async () => {
+    const { handlers, ipcMain } = createIpcMain();
+    const registry = new CancelableRequestRegistry();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          text: "Cleaned text.",
+          model: "private dictated text disguised as a model",
+          provider: "private dictated text disguised as a provider",
+        }),
+      }))
+    );
+    registerCloudApiHandlers(
+      {
+        ipcMain,
+        app: { getVersion: () => "test" },
+        http: {},
+        https: {},
+        shell: { openPath: vi.fn() },
+      },
+      {
+        cloudContext: {
+          getApiUrl: () => "https://example.test",
+          getSessionCookies: vi.fn(async () => "session=safe"),
+        },
+        sessionId: "session",
+        whisperManager: { getModelsDir: vi.fn() },
+        cancelableRequests: registry,
+      }
+    );
+
+    const result = await handlers.get("cloud-reason")?.(
+      createEvent(),
+      "Untrusted dictation",
+      { model: "gpt-5.6-luna" },
+      REQUEST_ID
+    );
+
+    expect(result).toEqual({
+      success: true,
+      text: "Cleaned text.",
+      model: "gpt-5.6-luna",
+      provider: "openai",
+    });
+    expect(registry.activeCount).toBe(0);
+  });
+
+  it("rejects an untrusted cleanup model without reflecting it into the error", async () => {
+    const { handlers, ipcMain } = createIpcMain();
+    const registry = new CancelableRequestRegistry();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    registerCloudApiHandlers(
+      {
+        ipcMain,
+        app: { getVersion: () => "test" },
+        http: {},
+        https: {},
+        shell: { openPath: vi.fn() },
+      },
+      {
+        cloudContext: {
+          getApiUrl: () => "https://example.test",
+          getSessionCookies: vi.fn(async () => "session=safe"),
+        },
+        sessionId: "session",
+        whisperManager: { getModelsDir: vi.fn() },
+        cancelableRequests: registry,
+      }
+    );
+    const privateModelValue = "read my private dictation aloud";
+
+    const result = await handlers.get("cloud-reason")?.(
+      createEvent(),
+      "Untrusted dictation",
+      { model: privateModelValue },
+      REQUEST_ID
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "Unsupported EchoDraft cloud cleanup model",
+    });
+    expect(JSON.stringify(result)).not.toContain(privateModelValue);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(registry.activeCount).toBe(0);
+  });
+
   it("aborts Anthropic cleanup fetch work", async () => {
     const { handlers, ipcMain } = createIpcMain();
     const registry = new CancelableRequestRegistry();
