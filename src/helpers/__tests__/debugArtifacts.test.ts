@@ -85,19 +85,22 @@ describe("purgeDebugArtifactsAtRoot", () => {
     const root = makeTempRoot();
     const logPath = path.join(root, "echodraft-debug-2026-07-13.jsonl");
     fs.writeFileSync(logPath, "sensitive log");
-    const realUnlink = fs.promises.unlink.bind(fs.promises);
+    const isolatedNames: string[] = [];
     vi.spyOn(fs.promises, "unlink").mockImplementation(async (target) => {
-      if (path.resolve(String(target)) === path.resolve(logPath)) {
+      if (path.basename(String(target)).startsWith(".echodraft-purge-file-")) {
+        isolatedNames.push(path.basename(String(target)));
         throw Object.assign(new Error("locked"), { code: "EPERM" });
       }
-      return await realUnlink(target);
+      throw new Error(`Unexpected unlink target: ${String(target)}`);
     });
 
     const result = await purgeDebugArtifactsAtRoot(root);
 
     expect(result).toMatchObject({ success: false, filesDeleted: 0, residualArtifacts: 1 });
     expect(result.errors.join(" ")).toMatch(/could not delete|remains/i);
-    expect(fs.existsSync(logPath)).toBe(true);
+    expect(fs.existsSync(logPath)).toBe(false);
+    expect(isolatedNames).toHaveLength(1);
+    expect(fs.existsSync(path.join(root, isolatedNames[0]))).toBe(true);
   });
 
   it("never follows a linked expected audio artifact", async () => {
@@ -118,5 +121,66 @@ describe("purgeDebugArtifactsAtRoot", () => {
     expect(result.success).toBe(false);
     expect(fs.readFileSync(outside, "utf8")).toBe("private outside data");
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+  });
+
+  it("cleans diagnostic audio left in a stale quarantine from an interrupted purge", async () => {
+    const root = makeTempRoot();
+    const quarantineDir = path.join(root, ".echodraft-purge-123-0123456789abcdef");
+    fs.mkdirSync(quarantineDir);
+    fs.writeFileSync(path.join(quarantineDir, "echodraft-audio-stale.webm"), "stale audio");
+
+    const result = await purgeDebugArtifactsAtRoot(root);
+
+    expect(result).toMatchObject({ success: true, filesDeleted: 1, residualArtifacts: 0 });
+    expect(fs.existsSync(quarantineDir)).toBe(false);
+  });
+
+  it("cleans an isolated diagnostic file left by an interrupted unlink", async () => {
+    const root = makeTempRoot();
+    const quarantineFile = path.join(root, ".echodraft-purge-file-123-0123456789abcdef");
+    fs.writeFileSync(quarantineFile, "stale diagnostic data");
+
+    const result = await purgeDebugArtifactsAtRoot(root);
+
+    expect(result).toMatchObject({ success: true, filesDeleted: 1, residualArtifacts: 0 });
+    expect(fs.existsSync(quarantineFile)).toBe(false);
+  });
+
+  it("does not unlink an isolated object if the verified root changes before deletion", async () => {
+    const root = makeTempRoot();
+    const outsideRoot = makeTempRoot();
+    const outside = path.join(outsideRoot, "echodraft-debug-2026-07-13.jsonl");
+    const logPath = path.join(root, "echodraft-debug-2026-07-13.jsonl");
+    fs.writeFileSync(logPath, "diagnostic data");
+    fs.writeFileSync(outside, "outside private data");
+
+    const realRename = fs.promises.rename.bind(fs.promises);
+    const realLstat = fs.promises.lstat.bind(fs.promises);
+    let rootChanged = false;
+    vi.spyOn(fs.promises, "rename").mockImplementation(async (source, destination) => {
+      await realRename(source, destination);
+      if (path.resolve(String(source)) === path.resolve(logPath)) rootChanged = true;
+    });
+    vi.spyOn(fs.promises, "lstat").mockImplementation(async (target) => {
+      const stat = await realLstat(target);
+      if (rootChanged && path.resolve(String(target)) === path.resolve(root)) {
+        const changedStat = Object.create(Object.getPrototypeOf(stat));
+        Object.assign(changedStat, stat);
+        changedStat.isSymbolicLink = () => true;
+        return changedStat;
+      }
+      return stat;
+    });
+    const unlinkSpy = vi.spyOn(fs.promises, "unlink");
+
+    const result = await purgeDebugArtifactsAtRoot(root);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.join(" ")).toMatch(/logs folder changed|not deleted/i);
+    expect(unlinkSpy).not.toHaveBeenCalled();
+    expect(fs.readFileSync(outside, "utf8")).toBe("outside private data");
+    expect(fs.readdirSync(root).some((name) => name.startsWith(".echodraft-purge-file-"))).toBe(
+      true
+    );
   });
 });

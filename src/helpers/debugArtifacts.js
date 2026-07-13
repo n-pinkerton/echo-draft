@@ -5,6 +5,8 @@ const path = require("path");
 const DEBUG_LOG_PATTERN = /^echodraft-debug-\d{4}-\d{2}-\d{2}\.jsonl$/i;
 const DEBUG_AUDIO_PATTERN =
   /^echodraft-audio-[a-zA-Z0-9._-]+\.(?:json|m4a|mp3|mp4|ogg|opus|wav|webm)$/i;
+const QUARANTINE_DIR_PATTERN = /^\.echodraft-purge-\d{1,10}-[a-f0-9]{16}$/i;
+const QUARANTINE_FILE_PATTERN = /^\.echodraft-purge-file-\d{1,10}-[a-f0-9]{16}$/i;
 const AUDIO_DIR_NAME = "audio";
 const MAX_ROOT_ENTRIES = 10_000;
 const MAX_AUDIO_ENTRIES = 1_000;
@@ -15,6 +17,10 @@ const isInsideRoot = (root, candidate) => {
 };
 
 const describeError = (error) => error?.message || String(error);
+const createQuarantineName = (kind) =>
+  `.echodraft-purge-${kind === "file" ? "file-" : ""}${process.pid}-${crypto
+    .randomBytes(8)
+    .toString("hex")}`;
 
 const safeLstat = async (target, result, label) => {
   try {
@@ -33,12 +39,21 @@ const sameIdentity = (first, second) =>
     second &&
     first.dev === second.dev &&
     first.ino === second.ino &&
-    first.isDirectory() === second.isDirectory()
+    first.isDirectory() === second.isDirectory() &&
+    first.isFile() === second.isFile()
   );
 
-const verifyRootIdentity = async (root, expectedStat, result) => {
+const verifyRootIdentity = async (root, expectedStat, rootHandle, result) => {
+  let handleStat = null;
+  try {
+    handleStat = await rootHandle?.stat();
+  } catch (error) {
+    result.errors.push(`Could not recheck the open logs folder: ${describeError(error)}`);
+  }
   const currentStat = await safeLstat(root, result, "the logs folder");
   if (
+    !handleStat ||
+    !sameIdentity(expectedStat, handleStat) ||
     !currentStat ||
     currentStat.isSymbolicLink() ||
     !currentStat.isDirectory() ||
@@ -48,6 +63,35 @@ const verifyRootIdentity = async (root, expectedStat, result) => {
     return false;
   }
   return true;
+};
+
+const verifyDirectoryIdentity = async (directory, expectedStat, result, label) => {
+  const currentStat = await safeLstat(directory, result, label);
+  if (
+    !currentStat ||
+    currentStat.isSymbolicLink() ||
+    !currentStat.isDirectory() ||
+    !sameIdentity(expectedStat, currentStat)
+  ) {
+    result.errors.push(`${label} changed during cleanup; deletion stopped`);
+    return false;
+  }
+  return true;
+};
+
+const verifyNoLinkedAncestors = async (root, result) => {
+  let current = path.resolve(root);
+  while (true) {
+    const stat = await safeLstat(current, result, `path ancestor ${current}`);
+    if (!stat) return false;
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      result.errors.push(`Refused a logs path with a linked or invalid ancestor: ${current}`);
+      return false;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return true;
+    current = parent;
+  }
 };
 
 const readDirectoryBounded = async (target, limit, result, label) => {
@@ -75,36 +119,189 @@ const readDirectoryBounded = async (target, limit, result, label) => {
   }
 };
 
-const purgeExpectedFile = async (root, rootStat, target, result) => {
+const isolateAndDeleteExpectedFile = async (
+  root,
+  rootStat,
+  rootHandle,
+  target,
+  result,
+  label = path.basename(target)
+) => {
   if (!isInsideRoot(root, target)) {
     result.errors.push("Refused a debug artifact outside the verified logs folder");
     return;
   }
-  if (!(await verifyRootIdentity(root, rootStat, result))) return;
+  if (!(await verifyRootIdentity(root, rootStat, rootHandle, result))) return;
 
-  const stat = await safeLstat(target, result, path.basename(target));
-  if (!stat) return;
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    result.preservedEntries += 1;
-    result.errors.push(`Refused an unverified debug artifact named ${path.basename(target)}`);
+  const parent = path.dirname(target);
+  const parentStat = await safeLstat(parent, result, `the parent folder for ${label}`);
+  if (!parentStat || parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+    result.errors.push(`Refused an unverified parent folder for ${label}`);
     return;
   }
 
+  const sourceStat = await safeLstat(target, result, label);
+  if (!sourceStat) return;
+  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+    result.preservedEntries += 1;
+    result.errors.push(`Refused an unverified debug artifact named ${label}`);
+    return;
+  }
+
+  const isolatedTarget = path.join(parent, createQuarantineName("file"));
   try {
-    await fs.promises.unlink(target);
-    const residual = await safeLstat(target, result, path.basename(target));
+    await fs.promises.rename(target, isolatedTarget);
+  } catch (error) {
+    result.errors.push(`Could not isolate ${label} for deletion: ${describeError(error)}`);
+    return;
+  }
+
+  const movedStat = await safeLstat(isolatedTarget, result, `the isolated ${label}`);
+  let isolatedHandle;
+  try {
+    if (
+      !movedStat ||
+      movedStat.isSymbolicLink() ||
+      !movedStat.isFile() ||
+      !sameIdentity(sourceStat, movedStat)
+    ) {
+      result.errors.push(`${label} changed while it was being isolated; it was not deleted`);
+      return;
+    }
+
+    // Keep handles to both the verified root and isolated file open across unlink. The
+    // unguessable quarantine path plus a handle identity check prevents a swapped root,
+    // junction, or replacement file from being mistaken for the object we inspected.
+    isolatedHandle = await fs.promises.open(isolatedTarget, "r");
+    const openedStat = await isolatedHandle.stat();
+    const rootUnchanged = await verifyRootIdentity(root, rootStat, rootHandle, result);
+    const parentUnchanged = await verifyDirectoryIdentity(
+      parent,
+      parentStat,
+      result,
+      `The parent folder for ${label}`
+    );
+    const pathStat = await safeLstat(isolatedTarget, result, `the isolated ${label}`);
+    if (
+      !rootUnchanged ||
+      !parentUnchanged ||
+      !sameIdentity(sourceStat, openedStat) ||
+      !sameIdentity(sourceStat, pathStat) ||
+      pathStat?.isSymbolicLink()
+    ) {
+      result.errors.push(`${label} changed while it was being isolated; it was not deleted`);
+      return;
+    }
+
+    await fs.promises.unlink(isolatedTarget);
+    const residual = await safeLstat(isolatedTarget, result, `the isolated ${label}`);
     if (residual) {
-      result.errors.push(`Could not verify deletion of ${path.basename(target)}`);
+      result.errors.push(`Could not verify deletion of ${label}`);
       return;
     }
     result.filesDeleted += 1;
-    result.bytesDeleted += stat.size;
+    result.bytesDeleted += sourceStat.size;
   } catch (error) {
-    result.errors.push(`Could not delete ${path.basename(target)}: ${describeError(error)}`);
+    result.errors.push(`Could not delete ${label}: ${describeError(error)}`);
+  } finally {
+    try {
+      await isolatedHandle?.close();
+    } catch {
+      // The isolated path remains identity-checked; close failures cannot broaden deletion.
+    }
   }
 };
 
-const restoreQuarantinedAudioDirectory = async (audioDir, quarantineDir, result) => {
+const removeVerifiedEmptyDirectory = async (
+  root,
+  rootStat,
+  rootHandle,
+  directory,
+  directoryStat,
+  result,
+  label
+) => {
+  if (!(await verifyRootIdentity(root, rootStat, rootHandle, result))) return false;
+  if (!(await verifyDirectoryIdentity(directory, directoryStat, result, label))) return false;
+  const remaining = await readDirectoryBounded(directory, MAX_AUDIO_ENTRIES, result, label);
+  if (!remaining || remaining.length > 0) return false;
+  try {
+    await fs.promises.rmdir(directory);
+    const residual = await safeLstat(directory, result, label);
+    if (residual) {
+      result.errors.push(`Could not verify removal of ${label}`);
+      return false;
+    }
+    result.directoriesDeleted += 1;
+    return true;
+  } catch (error) {
+    result.errors.push(`Could not remove ${label}: ${describeError(error)}`);
+    return false;
+  }
+};
+
+const processAudioDirectoryContents = async (
+  root,
+  rootStat,
+  rootHandle,
+  directory,
+  directoryStat,
+  result,
+  label
+) => {
+  if (!(await verifyDirectoryIdentity(directory, directoryStat, result, label))) {
+    return { removed: false };
+  }
+  const entries = await readDirectoryBounded(directory, MAX_AUDIO_ENTRIES, result, label);
+  if (!entries) return { removed: false };
+
+  for (const entry of entries) {
+    if (DEBUG_AUDIO_PATTERN.test(entry.name) || QUARANTINE_FILE_PATTERN.test(entry.name)) {
+      await isolateAndDeleteExpectedFile(
+        root,
+        rootStat,
+        rootHandle,
+        path.join(directory, entry.name),
+        result,
+        entry.name
+      );
+    } else {
+      result.preservedEntries += 1;
+    }
+  }
+
+  const removed = await removeVerifiedEmptyDirectory(
+    root,
+    rootStat,
+    rootHandle,
+    directory,
+    directoryStat,
+    result,
+    label
+  );
+  return { removed };
+};
+
+const restoreQuarantinedAudioDirectory = async (
+  root,
+  rootStat,
+  rootHandle,
+  audioDir,
+  quarantineDir,
+  quarantineStat,
+  result
+) => {
+  if (!(await verifyRootIdentity(root, rootStat, rootHandle, result))) return false;
+  if (
+    !(await verifyDirectoryIdentity(
+      quarantineDir,
+      quarantineStat,
+      result,
+      "The isolated audio folder"
+    ))
+  ) {
+    return false;
+  }
   const destinationStat = await safeLstat(audioDir, result, "the replacement audio folder");
   if (destinationStat) {
     result.errors.push("Could not restore preserved audio-folder entries safely");
@@ -119,26 +316,22 @@ const restoreQuarantinedAudioDirectory = async (audioDir, quarantineDir, result)
   }
 };
 
-const purgeAudioDirectory = async (root, rootStat, audioDir, result) => {
+const purgeAudioDirectory = async (root, rootStat, rootHandle, audioDir, result) => {
   if (!isInsideRoot(root, audioDir)) {
     result.errors.push("Refused an audio folder outside the verified logs folder");
     return;
   }
-  if (!(await verifyRootIdentity(root, rootStat, result))) return;
+  if (!(await verifyRootIdentity(root, rootStat, rootHandle, result))) return;
 
-  const stat = await safeLstat(audioDir, result, "the captured audio folder");
-  if (!stat) return;
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+  const sourceStat = await safeLstat(audioDir, result, "the captured audio folder");
+  if (!sourceStat) return;
+  if (sourceStat.isSymbolicLink() || !sourceStat.isDirectory()) {
     result.preservedEntries += 1;
     result.errors.push("Refused to traverse an unverified or linked captured audio folder");
     return;
   }
 
-  const quarantineDir = path.join(
-    root,
-    `.echodraft-purge-${process.pid}-${crypto.randomBytes(8).toString("hex")}`
-  );
-  result.quarantinePaths.push(quarantineDir);
+  const quarantineDir = path.join(root, createQuarantineName("directory"));
   try {
     await fs.promises.rename(audioDir, quarantineDir);
   } catch (error) {
@@ -146,89 +339,94 @@ const purgeAudioDirectory = async (root, rootStat, audioDir, result) => {
     return;
   }
 
-  let quarantineRemoved = false;
-  try {
-    const movedStat = await safeLstat(quarantineDir, result, "the isolated audio folder");
-    if (
-      !sameIdentity(stat, movedStat) ||
-      movedStat?.isSymbolicLink() ||
-      !movedStat?.isDirectory()
-    ) {
-      result.errors.push("The captured audio folder changed while it was being isolated");
-      return;
-    }
+  const movedStat = await safeLstat(quarantineDir, result, "the isolated audio folder");
+  if (
+    !(await verifyRootIdentity(root, rootStat, rootHandle, result)) ||
+    !movedStat ||
+    movedStat.isSymbolicLink() ||
+    !movedStat.isDirectory() ||
+    !sameIdentity(sourceStat, movedStat)
+  ) {
+    result.errors.push("The captured audio folder changed while it was being isolated");
+    return;
+  }
 
-    const entries = await readDirectoryBounded(
+  const { removed } = await processAudioDirectoryContents(
+    root,
+    rootStat,
+    rootHandle,
+    quarantineDir,
+    movedStat,
+    result,
+    "the isolated audio folder"
+  );
+  if (!removed) {
+    await restoreQuarantinedAudioDirectory(
+      root,
+      rootStat,
+      rootHandle,
+      audioDir,
       quarantineDir,
-      MAX_AUDIO_ENTRIES,
-      result,
-      "the captured audio folder"
+      movedStat,
+      result
     );
-    if (!entries) return;
-
-    for (const entry of entries) {
-      if (!DEBUG_AUDIO_PATTERN.test(entry.name)) {
-        result.preservedEntries += 1;
-        continue;
-      }
-      await purgeExpectedFile(root, rootStat, path.join(quarantineDir, entry.name), result);
-    }
-
-    const remaining = await readDirectoryBounded(
-      quarantineDir,
-      MAX_AUDIO_ENTRIES,
-      result,
-      "the captured audio folder after cleanup"
-    );
-    if (!remaining) return;
-    if (remaining.length === 0) {
-      try {
-        await fs.promises.rmdir(quarantineDir);
-        quarantineRemoved = true;
-        result.directoriesDeleted += 1;
-      } catch (error) {
-        result.errors.push(`Could not remove the empty audio folder: ${describeError(error)}`);
-      }
-    }
-  } finally {
-    if (!quarantineRemoved) {
-      await restoreQuarantinedAudioDirectory(audioDir, quarantineDir, result);
-    }
   }
 };
 
-const countExpectedAudioArtifacts = async (audioDir, result, label) => {
-  const stat = await safeLstat(audioDir, result, label);
+const purgeStaleQuarantineDirectory = async (root, rootStat, rootHandle, quarantineDir, result) => {
+  const stat = await safeLstat(quarantineDir, result, "a stale isolated audio folder");
+  if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) {
+    result.preservedEntries += 1;
+    result.errors.push("Refused an unverified stale diagnostic quarantine");
+    return;
+  }
+  await processAudioDirectoryContents(
+    root,
+    rootStat,
+    rootHandle,
+    quarantineDir,
+    stat,
+    result,
+    "a stale isolated audio folder"
+  );
+};
+
+const countExpectedArtifactsInDirectory = async (directory, result, label) => {
+  const stat = await safeLstat(directory, result, label);
   if (!stat) return 0;
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     result.errors.push(`Could not verify ${label} because it is linked or not a directory`);
-    return 0;
+    return 1;
   }
-  const entries = await readDirectoryBounded(audioDir, MAX_AUDIO_ENTRIES, result, label);
-  if (!entries) return 0;
-  return entries.filter((entry) => DEBUG_AUDIO_PATTERN.test(entry.name)).length;
+  const entries = await readDirectoryBounded(directory, MAX_AUDIO_ENTRIES, result, label);
+  if (!entries) return 1;
+  return entries.filter(
+    (entry) => DEBUG_AUDIO_PATTERN.test(entry.name) || QUARANTINE_FILE_PATTERN.test(entry.name)
+  ).length;
 };
 
-const countResidualArtifacts = async (root, rootStat, result) => {
-  if (!(await verifyRootIdentity(root, rootStat, result))) return 0;
+const countResidualArtifacts = async (root, rootStat, rootHandle, result) => {
+  if (!(await verifyRootIdentity(root, rootStat, rootHandle, result))) return 1;
   const entries = await readDirectoryBounded(root, MAX_ROOT_ENTRIES, result, "the logs folder");
-  if (!entries) return 0;
+  if (!entries) return 1;
 
-  let residuals = entries.filter((entry) => DEBUG_LOG_PATTERN.test(entry.name)).length;
-  if (entries.some((entry) => entry.name === AUDIO_DIR_NAME)) {
-    residuals += await countExpectedAudioArtifacts(
-      path.join(root, AUDIO_DIR_NAME),
-      result,
-      "the captured audio folder"
-    );
-  }
-  for (const quarantinePath of result.quarantinePaths) {
-    if (path.dirname(quarantinePath) !== root) continue;
-    residuals += await countExpectedAudioArtifacts(
-      quarantinePath,
-      result,
-      "an isolated audio folder"
-    );
+  let residuals = entries.filter(
+    (entry) => DEBUG_LOG_PATTERN.test(entry.name) || QUARANTINE_FILE_PATTERN.test(entry.name)
+  ).length;
+  for (const entry of entries) {
+    if (entry.name === AUDIO_DIR_NAME) {
+      residuals += await countExpectedArtifactsInDirectory(
+        path.join(root, entry.name),
+        result,
+        "the captured audio folder"
+      );
+    } else if (QUARANTINE_DIR_PATTERN.test(entry.name)) {
+      residuals += await countExpectedArtifactsInDirectory(
+        path.join(root, entry.name),
+        result,
+        "a stale isolated audio folder"
+      );
+    }
   }
   return residuals;
 };
@@ -242,7 +440,6 @@ const purgeDebugArtifactsAtRoot = async (logsDir) => {
     bytesDeleted: 0,
     preservedEntries: 0,
     residualArtifacts: 0,
-    quarantinePaths: [],
     errors: [],
   };
 
@@ -259,31 +456,60 @@ const purgeDebugArtifactsAtRoot = async (logsDir) => {
     result.errors.push("Refused to purge an unverified or linked logs folder");
     return { ...result, success: false };
   }
-
-  const entries = await readDirectoryBounded(root, MAX_ROOT_ENTRIES, result, "the logs folder");
-  if (entries) {
-    for (const entry of entries) {
-      const target = path.join(root, entry.name);
-      if (DEBUG_LOG_PATTERN.test(entry.name)) {
-        await purgeExpectedFile(root, rootStat, target, result);
-      } else if (entry.name === AUDIO_DIR_NAME) {
-        await purgeAudioDirectory(root, rootStat, target, result);
-      } else {
-        result.preservedEntries += 1;
-      }
-    }
+  if (!(await verifyNoLinkedAncestors(root, result))) {
+    return { ...result, success: false };
   }
 
-  result.residualArtifacts = await countResidualArtifacts(root, rootStat, result);
-  if (result.residualArtifacts > 0) {
-    result.errors.push(
-      `${result.residualArtifacts} diagnostic artifact${result.residualArtifacts === 1 ? " remains" : "s remain"}`
-    );
+  let rootHandle;
+  try {
+    rootHandle = await fs.promises.open(root, "r");
+    const openedStat = await rootHandle.stat();
+    if (!sameIdentity(rootStat, openedStat)) {
+      result.errors.push("The logs folder changed while it was being opened");
+      return { ...result, success: false };
+    }
+
+    const entries = await readDirectoryBounded(root, MAX_ROOT_ENTRIES, result, "the logs folder");
+    if (entries) {
+      for (const entry of entries) {
+        const target = path.join(root, entry.name);
+        if (DEBUG_LOG_PATTERN.test(entry.name) || QUARANTINE_FILE_PATTERN.test(entry.name)) {
+          await isolateAndDeleteExpectedFile(
+            root,
+            rootStat,
+            rootHandle,
+            target,
+            result,
+            entry.name
+          );
+        } else if (entry.name === AUDIO_DIR_NAME) {
+          await purgeAudioDirectory(root, rootStat, rootHandle, target, result);
+        } else if (QUARANTINE_DIR_PATTERN.test(entry.name)) {
+          await purgeStaleQuarantineDirectory(root, rootStat, rootHandle, target, result);
+        } else {
+          result.preservedEntries += 1;
+        }
+      }
+    }
+
+    result.residualArtifacts = await countResidualArtifacts(root, rootStat, rootHandle, result);
+    if (result.residualArtifacts > 0) {
+      result.errors.push(
+        `${result.residualArtifacts} diagnostic artifact${result.residualArtifacts === 1 ? " remains" : "s remain"}`
+      );
+    }
+  } catch (error) {
+    result.errors.push(`Could not safely clean the logs folder: ${describeError(error)}`);
+  } finally {
+    try {
+      await rootHandle?.close();
+    } catch {
+      // Cleanup result already reflects artifact state; handle-close errors are non-destructive.
+    }
   }
 
   return {
     ...result,
-    quarantinePaths: undefined,
     success: result.errors.length === 0 && result.residualArtifacts === 0,
   };
 };
@@ -294,6 +520,8 @@ module.exports = {
   DEBUG_LOG_PATTERN,
   MAX_AUDIO_ENTRIES,
   MAX_ROOT_ENTRIES,
+  QUARANTINE_DIR_PATTERN,
+  QUARANTINE_FILE_PATTERN,
   isInsideRoot,
   purgeDebugArtifactsAtRoot,
 };
