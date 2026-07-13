@@ -235,6 +235,43 @@ describe("OpenAiTranscriber", () => {
     expect(reasoningCleanupService.processTranscription).toHaveBeenCalledTimes(1);
   });
 
+  it("aborts an in-flight request without retrying or falling back", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    localStorage.setItem("allowLocalFallback", "true");
+    const controller = new AbortController();
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+
+    const fetchMock = vi.fn(
+      async (_url: string, init: RequestInit) =>
+        await new Promise((_resolve, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+    globalThis.fetch = fetchMock as any;
+    const pending = t.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any,
+      {},
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      code: "TRANSCRIPTION_CANCELLED",
+      cancelled: true,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect((window as any).electronAPI.transcribeLocalWhisper).toBeUndefined();
+  });
+
   it("retries without prompt when the transcript matches the custom dictionary prompt", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "whisper-1");

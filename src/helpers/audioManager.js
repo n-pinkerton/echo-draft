@@ -44,6 +44,7 @@ class AudioManager {
     this.isProcessing = false;
     this.processingQueue = null;
     this.activeProcessingContext = null;
+    this.activeProcessingAbortController = null;
     this.onStateChange = null;
     this.onError = null;
     this.onTranscriptionComplete = null;
@@ -103,8 +104,8 @@ class AudioManager {
       setActiveContext: (context) => {
         this.activeProcessingContext = context;
       },
-      processJob: async (audioBlob, metadata) => {
-        await this.processAudio(audioBlob, metadata);
+      processJob: async (audioBlob, metadata, context) => {
+        await this.processAudio(audioBlob, metadata, context);
       },
     });
     this._onApiKeyChanged = () => {
@@ -280,17 +281,19 @@ class AudioManager {
 
   cancelProcessing() {
     if (this.isProcessing || this.processingQueue.length > 0) {
+      this.activeProcessingAbortController?.abort();
       this.isProcessing = false;
       this.processingQueue.cancel();
+      this.emitProgress({
+        stage: "cancelled",
+        stageLabel: "Cancelled",
+        message: "Processing cancelled",
+      });
       this.activeProcessingContext = null;
       this.emitStateChange({
         isRecording: this.isRecording,
         isProcessing: false,
         isStreaming: this.isStreaming,
-      });
-      this.emitProgress({
-        stage: "cancelled",
-        stageLabel: "Cancelled",
       });
       return true;
     }
@@ -305,12 +308,18 @@ class AudioManager {
     this.processingQueue.startIfPossible();
   }
 
-  async processAudio(audioBlob, metadata = {}) {
-    await this.transcriptionPipeline.processAudio(
-      audioBlob,
-      metadata,
-      this.activeProcessingContext
-    );
+  async processAudio(audioBlob, metadata = {}, context = this.activeProcessingContext) {
+    const controller = new AbortController();
+    this.activeProcessingAbortController = controller;
+    try {
+      await this.transcriptionPipeline.processAudio(audioBlob, metadata, context, {
+        signal: controller.signal,
+      });
+    } finally {
+      if (this.activeProcessingAbortController === controller) {
+        this.activeProcessingAbortController = null;
+      }
+    }
   }
 
   async readTranscriptionStream(response) {
@@ -376,6 +385,8 @@ class AudioManager {
   }
 
   cleanup() {
+    this.activeProcessingAbortController?.abort();
+    this.activeProcessingAbortController = null;
     if (this.isStreaming) {
       this.cleanupStreaming();
     }

@@ -5,6 +5,11 @@ import {
 } from "./customDictionary";
 import { isLikelyDictionaryPromptEcho } from "./dictionaryPromptEcho";
 import { countWords } from "../utils/wordCount";
+import {
+  createTranscriptionCancelledError,
+  isTranscriptionCancelled,
+  throwIfTranscriptionCancelled,
+} from "../pipeline/cancellation";
 
 const SHORT_CLIP_DURATION_SECONDS = 2.5;
 const TRUNCATION_RETRY_MIN_DURATION_SECONDS = 12;
@@ -268,6 +273,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
   const allowPromptEchoRetry = options.allowPromptEchoRetry !== false;
   const forceNoStream = options.forceNoStream === true;
   const allowTruncationRetry = options.allowTruncationRetry !== false;
+  const externalSignal = options.signal || null;
 
   const timings = {};
   const language = getBaseLanguageCode(localStorage.getItem("preferredLanguage"));
@@ -275,6 +281,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
   const fallbackModel = localStorage.getItem("fallbackWhisperModel") || "base";
 
   try {
+    throwIfTranscriptionCancelled(externalSignal);
     const durationSeconds = metadata.durationSeconds ?? null;
     const shouldSkipOptimizationForDuration =
       typeof durationSeconds === "number" &&
@@ -311,6 +318,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       transcriber.getAPIKey(),
       shouldOptimize ? transcriber.optimizeAudio(audioBlob) : Promise.resolve(audioBlob),
     ]);
+    throwIfTranscriptionCancelled(externalSignal);
 
     const transcribeOnce = async ({
       attemptLabel,
@@ -393,6 +401,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         }
 
         const result = await window.electronAPI.proxyMistralTranscription(proxyData);
+        throwIfTranscriptionCancelled(externalSignal);
         const proxyText = result?.text;
 
         if (!proxyText || proxyText.trim().length === 0) {
@@ -430,6 +439,13 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         Math.min(300_000, 30_000 + (Number(durationSeconds) || 0) * 1_500)
       );
       const controller = new AbortController();
+      const handleExternalAbort = () => controller.abort(externalSignal?.reason);
+      if (externalSignal) {
+        if (externalSignal.aborted) {
+          throw createTranscriptionCancelledError();
+        }
+        externalSignal.addEventListener("abort", handleExternalAbort, { once: true });
+      }
       const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
       try {
         let response;
@@ -441,6 +457,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
             signal: controller.signal,
           });
         } catch (error) {
+          if (externalSignal?.aborted) {
+            throw createTranscriptionCancelledError();
+          }
           if (error?.name === "AbortError") {
             throw new Error(
               `Transcription request timed out after ${Math.round(requestTimeoutMs / 1000)}s`
@@ -493,9 +512,11 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
             "transcription"
           );
           const streamedText = await transcriber.readTranscriptionStream(response);
+          throwIfTranscriptionCancelled(externalSignal);
           result = { text: streamedText };
         } else {
           const rawText = await response.text();
+          throwIfTranscriptionCancelled(externalSignal);
           try {
             result = JSON.parse(rawText);
           } catch (parseError) {
@@ -530,6 +551,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       } finally {
         // Keep the abort deadline active while the response body or SSE stream is consumed.
         clearTimeout(timeoutId);
+        externalSignal?.removeEventListener("abort", handleExternalAbort);
       }
     };
 
@@ -882,6 +904,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     let cleanup = null;
 
     if (transcriber.shouldApplyReasoningCleanup?.()) {
+      throwIfTranscriptionCancelled(externalSignal);
       transcriber.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
       const reasoningStart = performance.now();
       const cleanupEnabledOverride = transcriber.getCleanupEnabledOverride?.() ?? null;
@@ -910,6 +933,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         };
       }
       timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
+      throwIfTranscriptionCancelled(externalSignal);
       if (cleanup?.applied) {
         source = `${source}-reasoned`;
       }
@@ -924,6 +948,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       ...(cleanup ? { cleanup } : {}),
     };
   } catch (error) {
+    if (isTranscriptionCancelled(error, externalSignal)) {
+      throw createTranscriptionCancelledError();
+    }
     const isOpenAIMode = localStorage.getItem("useLocalWhisper") !== "true";
 
     if (allowLocalFallback && isOpenAIMode) {

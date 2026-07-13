@@ -38,7 +38,6 @@ export class ProcessingQueue {
 
   cancel() {
     this._queue = [];
-    this.setActiveContext(null);
   }
 
   whenIdle() {
@@ -81,7 +80,9 @@ export class ProcessingQueue {
         if (this.getIsProcessing()) {
           this.setIsProcessing(false);
         }
+        if (this._queue.length > 0) {
+          this.startIfPossible();
+        }
       });
   }
 }
-

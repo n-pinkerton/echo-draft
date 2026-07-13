@@ -90,5 +90,59 @@ describe("AudioManager.processAudio", () => {
 
     manager.cleanup();
   });
-});
 
+  it("aborts an active provider request and never delivers its late result", async () => {
+    const manager = new AudioManager();
+    localStorage.setItem("isSignedIn", "false");
+    (manager as any).transcriptionPipeline.audioLevelAnalyzer = vi.fn(async () => ({
+      available: false,
+      reason: "test",
+    }));
+
+    let observedSignal: AbortSignal | null = null;
+    const transcribeSpy = vi
+      .spyOn((manager as any).openAiTranscriber, "processWithOpenAIAPI")
+      .mockImplementation(async (_blob: Blob, _metadata: any, options: any) => {
+        observedSignal = options.signal;
+        return await new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            "abort",
+            () => {
+              const error: any = new Error("Transcription cancelled");
+              error.code = "TRANSCRIPTION_CANCELLED";
+              error.cancelled = true;
+              reject(error);
+            },
+            { once: true }
+          );
+        });
+      });
+
+    const onTranscriptionComplete = vi.fn();
+    const onError = vi.fn();
+    const onProgress = vi.fn();
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError,
+      onTranscriptionComplete,
+      onPartialTranscript: vi.fn(),
+      onProgress,
+    });
+    (manager as any).isProcessing = true;
+    (manager as any).activeProcessingContext = { sessionId: "cancel-me", jobId: 9 };
+
+    const pending = manager.processAudio(new Blob(["audio"], { type: "audio/webm" }));
+    await vi.waitFor(() => expect(transcribeSpy).toHaveBeenCalledOnce());
+
+    expect(manager.cancelProcessing()).toBe(true);
+    await pending;
+
+    expect(observedSignal?.aborted).toBe(true);
+    expect(onTranscriptionComplete).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "cancelled", message: "Processing cancelled" })
+    );
+    manager.cleanup();
+  });
+});

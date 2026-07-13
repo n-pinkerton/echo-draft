@@ -114,6 +114,61 @@ describe("TranscriptionPipeline", () => {
     expect(onTranscriptionComplete).not.toHaveBeenCalled();
   });
 
+  it("treats an aborted job as cancellation and suppresses late delivery and error UI", async () => {
+    const logger = {
+      debug: vi.fn(),
+      trace: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const emitProgress = vi.fn();
+    const emitError = vi.fn();
+    const onTranscriptionComplete = vi.fn();
+    let resolveProvider: ((value: any) => void) | null = null;
+    const controller = new AbortController();
+
+    const pipeline = new TranscriptionPipeline({
+      logger,
+      emitProgress,
+      emitError,
+      shouldContinue: () => true,
+      getOnTranscriptionComplete: () => onTranscriptionComplete,
+      openAiTranscriber: {
+        getTranscriptionModel: () => "gpt-4o-mini-transcribe",
+        processWithOpenAIAPI: vi.fn(
+          async () =>
+            await new Promise((resolve) => {
+              resolveProvider = resolve;
+            })
+        ),
+      },
+      localTranscriber: { processWithLocalWhisper: vi.fn(), processWithLocalParakeet: vi.fn() },
+      cloudTranscriber: { processWithEchoDraftCloud: vi.fn() },
+      audioLevelAnalyzer: vi.fn(async () => ({ available: false, reason: "test" })),
+    });
+
+    const pending = pipeline.processAudio(
+      new Blob(["audio"], { type: "audio/webm" }),
+      {},
+      { sessionId: "cancelled-session", jobId: 8 },
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() => expect(resolveProvider).toBeTypeOf("function"));
+
+    controller.abort();
+    resolveProvider?.({ success: true, text: "late text", rawText: "late text", timings: {} });
+    await pending;
+
+    expect(onTranscriptionComplete).not.toHaveBeenCalled();
+    expect(emitError).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      "Pipeline cancelled",
+      expect.objectContaining({ sessionId: "cancelled-session", jobId: 8 }),
+      "performance"
+    );
+  });
+
   it("rejects near-silent recordings before sending them to a transcriber", async () => {
     const logger = {
       debug: vi.fn(),

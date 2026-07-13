@@ -36,5 +36,39 @@ describe("ProcessingQueue", () => {
     const jobIds = events.filter((e) => e.type === "job").map((e) => e.id);
     expect(jobIds).toEqual(["a", "b"]);
   });
-});
 
+  it("runs a job queued after cancellation once the aborted runner settles", async () => {
+    let isProcessing = false;
+    let releaseFirst: (() => void) | null = null;
+    const processed: string[] = [];
+
+    const queue = new ProcessingQueue({
+      logger: { error: vi.fn() },
+      getIsProcessing: () => isProcessing,
+      setIsProcessing: (value: boolean) => {
+        isProcessing = value;
+      },
+      setActiveContext: vi.fn(),
+      processJob: vi.fn(async (_audioBlob: Blob, _metadata: any, context: any) => {
+        processed.push(context.id);
+        if (context.id === "first") {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      }),
+    });
+
+    queue.enqueue(new Blob(["first"]), {}, { id: "first" });
+    await vi.waitFor(() => expect(processed).toEqual(["first"]));
+
+    isProcessing = false;
+    queue.cancel();
+    queue.enqueue(new Blob(["second"]), {}, { id: "second" });
+    releaseFirst?.();
+
+    await vi.waitFor(() => expect(processed).toEqual(["first", "second"]));
+    await queue.whenIdle();
+    expect(isProcessing).toBe(false);
+  });
+});

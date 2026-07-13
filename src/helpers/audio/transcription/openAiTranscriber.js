@@ -93,7 +93,6 @@ export class OpenAiTranscriber {
         {
           provider,
           hasKey: !!apiKey,
-          keyLength: apiKey?.length || 0,
         },
         "transcription"
       );

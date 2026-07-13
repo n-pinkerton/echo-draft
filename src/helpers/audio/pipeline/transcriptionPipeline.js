@@ -5,6 +5,7 @@ import {
   isEchoDraftCloudMode,
 } from "../../../utils/branding";
 import { analyzeAudioBlobLevel, getLowAudioRejection } from "../audioLevelAnalysis";
+import { isTranscriptionCancelled, throwIfTranscriptionCancelled } from "./cancellation";
 
 /**
  * TranscriptionPipeline
@@ -38,12 +39,15 @@ export class TranscriptionPipeline {
     this.audioLevelAnalyzer = deps.audioLevelAnalyzer || analyzeAudioBlobLevel;
   }
 
-  async processAudio(audioBlob, metadata = {}, context = null) {
+  async processAudio(audioBlob, metadata = {}, context = null, runtime = {}) {
     const pipelineStart = performance.now();
     let audioLevel = null;
+    const signal = runtime?.signal || null;
 
     try {
+      throwIfTranscriptionCancelled(signal);
       audioLevel = await this.checkAudioLevelBeforeTranscription(audioBlob, metadata, context);
+      throwIfTranscriptionCancelled(signal);
 
       const useLocalWhisper = localStorage.getItem("useLocalWhisper") === "true";
       const localProvider = localStorage.getItem("localTranscriptionProvider") || "whisper";
@@ -110,9 +114,10 @@ export class TranscriptionPipeline {
           provider: localStorage.getItem("cloudTranscriptionProvider") || "openai",
           model: activeModel,
         });
-        result = await this.openAiTranscriber.processWithOpenAIAPI(audioBlob, metadata);
+        result = await this.openAiTranscriber.processWithOpenAIAPI(audioBlob, metadata, { signal });
       }
 
+      throwIfTranscriptionCancelled(signal);
       if (!this.shouldContinue()) {
         return;
       }
@@ -155,6 +160,7 @@ export class TranscriptionPipeline {
           context,
         })
       );
+      throwIfTranscriptionCancelled(signal);
 
       const roundTripDurationMs = Math.round(performance.now() - pipelineStart);
 
@@ -192,6 +198,15 @@ export class TranscriptionPipeline {
     } catch (error) {
       const errorAtMs = Math.round(performance.now() - pipelineStart);
       const errorMessage = error?.message || String(error);
+
+      if (isTranscriptionCancelled(error, signal)) {
+        this.logger.info(
+          "Pipeline cancelled",
+          { errorAtMs, sessionId: context?.sessionId || null, jobId: context?.jobId ?? null },
+          "performance"
+        );
+        return;
+      }
 
       this.logger.error(
         "Pipeline failed",
