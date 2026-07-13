@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import SidebarModal, { SidebarItem } from "./ui/SidebarModal";
 import SettingsPage, { SettingsSectionType } from "./SettingsPage";
+import { focusSettingsTarget } from "./settingsTarget";
 
 export type { SettingsSectionType };
 
@@ -21,9 +22,15 @@ interface SettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialSection?: SettingsSectionType;
+  initialTarget?: string;
 }
 
-export default function SettingsModal({ open, onOpenChange, initialSection }: SettingsModalProps) {
+export default function SettingsModal({
+  open,
+  onOpenChange,
+  initialSection,
+  initialTarget,
+}: SettingsModalProps) {
   const sidebarItems: SidebarItem<SettingsSectionType>[] = [
     {
       id: "account",
@@ -112,6 +119,12 @@ export default function SettingsModal({ open, onOpenChange, initialSection }: Se
       setActiveSection(initialSection);
     }
   }, [open, initialSection]);
+
+  useEffect(() => {
+    if (!open || !initialTarget || activeSection !== initialSection) return;
+    const timer = window.setTimeout(() => focusSettingsTarget(initialTarget), 0);
+    return () => window.clearTimeout(timer);
+  }, [activeSection, initialSection, initialTarget, open]);
 
   return (
     <SidebarModal<SettingsSectionType>

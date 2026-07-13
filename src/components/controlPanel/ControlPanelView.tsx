@@ -51,6 +51,8 @@ type Props = {
   setShowSettings: (next: boolean) => void;
   settingsSection: SettingsSectionType | undefined;
   setSettingsSection: (next: SettingsSectionType | undefined) => void;
+  settingsTarget: string | undefined;
+  setSettingsTarget: (next: string | undefined) => void;
 
   history: TranscriptionItemType[];
   filteredHistory: TranscriptionItemType[];
@@ -120,6 +122,8 @@ export default function ControlPanelView(props: Props) {
     setShowSettings,
     settingsSection,
     setSettingsSection,
+    settingsTarget,
+    setSettingsTarget,
     history,
     filteredHistory,
     providerOptions,
@@ -209,6 +213,7 @@ export default function ControlPanelView(props: Props) {
               aria-label="Open settings"
               onClick={() => {
                 setSettingsSection(undefined);
+                setSettingsTarget(undefined);
                 setShowSettings(true);
               }}
               className="text-foreground/70 hover:text-foreground hover:bg-foreground/10"
@@ -223,9 +228,13 @@ export default function ControlPanelView(props: Props) {
         open={showSettings}
         onOpenChange={(open) => {
           setShowSettings(open);
-          if (!open) setSettingsSection(undefined);
+          if (!open) {
+            setSettingsSection(undefined);
+            setSettingsTarget(undefined);
+          }
         }}
         initialSection={settingsSection}
+        initialTarget={settingsTarget}
       />
 
       <div className="p-4">
@@ -280,14 +289,17 @@ export default function ControlPanelView(props: Props) {
             }
             onOpenHotkeySettings={() => {
               setSettingsSection("hotkeys");
+              setSettingsTarget(undefined);
               setShowSettings(true);
             }}
             onOpenMicrophoneSettings={() => {
               setSettingsSection("general");
+              setSettingsTarget("microphone-settings");
               setShowSettings(true);
             }}
             onOpenCleanupSettings={() => {
               setSettingsSection("aiModels");
+              setSettingsTarget(undefined);
               setShowSettings(true);
             }}
           />

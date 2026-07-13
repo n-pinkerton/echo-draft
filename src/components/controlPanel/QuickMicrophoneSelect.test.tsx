@@ -111,9 +111,12 @@ describe("QuickMicrophoneSelect", () => {
       await screen.findByRole("option", { name: "Previously selected microphone (unavailable)" })
     ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Dictation is using USB Cond. Mic external"
+      "temporarily using USB Cond. Mic external"
     );
-    fireEvent.click(screen.getByRole("button", { name: "Keep default" }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Your saved microphone will be tried again"
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Windows default" }));
     expect(selectDevice).toHaveBeenCalledWith("");
     fireEvent.click(screen.getByRole("button", { name: "Mic settings" }));
     expect(openSettings).toHaveBeenCalledOnce();

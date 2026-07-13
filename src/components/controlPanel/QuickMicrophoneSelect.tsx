@@ -139,8 +139,9 @@ export default function QuickMicrophoneSelect({
             <div>
               <p className="font-semibold text-warning-text">Selected microphone disconnected</p>
               <p className="mt-0.5 leading-relaxed text-muted-foreground">
-                Dictation is using {systemDefaultLabel || "the Windows default microphone"} until
-                the selected microphone reconnects.
+                EchoDraft is temporarily using{" "}
+                {systemDefaultLabel || "the Windows default microphone"}. Your saved microphone will
+                be tried again when it reconnects.
               </p>
             </div>
           </div>
@@ -152,7 +153,7 @@ export default function QuickMicrophoneSelect({
               className="h-8 px-2.5 text-xs"
               onClick={() => onDeviceSelect("")}
             >
-              Keep default
+              Switch to Windows default
             </Button>
             {onOpenMicrophoneSettings && (
               <Button

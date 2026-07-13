@@ -26,6 +26,7 @@ export default function ControlPanel() {
   const [limitData, setLimitData] = useState<{ wordsUsed: number; limit: number } | null>(null);
   const hasShownUpgradePrompt = useRef(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionType | undefined>();
+  const [settingsTarget, setSettingsTarget] = useState<string | undefined>();
   const [aiCTADismissed, setAiCTADismissed] = useState(
     () => localStorage.getItem("aiCTADismissed") === "true"
   );
@@ -374,6 +375,8 @@ export default function ControlPanel() {
       setShowSettings={setShowSettings}
       settingsSection={settingsSection}
       setSettingsSection={setSettingsSection}
+      settingsTarget={settingsTarget}
+      setSettingsTarget={setSettingsTarget}
       history={history}
       filteredHistory={filteredHistory}
       providerOptions={providerOptions}

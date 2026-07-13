@@ -129,7 +129,7 @@ describe("MicrophoneSettings", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
-  it("prominently explains selected-device fallback and lets the user keep the default", async () => {
+  it("explains temporary fallback and lets the user switch permanently to the default", async () => {
     mediaDevices.enumerateDevices.mockResolvedValue([
       { kind: "audioinput", deviceId: "built-in", label: "Built-in microphone" },
     ]);
@@ -145,10 +145,11 @@ describe("MicrophoneSettings", () => {
     );
 
     expect(await screen.findByText("Selected microphone disconnected")).toBeInTheDocument();
-    expect(screen.getByText(/Dictation will use System Default/i)).toBeInTheDocument();
+    expect(screen.getByText(/temporarily using System Default/i)).toBeInTheDocument();
+    expect(screen.getByText(/saved microphone will be tried again/i)).toBeInTheDocument();
     expect(screen.getByText(/Testing System Default because/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Use default" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Windows default" }));
     expect(onDeviceSelect).toHaveBeenCalledWith("");
   });
 });

@@ -17,12 +17,12 @@ export default function GeneralSection(props: Props) {
 
   return (
     <div className="space-y-6">
-      <UpdatesSection showConfirmDialog={showConfirmDialog} showAlertDialog={showAlertDialog} />
-      <AppearanceSection />
+      <MicrophoneSection />
       <SoundFeedbackSection />
       <LanguageSection />
+      <AppearanceSection />
       <StartupSection />
-      <MicrophoneSection />
+      <UpdatesSection showConfirmDialog={showConfirmDialog} showAlertDialog={showAlertDialog} />
     </div>
   );
 }

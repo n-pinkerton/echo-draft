@@ -141,7 +141,8 @@ export const MicrophoneSettings = ({
               Selected microphone disconnected
             </p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Dictation will use System Default until this microphone is available again.
+              EchoDraft is temporarily using System Default. Your saved microphone will be tried
+              again when it reconnects.
             </p>
           </div>
           <Button
@@ -151,7 +152,7 @@ export const MicrophoneSettings = ({
             className="shrink-0"
             onClick={() => onDeviceSelect("")}
           >
-            Use default
+            Switch to Windows default
           </Button>
         </div>
       )}
