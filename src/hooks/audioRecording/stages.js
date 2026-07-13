@@ -4,14 +4,16 @@ export const STAGE_META = {
   listening: { label: "Listening", overallProgress: 0.1 },
   transcribing: { label: "Transcribing", overallProgress: 0.45 },
   cleaning: { label: "Cleaning up", overallProgress: 0.7 },
+  delivering: { label: "Delivering", overallProgress: 0.82 },
   inserting: { label: "Inserting", overallProgress: 0.85 },
   saving: { label: "Saving", overallProgress: 0.93 },
   done: { label: "Done", overallProgress: 1 },
+  warning: { label: "Delivered with warning", overallProgress: 1 },
   error: { label: "Error", overallProgress: 1 },
   cancelled: { label: "Cancelled", overallProgress: 1 },
 };
 
-export const TERMINAL_STAGES = new Set(["done", "error", "cancelled"]);
+export const TERMINAL_STAGES = new Set(["done", "warning", "error", "cancelled"]);
 
 export const INITIAL_PROGRESS = {
   stage: "idle",

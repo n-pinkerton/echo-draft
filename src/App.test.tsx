@@ -83,6 +83,6 @@ describe("App recording indicator routing", () => {
       "transcribing"
     );
     expect(screen.getByText("0:12")).toBeInTheDocument();
-    expect(screen.getByText("Press dictation hotkey again to cancel")).toBeInTheDocument();
+    expect(screen.getByText("Cancel from the EchoDraft tray menu")).toBeInTheDocument();
   });
 });

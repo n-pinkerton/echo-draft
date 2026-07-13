@@ -4,6 +4,7 @@ import {
   playCancelCue,
   playCompletionCue,
   playErrorCue,
+  playWarningCue,
   playStartCue,
   playStopCue,
 } from "../utils/dictationCues";
@@ -56,6 +57,7 @@ export const useAudioRecording = (toast, options = {}) => {
   const recordingStartedAtRef = useRef(null);
   const progressResetTimerRef = useRef(null);
   const recordingOperationQueueRef = useRef(null);
+  const deliveryCommitCountRef = useRef(0);
   if (!recordingOperationQueueRef.current) {
     recordingOperationQueueRef.current = createRecordingOperationQueue();
   }
@@ -187,6 +189,12 @@ export const useAudioRecording = (toast, options = {}) => {
   );
 
   const cancelProcessing = useCallback(() => {
+    if (
+      deliveryCommitCountRef.current > 0 ||
+      !["transcribing", "cleaning"].includes(latestProgressRef.current?.stage)
+    ) {
+      return false;
+    }
     const cancelled = audioManagerRef.current?.cancelProcessing() || false;
     if (!cancelled) {
       return false;
@@ -204,11 +212,26 @@ export const useAudioRecording = (toast, options = {}) => {
     (payload = {}) => {
       const managerState = audioManagerRef.current?.getState?.();
       if (managerState?.isProcessing || latestProgressRef.current?.canCancel) {
-        return Promise.resolve(cancelProcessing());
+        return Promise.resolve(false);
       }
       return toggleRecording(payload);
     },
-    [cancelProcessing, toggleRecording]
+    [toggleRecording]
+  );
+
+  const routeStartDictation = useCallback(
+    (payload = {}) => {
+      const managerState = audioManagerRef.current?.getState?.();
+      if (
+        deliveryCommitCountRef.current > 0 ||
+        managerState?.isProcessing ||
+        latestProgressRef.current?.canCancel
+      ) {
+        return Promise.resolve(false);
+      }
+      return startRecording(payload);
+    },
+    [startRecording]
   );
 
   useEffect(() => {
@@ -239,6 +262,8 @@ export const useAudioRecording = (toast, options = {}) => {
       upsertJob,
       playCompletionCue,
       playErrorCue,
+      playWarningCue,
+      deliveryCommitCountRef,
     });
 
     audioManagerRef.current.setCallbacks(
@@ -279,7 +304,7 @@ export const useAudioRecording = (toast, options = {}) => {
     });
 
     const disposeStart = window.electronAPI.onStartDictation?.((payload) => {
-      void startRecording(payload);
+      void routeStartDictation(payload);
       onToggle?.();
     });
 
@@ -322,7 +347,7 @@ export const useAudioRecording = (toast, options = {}) => {
     normalizeTriggerPayload,
     onToggle,
     removeJob,
-    startRecording,
+    routeStartDictation,
     stopRecording,
     toast,
     routeToggleDictation,
@@ -398,7 +423,6 @@ export const useAudioRecording = (toast, options = {}) => {
   const toggleListening = async (payload = {}) => {
     const managerState = audioManagerRef.current?.getState?.();
     if (managerState?.isProcessing || latestProgressRef.current?.canCancel) {
-      cancelProcessing();
       return;
     }
     const outputMode = payload?.outputMode === "clipboard" ? "clipboard" : "insert";

@@ -216,6 +216,21 @@ export const playCompletionCue = (options) =>
     });
   }, options);
 
+// A short paired interval: text is recoverable, but delivery needs attention.
+export const playWarningCue = (options) =>
+  playCue((context, baseTime, volume) => {
+    [392, 329.63].forEach((frequency, index) => {
+      scheduleTone(context, {
+        frequency,
+        startTime: baseTime + index * 0.12,
+        durationSeconds: 0.1,
+        type: "triangle",
+        gainScale: 0.5 * volume,
+        attackSeconds: 0.005,
+      });
+    });
+  }, options);
+
 // Two low dry pulses: the requested action did not complete.
 export const playErrorCue = (options) =>
   playCue((context, baseTime, volume) => {

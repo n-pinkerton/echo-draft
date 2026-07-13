@@ -56,7 +56,8 @@ describe("dictation cues", () => {
     }
 
     (window as any).AudioContext = FakeAudioContext;
-    const { playCompletionCue, playStartCue, playStopCue } = await import("./dictationCues");
+    const { playCompletionCue, playStartCue, playStopCue, playWarningCue } =
+      await import("./dictationCues");
 
     await playStartCue({ force: true, volume: 100 });
     expect(oscillators).toHaveLength(2);
@@ -77,6 +78,12 @@ describe("dictation cues", () => {
     ).toEqual([523.25, 659.25, 783.99]);
     expect(oscillators[4].frequency.values[0].time).toBe(oscillators[5].frequency.values[0].time);
     expect(oscillators[7].frequency.values[0].value).toBe(196);
+
+    await playWarningCue({ force: true, volume: 100 });
+    expect(oscillators).toHaveLength(10);
+    expect(oscillators.slice(8).map((oscillator) => oscillator.frequency.values[0].value)).toEqual([
+      392, 329.63,
+    ]);
   });
 
   it("respects disabled sounds while allowing explicit previews", async () => {

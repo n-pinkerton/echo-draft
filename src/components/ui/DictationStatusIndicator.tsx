@@ -18,6 +18,7 @@ type Props = {
 
 const TERMINAL_ICON = {
   done: Check,
+  warning: AlertTriangle,
   error: AlertTriangle,
   cancelled: X,
 } as const;
@@ -31,12 +32,14 @@ export default function DictationStatusIndicator({
   isSlow = false,
 }: Props) {
   const TerminalIcon = TERMINAL_ICON[stage as keyof typeof TERMINAL_ICON];
+  const isSuccess = stage === "done";
   const isError = stage === "error";
+  const isWarning = stage === "warning";
   const isCancelled = stage === "cancelled";
   const detail = canCancel
     ? isSlow
-      ? "Taking longer · press dictation hotkey to cancel"
-      : "Press dictation hotkey again to cancel"
+      ? "Taking longer · cancel from the tray menu"
+      : "Cancel from the EchoDraft tray menu"
     : message || (stage === "done" ? "Text delivered" : "");
 
   return (
@@ -47,9 +50,13 @@ export default function DictationStatusIndicator({
         className={`flex w-full items-center gap-2.5 rounded-full border bg-surface-2/95 px-3 py-2 text-foreground shadow-lg backdrop-blur-md ${
           isError
             ? "border-destructive/50"
-            : isCancelled
-              ? "border-border-hover"
-              : "border-primary/40"
+            : isWarning
+              ? "border-warning/60"
+              : isSuccess
+                ? "border-success/50"
+                : isCancelled
+                  ? "border-border-hover"
+                  : "border-primary/40"
         }`}
         role="status"
         aria-live="polite"
@@ -58,9 +65,11 @@ export default function DictationStatusIndicator({
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
             isError
               ? "bg-destructive/15 text-destructive"
-              : stage === "done"
-                ? "bg-success/15 text-success"
-                : "bg-primary/15 text-primary"
+              : isWarning
+                ? "bg-warning/15 text-warning-text"
+                : isSuccess
+                  ? "bg-success/15 text-success"
+                  : "bg-primary/15 text-primary"
           }`}
         >
           {TerminalIcon ? (
@@ -77,7 +86,7 @@ export default function DictationStatusIndicator({
             {stageLabel || "Working"}
           </span>
           <span
-            className={`block truncate text-[9px] leading-tight ${
+            className={`block whitespace-normal text-[10px] leading-tight ${
               isSlow ? "font-medium text-warning-text" : "text-muted-foreground"
             }`}
           >

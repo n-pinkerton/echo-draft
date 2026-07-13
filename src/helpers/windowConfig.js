@@ -2,7 +2,7 @@ const path = require("path");
 
 const WINDOW_SIZES = {
   BASE: { width: 96, height: 96 },
-  RECORDING_INDICATOR: { width: 210, height: 64 },
+  RECORDING_INDICATOR: { width: 260, height: 72 },
   WITH_STATUS: { width: 280, height: 182 },
   WITH_MENU: { width: 280, height: 310 },
   WITH_COMPACT_TOAST: { width: 300, height: 250 },

@@ -9,6 +9,7 @@ import {
   playErrorCue,
   playStartCue,
   playStopCue,
+  playWarningCue,
 } from "../../../../utils/dictationCues";
 import { SettingsRow } from "../../../ui/SettingsSection";
 import { Toggle } from "../../../ui/toggle";
@@ -28,6 +29,7 @@ const CUE_PREVIEWS = [
   { label: "Start", description: "Recording started", play: playStartCue },
   { label: "Process", description: "Recording stopped; processing started", play: playStopCue },
   { label: "Ready", description: "Text delivered", play: playCompletionCue },
+  { label: "Warning", description: "Text delivered with a warning", play: playWarningCue },
   { label: "Error", description: "Action failed", play: playErrorCue },
   { label: "Cancel", description: "Action cancelled", play: playCancelCue },
 ] as const;
@@ -64,7 +66,7 @@ export default function SoundFeedbackSection() {
         <SettingsPanelRow>
           <SettingsRow
             label="Dictation sounds"
-            description="Hear distinct cues for recording, processing, completion, cancellation, and errors"
+            description="Hear distinct cues for recording, processing, completion, warnings, cancellation, and errors"
           >
             <Toggle
               checked={soundsEnabled}
@@ -129,7 +131,7 @@ export default function SoundFeedbackSection() {
           <div>
             <p className="text-[12px] font-medium text-foreground">Preview sounds</p>
             <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground/80">
-              Start rises, Process falls, and Ready uses a separate chime-and-pop signature.
+              Start rises, Process falls, Ready chimes, and Warning uses a paired descending tone.
             </p>
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               {CUE_PREVIEWS.map((cue) => (
