@@ -1,5 +1,8 @@
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{15,79}$/;
 const CANCEL_TOMBSTONE_TTL_MS = 30_000;
+const MAX_ACTIVE_REQUESTS_PER_SENDER = 16;
+const MAX_TOMBSTONES_PER_SENDER = 64;
+const MAX_TOMBSTONES_TOTAL = 512;
 
 const createAbortError = () => {
   const error = new Error("Request cancelled");
@@ -13,6 +16,7 @@ class CancelableRequestRegistry {
     this.now = now;
     this.active = new Map();
     this.cancelledBeforeRegistration = new Map();
+    this.senderStates = new Map();
   }
 
   _validateRequestId(requestId) {
@@ -38,11 +42,66 @@ class CancelableRequestRegistry {
     return `${senderId}:${requestId}`;
   }
 
+  _countForSender(entries, senderId) {
+    const prefix = `${senderId}:`;
+    let count = 0;
+    for (const key of entries.keys()) {
+      if (key.startsWith(prefix)) count += 1;
+    }
+    return count;
+  }
+
+  _removeOldestTombstoneForSender(senderId) {
+    const prefix = `${senderId}:`;
+    for (const key of this.cancelledBeforeRegistration.keys()) {
+      if (key.startsWith(prefix)) {
+        this.cancelledBeforeRegistration.delete(key);
+        return;
+      }
+    }
+  }
+
+  _ensureSenderState(event, senderId) {
+    const existing = this.senderStates.get(senderId);
+    if (existing) return existing;
+
+    const sender = event.sender;
+    const activeKeys = new Set();
+    const onDestroyed = () => {
+      for (const key of activeKeys) {
+        this.active.get(key)?.controller.abort(createAbortError());
+        this.active.delete(key);
+      }
+      const prefix = `${senderId}:`;
+      for (const key of this.cancelledBeforeRegistration.keys()) {
+        if (key.startsWith(prefix)) this.cancelledBeforeRegistration.delete(key);
+      }
+      this.senderStates.delete(senderId);
+    };
+    const state = { sender, activeKeys, onDestroyed };
+    this.senderStates.set(senderId, state);
+    sender.once?.("destroyed", onDestroyed);
+    return state;
+  }
+
+  _cleanupSenderStateIfIdle(senderId) {
+    const state = this.senderStates.get(senderId);
+    if (!state || state.activeKeys.size > 0) return;
+    if (this._countForSender(this.cancelledBeforeRegistration, senderId) > 0) return;
+    state.sender.removeListener?.("destroyed", state.onDestroyed);
+    this.senderStates.delete(senderId);
+  }
+
   _pruneTombstones() {
     const cutoff = this.now() - CANCEL_TOMBSTONE_TTL_MS;
+    const affectedSenders = new Set();
     for (const [key, cancelledAt] of this.cancelledBeforeRegistration) {
-      if (cancelledAt < cutoff) this.cancelledBeforeRegistration.delete(key);
+      if (cancelledAt < cutoff) {
+        this.cancelledBeforeRegistration.delete(key);
+        affectedSenders.add(Number(key.slice(0, key.indexOf(":"))));
+      }
     }
+    for (const senderId of affectedSenders) this._cleanupSenderStateIfIdle(senderId);
   }
 
   createScope(event, requestId) {
@@ -55,12 +114,17 @@ class CancelableRequestRegistry {
       error.code = "DUPLICATE_REQUEST_ID";
       throw error;
     }
+    if (this._countForSender(this.active, senderId) >= MAX_ACTIVE_REQUESTS_PER_SENDER) {
+      const error = new Error("Too many active cancelable requests");
+      error.code = "TOO_MANY_ACTIVE_REQUESTS";
+      throw error;
+    }
 
     const controller = new AbortController();
-    const onSenderDestroyed = () => controller.abort(createAbortError());
-    const entry = { controller, event, key, onSenderDestroyed };
+    const senderState = this._ensureSenderState(event, senderId);
+    const entry = { controller, key, senderId };
     this.active.set(key, entry);
-    event.sender.once?.("destroyed", onSenderDestroyed);
+    senderState.activeKeys.add(key);
 
     if (this.cancelledBeforeRegistration.delete(key)) {
       controller.abort(createAbortError());
@@ -74,7 +138,8 @@ class CancelableRequestRegistry {
         if (finished) return;
         finished = true;
         if (this.active.get(key) === entry) this.active.delete(key);
-        event.sender.removeListener?.("destroyed", onSenderDestroyed);
+        senderState.activeKeys.delete(key);
+        this._cleanupSenderStateIfIdle(senderId);
       },
     };
   }
@@ -90,12 +155,31 @@ class CancelableRequestRegistry {
     }
 
     this._pruneTombstones();
+    this._ensureSenderState(event, senderId);
+    if (
+      !this.cancelledBeforeRegistration.has(key) &&
+      this._countForSender(this.cancelledBeforeRegistration, senderId) >= MAX_TOMBSTONES_PER_SENDER
+    ) {
+      this._removeOldestTombstoneForSender(senderId);
+    }
+    while (
+      !this.cancelledBeforeRegistration.has(key) &&
+      this.cancelledBeforeRegistration.size >= MAX_TOMBSTONES_TOTAL
+    ) {
+      const oldestKey = this.cancelledBeforeRegistration.keys().next().value;
+      if (!oldestKey) break;
+      this.cancelledBeforeRegistration.delete(oldestKey);
+    }
     this.cancelledBeforeRegistration.set(key, this.now());
     return false;
   }
 
   get activeCount() {
     return this.active.size;
+  }
+
+  get tombstoneCount() {
+    return this.cancelledBeforeRegistration.size;
   }
 }
 
@@ -111,6 +195,8 @@ function registerCancelableRequestHandler({ ipcMain }, { registry }) {
 
 module.exports = {
   CancelableRequestRegistry,
+  MAX_ACTIVE_REQUESTS_PER_SENDER,
+  MAX_TOMBSTONES_PER_SENDER,
   createAbortError,
   registerCancelableRequestHandler,
 };

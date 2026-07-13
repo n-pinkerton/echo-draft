@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 
 const {
   CancelableRequestRegistry,
+  MAX_ACTIVE_REQUESTS_PER_SENDER,
+  MAX_TOMBSTONES_PER_SENDER,
   registerCancelableRequestHandler,
 } = require("./cancelableRequestRegistry");
 
@@ -80,5 +82,22 @@ describe("CancelableRequestRegistry", () => {
       success: false,
       code: "INVALID_REQUEST_ID",
     });
+  });
+
+  it("bounds active requests and cancellation tombstones per renderer", () => {
+    const registry = new CancelableRequestRegistry();
+    const event = createEvent(9);
+    const scopes = Array.from({ length: MAX_ACTIVE_REQUESTS_PER_SENDER }, (_, index) =>
+      registry.createScope(event, `active-request-${String(index).padStart(3, "0")}`)
+    );
+
+    expect(event.sender.listenerCount("destroyed")).toBe(1);
+    expect(() => registry.createScope(event, "active-request-over-limit")).toThrow(/too many/i);
+    for (const scope of scopes) scope.finish();
+
+    for (let index = 0; index < MAX_TOMBSTONES_PER_SENDER + 20; index += 1) {
+      registry.cancel(event, `cancel-request-${String(index).padStart(3, "0")}`);
+    }
+    expect(registry.tombstoneCount).toBe(MAX_TOMBSTONES_PER_SENDER);
   });
 });
