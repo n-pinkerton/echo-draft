@@ -6,6 +6,7 @@ const http = require("http");
 const debugLogger = require("./debugLogger");
 const { killProcess } = require("../utils/process");
 const { getSafeTempDir } = require("./safeTempDir");
+const { abortableDelay, createAbortError, raceWithAbort, throwIfAborted } = require("./abortUtils");
 
 const PORT_RANGE_START = 8200;
 const PORT_RANGE_END = 8220;
@@ -92,7 +93,9 @@ class LlamaServerManager {
   }
 
   async start(modelPath, options = {}) {
-    if (this.startupPromise) return this.startupPromise;
+    const signal = options?.signal || null;
+    throwIfAborted(signal);
+    if (this.startupPromise) return await raceWithAbort(this.startupPromise, signal);
 
     // Already running with same model
     if (this.ready && this.modelPath === modelPath) return;
@@ -111,11 +114,14 @@ class LlamaServerManager {
   }
 
   async _doStart(modelPath, options = {}) {
+    const signal = options?.signal || null;
+    throwIfAborted(signal);
     const serverBinary = this.getServerBinaryPath();
     if (!serverBinary) throw new Error("llama-server binary not found");
     if (!fs.existsSync(modelPath)) throw new Error(`Model file not found: ${modelPath}`);
 
     this.port = await this.findAvailablePort();
+    throwIfAborted(signal);
     this.modelPath = modelPath;
 
     const args = [
@@ -156,6 +162,14 @@ class LlamaServerManager {
       cwd: getSafeTempDir(),
       env,
     });
+    const startedProcess = this.process;
+    const onAbort = () => {
+      if (this.process === startedProcess) {
+        this.ready = false;
+        killProcess(startedProcess, "SIGKILL");
+      }
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     let stderrBuffer = "";
     let exitCode = null;
@@ -182,8 +196,13 @@ class LlamaServerManager {
       this.stopHealthCheck();
     });
 
-    await this.waitForReady(() => ({ stderr: stderrBuffer, exitCode }));
-    this.startHealthCheck();
+    try {
+      await this.waitForReady(() => ({ stderr: stderrBuffer, exitCode }), signal);
+      throwIfAborted(signal);
+      this.startHealthCheck();
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
 
     debugLogger.info("llama-server started successfully", {
       port: this.port,
@@ -191,11 +210,12 @@ class LlamaServerManager {
     });
   }
 
-  async waitForReady(getProcessInfo) {
+  async waitForReady(getProcessInfo, signal = null) {
     const startTime = Date.now();
     let pollCount = 0;
 
     while (Date.now() - startTime < STARTUP_TIMEOUT_MS) {
+      throwIfAborted(signal);
       if (!this.process || this.process.killed) {
         const info = getProcessInfo ? getProcessInfo() : {};
         const stderr = info.stderr ? info.stderr.trim().slice(0, 500) : "";
@@ -204,7 +224,7 @@ class LlamaServerManager {
       }
 
       pollCount++;
-      if (await this.checkHealth()) {
+      if (await this.checkHealth(signal)) {
         this.ready = true;
         debugLogger.debug("llama-server ready", {
           startupTimeMs: Date.now() - startTime,
@@ -213,14 +233,22 @@ class LlamaServerManager {
         return;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, STARTUP_POLL_INTERVAL_MS));
+      await abortableDelay(STARTUP_POLL_INTERVAL_MS, signal);
     }
 
     throw new Error(`llama-server failed to start within ${STARTUP_TIMEOUT_MS}ms`);
   }
 
-  checkHealth() {
-    return new Promise((resolve) => {
+  checkHealth(signal = null) {
+    throwIfAborted(signal);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        fn(value);
+      };
       const req = http.request(
         {
           hostname: "127.0.0.1",
@@ -230,15 +258,20 @@ class LlamaServerManager {
           timeout: HEALTH_CHECK_TIMEOUT_MS,
         },
         (res) => {
-          resolve(res.statusCode === 200);
+          finish(resolve, res.statusCode === 200);
           res.resume();
         }
       );
+      const onAbort = () => {
+        req.destroy();
+        finish(reject, createAbortError());
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
 
-      req.on("error", () => resolve(false));
+      req.on("error", () => finish(resolve, false));
       req.on("timeout", () => {
         req.destroy();
-        resolve(false);
+        finish(resolve, false);
       });
       req.end();
     });

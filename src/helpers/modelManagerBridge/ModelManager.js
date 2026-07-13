@@ -3,6 +3,7 @@ const fs = require("fs");
 const { promises: fsPromises } = require("fs");
 const { app } = require("electron");
 const { downloadFile: sharedDownloadFile, createDownloadSignal } = require("../downloadUtils");
+const { throwIfAborted } = require("../abortUtils");
 
 const LlamaServerManager = require("../llamaServer");
 const debugLogger = require("../debugLogger");
@@ -250,6 +251,7 @@ class ModelManager {
 
   async runInference(modelId, prompt, options = {}) {
     this.ensureInitialized();
+    throwIfAborted(options.signal);
     const startTime = Date.now();
     const diagnosticOptions = { ...options };
     delete diagnosticOptions.signal;
@@ -291,38 +293,43 @@ class ModelManager {
         { modelId }
       );
     }
+    throwIfAborted(options.signal);
 
-    if (!this.serverManager.ready || this.currentServerModelId !== modelId) {
-      debugLogger.logReasoning("INFERENCE_STARTING_SERVER", {
-        currentModel: this.currentServerModelId,
-        requestedModel: modelId,
-        serverReady: this.serverManager.ready,
-      });
-
-      await this.serverManager.start(modelPath, {
-        contextSize: options.contextSize || modelInfo.model.contextLength || 4096,
-        threads: options.threads || 4,
-      });
-      this.currentServerModelId = modelId;
-
-      debugLogger.logReasoning("INFERENCE_SERVER_STARTED", {
-        port: this.serverManager.port,
-        model: modelId,
-      });
-    }
-
-    const messages = [
-      { role: "system", content: options.systemPrompt || "" },
-      { role: "user", content: prompt },
-    ];
-
-    debugLogger.logReasoning("INFERENCE_SENDING_REQUEST", {
-      messageCount: messages.length,
-      systemPromptLength: (options.systemPrompt || "").length,
-      userPromptLength: prompt.length,
-    });
-
+    let startedServerForRequest = false;
     try {
+      if (!this.serverManager.ready || this.currentServerModelId !== modelId) {
+        debugLogger.logReasoning("INFERENCE_STARTING_SERVER", {
+          currentModel: this.currentServerModelId,
+          requestedModel: modelId,
+          serverReady: this.serverManager.ready,
+        });
+
+        await this.serverManager.start(modelPath, {
+          contextSize: options.contextSize || modelInfo.model.contextLength || 4096,
+          threads: options.threads || 4,
+          signal: options.signal,
+        });
+        startedServerForRequest = true;
+        throwIfAborted(options.signal);
+        this.currentServerModelId = modelId;
+
+        debugLogger.logReasoning("INFERENCE_SERVER_STARTED", {
+          port: this.serverManager.port,
+          model: modelId,
+        });
+      }
+
+      const messages = [
+        { role: "system", content: options.systemPrompt || "" },
+        { role: "user", content: prompt },
+      ];
+
+      debugLogger.logReasoning("INFERENCE_SENDING_REQUEST", {
+        messageCount: messages.length,
+        systemPromptLength: (options.systemPrompt || "").length,
+        userPromptLength: prompt.length,
+      });
+
       const result = await this.serverManager.inference(messages, {
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens ?? 512,
@@ -338,6 +345,10 @@ class ModelManager {
       return result;
     } catch (error) {
       if (error?.name === "AbortError" || options.signal?.aborted) {
+        if (startedServerForRequest) {
+          await this.serverManager.stop();
+          this.currentServerModelId = null;
+        }
         throw Object.assign(new Error("Request cancelled"), {
           name: "AbortError",
           code: "REQUEST_CANCELLED",
