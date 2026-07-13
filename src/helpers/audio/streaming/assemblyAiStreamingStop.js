@@ -444,16 +444,20 @@ async function performStopStreamingRecording(manager, runtime = {}) {
       "transcription"
     );
     await Promise.resolve(
-      manager.onTranscriptionComplete?.({
-        success: true,
-        text: finalText,
-        rawText,
-        source: "assemblyai-streaming",
-        timings,
-        context: manager.streamingContext,
-        ...(cleanup ? { cleanup } : {}),
-      })
+      manager.onTranscriptionComplete?.(
+        {
+          success: true,
+          text: finalText,
+          rawText,
+          source: "assemblyai-streaming",
+          timings,
+          context: manager.streamingContext,
+          ...(cleanup ? { cleanup } : {}),
+        },
+        { signal }
+      )
     );
+    throwIfTranscriptionCancelled(signal);
 
     logger.info(
       "Streaming total processing",

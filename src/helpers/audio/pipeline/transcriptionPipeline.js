@@ -163,10 +163,13 @@ export class TranscriptionPipeline {
       };
 
       await Promise.resolve(
-        this.getOnTranscriptionComplete?.()?.({
-          ...resultWithDiagnostics,
-          context,
-        })
+        this.getOnTranscriptionComplete?.()?.(
+          {
+            ...resultWithDiagnostics,
+            context,
+          },
+          { signal }
+        )
       );
       throwIfTranscriptionCancelled(signal);
 

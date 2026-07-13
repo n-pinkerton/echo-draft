@@ -2,6 +2,89 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTranscriptionCompleteHandler } from "./transcriptionCompleteHandler";
 
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+};
+
+const createDeliveryHarness = ({
+  outputMode,
+  safePaste = vi.fn(async () => true),
+  writeClipboard = vi.fn(async () => ({ success: true })),
+  saveTranscription = vi.fn(async () => ({ success: true, id: 321 })),
+}: {
+  outputMode: "insert" | "clipboard";
+  safePaste?: ReturnType<typeof vi.fn>;
+  writeClipboard?: ReturnType<typeof vi.fn>;
+  saveTranscription?: ReturnType<typeof vi.fn>;
+}) => {
+  const sessionId = `cancel-${outputMode}`;
+  const updateStage = vi.fn();
+  const playCompletionCue = vi.fn();
+  const patchTranscriptionMeta = vi.fn(async () => ({ success: true }));
+  const warmupStreamingConnection = vi.fn();
+  const controller = new AbortController();
+  const handler = createTranscriptionCompleteHandler({
+    activeSessionRef: { current: null },
+    audioManagerRef: {
+      current: {
+        safePaste,
+        saveTranscription,
+        warmupStreamingConnection,
+      },
+    },
+    jobsBySessionIdRef: {
+      current: new Map([[sessionId, { sessionId, jobId: 9, startedAt: Date.now() - 100 }]]),
+    },
+    normalizeTriggerPayload: (payload: any) => ({
+      outputMode: payload.outputMode || outputMode,
+      sessionId: payload.sessionId || sessionId,
+      triggeredAt: 1,
+      insertionTarget: null,
+    }),
+    recordingSessionIdRef: { current: null },
+    removeJob: vi.fn(),
+    sessionsByIdRef: { current: new Map([[sessionId, { sessionId, outputMode }]]) },
+    setProgress: vi.fn(),
+    setTranscript: vi.fn(),
+    toast: vi.fn(),
+    updateStage,
+    upsertJob: vi.fn(),
+    playCompletionCue,
+    playErrorCue: vi.fn(),
+    electronAPI: { writeClipboard, patchTranscriptionMeta },
+    localStorage: { getItem: () => null },
+  });
+
+  const run = () =>
+    handler(
+      {
+        success: true,
+        text: "Do not deliver after cancellation",
+        rawText: "Do not deliver after cancellation",
+        source: "openai",
+        timings: {},
+        context: { sessionId, jobId: 9, outputMode },
+      },
+      { signal: controller.signal }
+    );
+
+  return {
+    controller,
+    handler,
+    patchTranscriptionMeta,
+    playCompletionCue,
+    run,
+    saveTranscription,
+    updateStage,
+    warmupStreamingConnection,
+    writeClipboard,
+  };
+};
+
 describe("createTranscriptionCompleteHandler", () => {
   it("handles clipboard mode: writes clipboard, saves history, updates stage", async () => {
     const activeSessionRef = { current: null as any };
@@ -406,5 +489,53 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(setProgress).not.toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining("Saved in") })
     );
+  });
+
+  it("stops delivery after cancellation while paste is pending", async () => {
+    const paste = deferred<boolean>();
+    const safePaste = vi.fn(() => paste.promise);
+    const harness = createDeliveryHarness({ outputMode: "insert", safePaste });
+
+    const pending = harness.run();
+    await vi.waitFor(() => expect(safePaste).toHaveBeenCalledOnce());
+    harness.controller.abort();
+    paste.resolve(false);
+
+    await expect(pending).rejects.toMatchObject({ code: "TRANSCRIPTION_CANCELLED" });
+    expect(harness.writeClipboard).not.toHaveBeenCalled();
+    expect(harness.saveTranscription).not.toHaveBeenCalled();
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+  });
+
+  it("stops delivery after cancellation while clipboard writing is pending", async () => {
+    const clipboard = deferred<{ success: boolean }>();
+    const writeClipboard = vi.fn(() => clipboard.promise);
+    const harness = createDeliveryHarness({ outputMode: "clipboard", writeClipboard });
+
+    const pending = harness.run();
+    await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledOnce());
+    harness.controller.abort();
+    clipboard.resolve({ success: true });
+
+    await expect(pending).rejects.toMatchObject({ code: "TRANSCRIPTION_CANCELLED" });
+    expect(harness.saveTranscription).not.toHaveBeenCalled();
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+  });
+
+  it("does not patch or announce completion after cancellation while history is pending", async () => {
+    const history = deferred<{ success: boolean; id: number }>();
+    const saveTranscription = vi.fn(() => history.promise);
+    const harness = createDeliveryHarness({ outputMode: "clipboard", saveTranscription });
+
+    const pending = harness.run();
+    await vi.waitFor(() => expect(saveTranscription).toHaveBeenCalledOnce());
+    harness.controller.abort();
+    history.resolve({ success: true, id: 321 });
+
+    await expect(pending).rejects.toMatchObject({ code: "TRANSCRIPTION_CANCELLED" });
+    expect(harness.patchTranscriptionMeta).not.toHaveBeenCalled();
+    expect(harness.updateStage).not.toHaveBeenCalledWith("done", expect.anything());
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+    expect(harness.warmupStreamingConnection).not.toHaveBeenCalled();
   });
 });

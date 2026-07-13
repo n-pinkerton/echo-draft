@@ -1,5 +1,6 @@
 import logger from "../../utils/logger";
 import { ECHO_DRAFT_CLOUD_SOURCE, normalizeEchoDraftSource } from "../../utils/branding";
+import { throwIfTranscriptionCancelled } from "../../helpers/audio/pipeline/cancellation";
 import { countWords } from "./textMetrics";
 
 export const createTranscriptionCompleteHandler = (deps) => {
@@ -25,11 +26,14 @@ export const createTranscriptionCompleteHandler = (deps) => {
   const storage =
     deps.localStorage || (typeof window !== "undefined" ? window.localStorage : undefined);
 
-  return async (result) => {
+  return async (result, runtime = {}) => {
     const audioManager = audioManagerRef.current;
     if (!audioManager) {
       return;
     }
+    const signal = runtime?.signal || audioManager.activeProcessingAbortController?.signal || null;
+    const assertDeliveryActive = () => throwIfTranscriptionCancelled(signal);
+    assertDeliveryActive();
 
     const contextSessionId =
       typeof result?.context?.sessionId === "string" && result.context.sessionId.trim()
@@ -59,6 +63,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
     }
 
     if (!result.success) {
+      assertDeliveryActive();
       void playErrorCue?.();
       if (!recordingSessionIdRef.current) {
         updateStage("error", { message: "Transcription did not complete." });
@@ -97,9 +102,11 @@ export const createTranscriptionCompleteHandler = (deps) => {
       "dictation"
     );
 
+    assertDeliveryActive();
     setTranscript(result.text);
 
     if (cleanupFallback) {
+      assertDeliveryActive();
       toast({
         title: "Original transcript preserved",
         description:
@@ -119,6 +126,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
     const isForegroundAvailable = !recordingSessionIdRef.current;
 
     if (session.outputMode === "insert") {
+      assertDeliveryActive();
       if (isForegroundAvailable) {
         updateStage("inserting", {
           outputMode: session.outputMode,
@@ -147,16 +155,20 @@ export const createTranscriptionCompleteHandler = (deps) => {
         },
         "paste"
       );
+      assertDeliveryActive();
       pasteSucceeded = await audioManager.safePaste(result.text, pasteOptions);
+      assertDeliveryActive();
       pasteMs = Math.round(performance.now() - pasteStart);
       if (pasteSucceeded) {
         deliveryStatus = "inserted";
       } else {
         try {
+          assertDeliveryActive();
           if (typeof electronAPI?.writeClipboard !== "function") {
             throw new Error("Clipboard API unavailable");
           }
           const clipboardResult = await electronAPI.writeClipboard(result.text);
+          assertDeliveryActive();
           if (clipboardResult?.success === false) {
             throw new Error(clipboardResult.error || "Clipboard write failed");
           }
@@ -170,6 +182,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
             duration: 5000,
           });
         } catch (error) {
+          assertDeliveryActive();
           deliveryStatus = "failed";
           deliveryError = `Automatic insertion and clipboard copy failed: ${error?.message || String(error)}`;
           logger.warn(
@@ -199,16 +212,19 @@ export const createTranscriptionCompleteHandler = (deps) => {
       );
     } else {
       try {
+        assertDeliveryActive();
         if (typeof electronAPI?.writeClipboard !== "function") {
           throw new Error("Clipboard API unavailable");
         }
         const clipboardResult = await electronAPI.writeClipboard(result.text);
+        assertDeliveryActive();
         if (clipboardResult?.success === false) {
           throw new Error(clipboardResult.error || "Clipboard write failed");
         }
         clipboardSucceeded = true;
         deliveryStatus = "clipboard";
       } catch (error) {
+        assertDeliveryActive();
         deliveryStatus = "failed";
         deliveryError = `Clipboard copy failed: ${error?.message || String(error)}`;
         logger.warn(
@@ -228,6 +244,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
         "clipboard"
       );
 
+      assertDeliveryActive();
       if (clipboardSucceeded) {
         toast({
           title: jobId !== null ? `Job #${jobId} ready` : "Ready to paste",
@@ -246,6 +263,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       }
     }
 
+    assertDeliveryActive();
     if (isForegroundAvailable) {
       updateStage("saving", {
         outputMode: session.outputMode,
@@ -281,6 +299,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
     const deliverySucceeded = deliveryStatus === "inserted" || deliveryStatus === "clipboard";
     const historyStatus = deliverySucceeded ? "success" : "delivery_issue";
 
+    assertDeliveryActive();
     const saveResult = await audioManager.saveTranscription({
       text: result.text,
       rawText: result.rawText || result.text,
@@ -312,6 +331,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
         timings: baseTimings,
       },
     });
+    assertDeliveryActive();
     const saveSucceeded = Boolean(saveResult?.success);
     const savedId = saveResult?.id || saveResult?.transcription?.id;
     const saveMs = Math.round(performance.now() - saveStart);
@@ -322,6 +342,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
 
     if (saveSucceeded && savedId && electronAPI?.patchTranscriptionMeta) {
       try {
+        assertDeliveryActive();
         await electronAPI.patchTranscriptionMeta(savedId, {
           provider,
           model,
@@ -331,7 +352,9 @@ export const createTranscriptionCompleteHandler = (deps) => {
             totalDurationMs,
           },
         });
+        assertDeliveryActive();
       } catch (error) {
+        assertDeliveryActive();
         logger.warn(
           "Failed to patch transcription metadata",
           { error: error?.message, id: savedId },
@@ -340,6 +363,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       }
     }
 
+    assertDeliveryActive();
     if (!saveSucceeded) {
       const fallbackDescription =
         deliveryStatus === "inserted"
@@ -368,6 +392,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
     );
 
     if (result.source === "openai" && storage?.getItem?.("useLocalWhisper") === "true") {
+      assertDeliveryActive();
       toast({
         title: "Fallback Mode",
         description: "Local Whisper failed. Used OpenAI API instead.",
@@ -379,6 +404,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       normalizeEchoDraftSource(result.source) === ECHO_DRAFT_CLOUD_SOURCE &&
       result.limitReached
     ) {
+      assertDeliveryActive();
       electronAPI?.notifyLimitReached?.({
         wordsUsed: result.wordsUsed,
         limit:
@@ -386,6 +412,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       });
     }
 
+    assertDeliveryActive();
     if (isForegroundAvailable) {
       updateStage("done", {
         outputMode: session.outputMode,
@@ -420,6 +447,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
     }
 
     if (resolvedSessionId) {
+      assertDeliveryActive();
       upsertJob(resolvedSessionId, {
         status: "done",
         provider,
@@ -429,11 +457,13 @@ export const createTranscriptionCompleteHandler = (deps) => {
       setTimeout(() => removeJob(resolvedSessionId), 1500);
     }
 
+    assertDeliveryActive();
     if (deliverySucceeded) {
       void playCompletionCue?.();
     } else {
       void playErrorCue?.();
     }
+    assertDeliveryActive();
     audioManager.warmupStreamingConnection();
   };
 };
