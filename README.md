@@ -716,6 +716,7 @@ If you need to diagnose lag, missing audio, or truncated transcripts, enable **D
   - Preferred: `logs/echodraft-debug-YYYY-MM-DD.jsonl` next to the installed `EchoDraft.exe`
   - Fallback: the app’s `userData/logs` directory (if the install directory isn’t writable)
 - Use **Open Logs Folder** in the Developer section to jump to the current log location.
+- Use **Delete Diagnostic Data** to permanently remove EchoDraft daily logs and rolling debug audio captures from its verified log locations. Turn debug mode off first if you do not want a fresh log created.
 
 For full details (enable/disable options, log format, and what gets captured), see `DEBUG.md`.
 

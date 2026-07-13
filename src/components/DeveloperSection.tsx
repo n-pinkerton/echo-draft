@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "./ui/button";
-import { FolderOpen, Copy, Check } from "lucide-react";
+import { FolderOpen, Copy, Check, ShieldAlert, Trash2 } from "lucide-react";
 import { useToast } from "./ui/toastContext";
 import { Toggle } from "./ui/toggle";
+import { ConfirmDialog } from "./ui/dialog";
 import logger from "../utils/logger";
 import { DEBUG_MODE_STORAGE_KEY } from "../utils/branding";
 
@@ -16,6 +17,8 @@ export default function DeveloperSection() {
   const [isLoading, setIsLoading] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
+  const [purgeDialogOpen, setPurgeDialogOpen] = useState(false);
+  const [isPurging, setIsPurging] = useState(false);
   const { toast } = useToast();
 
   const loadDebugState = useCallback(async () => {
@@ -121,6 +124,47 @@ export default function DeveloperSection() {
     }
   };
 
+  const handlePurgeDebugArtifacts = async () => {
+    if (isPurging) return;
+
+    try {
+      setIsPurging(true);
+      const result = await window.electronAPI.purgeDebugArtifacts();
+      if (!result.success) {
+        throw new Error(result.error || "Some debug artifacts could not be deleted");
+      }
+
+      const filesDeleted = result.filesDeleted || 0;
+      const bytesDeleted = result.bytesDeleted || 0;
+      const formattedBytes =
+        bytesDeleted >= 1024 * 1024
+          ? `${(bytesDeleted / (1024 * 1024)).toFixed(1)} MB`
+          : bytesDeleted >= 1024
+            ? `${Math.ceil(bytesDeleted / 1024)} KB`
+            : `${bytesDeleted} bytes`;
+
+      await loadDebugState();
+      toast({
+        title: "Diagnostic data deleted",
+        description:
+          filesDeleted > 0
+            ? `Deleted ${filesDeleted} file${filesDeleted === 1 ? "" : "s"} (${formattedBytes}).${
+                result.freshLogStarted ? " A fresh log was started because debug mode is on." : ""
+              }`
+            : "No EchoDraft diagnostic files were found.",
+        variant: "success",
+      });
+    } catch (error) {
+      toast({
+        title: "Cleanup incomplete",
+        description: `Could not delete all diagnostic data: ${error}`,
+        variant: "destructive",
+      });
+    } finally {
+      setIsPurging(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="mb-5">
@@ -145,7 +189,7 @@ export default function DeveloperSection() {
               </div>
               <p className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed">
                 {debugEnabled
-                  ? "Capturing detailed metadata without transcript previews to a daily log file"
+                  ? "Capturing detailed diagnostics and up to 10 recent input recordings on this computer"
                   : "Enable to capture detailed diagnostic information (writes to disk)"}
               </p>
             </div>
@@ -160,6 +204,21 @@ export default function DeveloperSection() {
         </div>
 
         {/* Log Details */}
+        {debugEnabled && (
+          <div className="px-5 py-4">
+            <div className="flex items-start gap-3 rounded-lg border border-warning/25 bg-warning/5 dark:bg-warning/10 p-3">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+              <div>
+                <p className="text-[12px] font-medium text-warning">Sensitive diagnostic data</p>
+                <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                  Logs can contain transcribed text, and captured recordings contain your voice.
+                  Turn debug mode off and delete this data when troubleshooting is finished.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {debugEnabled && (
           <div className="px-5 py-4 space-y-3">
             <div>
@@ -183,6 +242,7 @@ export default function DeveloperSection() {
                   </code>
                   <Button
                     onClick={handleCopyPath}
+                    aria-label="Copy current log file path"
                     variant="ghost"
                     size="sm"
                     className="shrink-0 h-8 w-8 p-0"
@@ -222,14 +282,28 @@ export default function DeveloperSection() {
         )}
 
         {/* Actions */}
-        {debugEnabled && (
-          <div className="px-5 py-4">
-            <Button onClick={handleOpenLogsFolder} variant="outline" size="sm" className="w-full">
-              <FolderOpen className="mr-2 h-3.5 w-3.5" />
-              Open Logs Folder
-            </Button>
-          </div>
-        )}
+        <div className="px-5 py-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <Button
+            onClick={handleOpenLogsFolder}
+            variant="outline"
+            size="sm"
+            className="w-full"
+            disabled={!logsDir}
+          >
+            <FolderOpen className="mr-2 h-3.5 w-3.5" />
+            Open Logs Folder
+          </Button>
+          <Button
+            onClick={() => setPurgeDialogOpen(true)}
+            variant="outline"
+            size="sm"
+            className="w-full text-destructive hover:text-destructive"
+            disabled={isPurging}
+          >
+            <Trash2 className="mr-2 h-3.5 w-3.5" />
+            {isPurging ? "Deleting…" : "Delete Diagnostic Data"}
+          </Button>
+        </div>
       </div>
 
       {/* What gets logged */}
@@ -245,6 +319,7 @@ export default function DeveloperSection() {
               {[
                 "Audio processing",
                 "API requests",
+                "Recent input audio (up to 10)",
                 "FFmpeg operations",
                 "System diagnostics",
                 "Transcription pipeline",
@@ -304,6 +379,17 @@ export default function DeveloperSection() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={purgeDialogOpen}
+        onOpenChange={setPurgeDialogOpen}
+        title="Delete diagnostic data?"
+        description="This permanently deletes EchoDraft daily logs and captured debug recordings from its verified logs folders. Other files are left untouched. If debug mode remains on, EchoDraft starts a fresh log."
+        confirmText="Delete Data"
+        cancelText="Keep Data"
+        variant="destructive"
+        onConfirm={() => void handlePurgeDebugArtifacts()}
+      />
     </div>
   );
 }

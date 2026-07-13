@@ -1,11 +1,21 @@
 const fs = require("fs");
+const path = require("path");
 const { app } = require("electron");
 
+const { purgeDebugArtifactsAtRoot } = require("../debugArtifacts");
 const { TelemetryFileLogger } = require("../telemetryFileLogger");
 const { redactEnvSnapshot } = require("./envSnapshot");
 const { buildHeaderRecord } = require("./headerRecord");
 const { formatArgs, formatMeta } = require("./formatters");
-const { logAudioData, logFFmpegDebug, logProcessOutput, logProcessStart, logSTTPipeline, logWhisperPipeline } = require("./debugHelpers");
+const { redactSensitiveData, redactSensitiveString } = require("./redaction");
+const {
+  logAudioData,
+  logFFmpegDebug,
+  logProcessOutput,
+  logProcessStart,
+  logSTTPipeline,
+  logWhisperPipeline,
+} = require("./debugHelpers");
 const { getInstallDir, getLogsDirCandidates } = require("./logPaths");
 const { LOG_LEVELS, normalizeLevel, resolveLogLevel } = require("./logLevelUtils");
 
@@ -161,7 +171,7 @@ class DebugLogger {
   }
 
   formatArgs(args) {
-    return formatArgs(args);
+    return formatArgs(redactSensitiveData(args));
   }
 
   formatMeta(meta) {
@@ -177,6 +187,8 @@ class DebugLogger {
     }
 
     const timestamp = new Date().toISOString();
+    const safeMessage = redactSensitiveString(String(message));
+    const safeMeta = meta === undefined ? undefined : redactSensitiveData(meta);
     const scopeTag = scope ? `[${scope}]` : "";
     const sourceTag = source ? `[${source}]` : "";
     const levelTag = `[${normalized.toUpperCase()}]`;
@@ -189,9 +201,9 @@ class DebugLogger {
           : console.log;
 
     if (meta !== undefined) {
-      consoleFn(`${levelTag}${scopeTag}${sourceTag} ${message}`, meta);
+      consoleFn(`${levelTag}${scopeTag}${sourceTag} ${safeMessage}`, safeMeta);
     } else {
-      consoleFn(`${levelTag}${scopeTag}${sourceTag} ${message}`);
+      consoleFn(`${levelTag}${scopeTag}${sourceTag} ${safeMessage}`);
     }
 
     if (this.fileLoggingEnabled) {
@@ -200,8 +212,8 @@ class DebugLogger {
         level: normalized,
         scope: scope || null,
         source: source || "main",
-        message,
-        meta: meta === undefined ? null : meta,
+        message: safeMessage,
+        meta: safeMeta === undefined ? null : safeMeta,
         pid: process.pid,
       };
       this.telemetryLogger.write(record);
@@ -293,6 +305,78 @@ class DebugLogger {
 
   getLogsDir() {
     return this.telemetryLogger.getLogsDir();
+  }
+
+  getArtifactLogsDir() {
+    const current = this.telemetryLogger.getLogsDir() || this.logsDir;
+    if (current) return current;
+
+    const candidates = this.getLogsDirCandidates();
+    const existing = candidates.find((candidate) => {
+      try {
+        return fs.existsSync(candidate.dir);
+      } catch {
+        return false;
+      }
+    });
+    return existing?.dir || candidates[0]?.dir || null;
+  }
+
+  getDebugArtifactRoots() {
+    const roots = [];
+    const seen = new Set();
+    const candidates = [
+      this.telemetryLogger.getLogsDir(),
+      this.logsDir,
+      ...this.getLogsDirCandidates().map((candidate) => candidate.dir),
+    ];
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const resolved = path.resolve(candidate);
+      const identity = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      try {
+        if (fs.existsSync(resolved)) roots.push(resolved);
+      } catch {
+        // Ignore inaccessible fallback locations; the active root is reported below if needed.
+      }
+    }
+    return roots;
+  }
+
+  async purgeArtifacts() {
+    const roots = this.getDebugArtifactRoots();
+    const shouldResumeFileLogging = this.debugMode;
+
+    this.fileLoggingEnabled = false;
+    this.fileLoggingPending = false;
+    await this.telemetryLogger.closeAndWait();
+
+    const rootResults = roots.map((root) => purgeDebugArtifactsAtRoot(root));
+    const result = rootResults.reduce(
+      (summary, entry) => ({
+        filesDeleted: summary.filesDeleted + entry.filesDeleted,
+        directoriesDeleted: summary.directoriesDeleted + entry.directoriesDeleted,
+        bytesDeleted: summary.bytesDeleted + entry.bytesDeleted,
+        preservedEntries: summary.preservedEntries + entry.preservedEntries,
+        errors: [...summary.errors, ...entry.errors],
+      }),
+      { filesDeleted: 0, directoriesDeleted: 0, bytesDeleted: 0, preservedEntries: 0, errors: [] }
+    );
+
+    if (shouldResumeFileLogging) {
+      this.fileLoggingPending = true;
+      this.ensureFileLogging();
+    }
+
+    return {
+      ...result,
+      rootsScanned: roots.length,
+      success: result.errors.length === 0,
+      freshLogStarted: shouldResumeFileLogging && this.fileLoggingEnabled,
+    };
   }
 
   isEnabled() {

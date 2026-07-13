@@ -267,6 +267,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setDebugLogging: (enabled) => ipcRenderer.invoke("set-debug-logging", enabled),
   debugSaveAudio: (payload) => ipcRenderer.invoke("debug-save-audio", payload),
   openLogsFolder: () => ipcRenderer.invoke("open-logs-folder"),
+  purgeDebugArtifacts: () => ipcRenderer.invoke("purge-debug-artifacts"),
 
   // System settings helpers for microphone/audio permissions
   requestMicrophoneAccess: () => ipcRenderer.invoke("request-microphone-access"),

@@ -9,7 +9,11 @@ export async function getReasoningApiKey({
   localStorage,
 }: {
   provider: ReasoningApiKeyProvider;
-  apiKeyCache: { get: (key: string) => string | undefined; set: (key: string, value: string) => void; size?: number };
+  apiKeyCache: {
+    get: (key: string) => string | undefined;
+    set: (key: string, value: string) => void;
+    size?: number;
+  };
   electronAPI?: any;
   localStorage?: Storage;
 }): Promise<string> {
@@ -28,8 +32,6 @@ export async function getReasoningApiKey({
     logger.logReasoning("CUSTOM_KEY_RETRIEVAL", {
       provider,
       hasKey: Boolean(trimmedKey),
-      keyLength: trimmedKey.length,
-      keyPreview: trimmedKey ? `${trimmedKey.substring(0, 8)}...` : "none",
     });
 
     return trimmedKey;
@@ -56,8 +58,6 @@ export async function getReasoningApiKey({
       logger.logReasoning(`${provider.toUpperCase()}_KEY_FETCHED`, {
         provider,
         hasKey: Boolean(apiKey),
-        keyLength: apiKey?.length || 0,
-        keyPreview: apiKey ? `${apiKey.substring(0, 8)}...` : "none",
       });
 
       if (apiKey) {
@@ -83,4 +83,3 @@ export async function getReasoningApiKey({
 
   return apiKey;
 }
-

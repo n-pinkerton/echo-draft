@@ -49,5 +49,15 @@ export interface ElectronAPIDebugLogging {
     error?: string;
   }>;
   openLogsFolder: () => Promise<{ success: boolean; error?: string }>;
+  purgeDebugArtifacts: () => Promise<{
+    success: boolean;
+    filesDeleted?: number;
+    directoriesDeleted?: number;
+    bytesDeleted?: number;
+    preservedEntries?: number;
+    rootsScanned?: number;
+    freshLogStarted?: boolean;
+    errors?: string[];
+    error?: string;
+  }>;
 }
-

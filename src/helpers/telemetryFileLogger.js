@@ -92,6 +92,30 @@ class TelemetryFileLogger {
     this.currentLogPath = null;
   }
 
+  async closeAndWait() {
+    const stream = this.stream;
+    this.stream = null;
+    this.currentDateKey = null;
+    this.currentLogPath = null;
+
+    if (!stream) {
+      return true;
+    }
+
+    return await new Promise((resolve) => {
+      try {
+        if (stream.writableEnded || stream.writableFinished || stream.destroyed) {
+          resolve(true);
+          return;
+        }
+        stream.end(() => resolve(true));
+        stream.once("error", () => resolve(false));
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
   ensureStream() {
     if (!this.enabled || !this.logsDir) {
       return false;

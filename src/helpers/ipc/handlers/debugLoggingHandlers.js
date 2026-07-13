@@ -4,7 +4,7 @@ function registerDebugLoggingHandlers(
 ) {
   ipcMain.handle("get-debug-state", async () => {
     try {
-      const logsDir = debugLogger.getLogsDir?.() || null;
+      const logsDir = debugLogger.getArtifactLogsDir?.() || debugLogger.getLogsDir?.() || null;
       return {
         enabled: debugLogger.isEnabled(),
         logPath: debugLogger.getLogPath(),
@@ -46,7 +46,7 @@ function registerDebugLoggingHandlers(
         envWriteQueued: Boolean(envWriteResult?.queued),
         enabled: debugLogger.isEnabled(),
         logPath: debugLogger.getLogPath(),
-        logsDir: debugLogger.getLogsDir?.() || null,
+        logsDir: debugLogger.getArtifactLogsDir?.() || debugLogger.getLogsDir?.() || null,
         logsDirSource: debugLogger.getLogsDirSource?.() || null,
         fileLoggingEnabled: debugLogger.isFileLoggingEnabled?.() || false,
         fileLoggingError: debugLogger.getFileLoggingError?.() || null,
@@ -60,12 +60,35 @@ function registerDebugLoggingHandlers(
 
   ipcMain.handle("open-logs-folder", async () => {
     try {
-      const logsDir = debugLogger.getLogsDir?.() || path.join(app.getPath("userData"), "logs");
-      await shell.openPath(logsDir);
+      const logsDir =
+        debugLogger.getArtifactLogsDir?.() ||
+        debugLogger.getLogsDir?.() ||
+        path.join(app.getPath("userData"), "logs");
+      const openError = await shell.openPath(logsDir);
+      if (openError) {
+        return { success: false, error: openError };
+      }
       return { success: true };
     } catch (error) {
       debugLogger.error("Failed to open logs folder:", error);
       return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("purge-debug-artifacts", async () => {
+    try {
+      if (typeof debugLogger.purgeArtifacts !== "function") {
+        return { success: false, error: "Debug artifact cleanup is unavailable" };
+      }
+
+      const result = await debugLogger.purgeArtifacts();
+      return {
+        ...result,
+        error: result.success ? undefined : result.errors?.join("; ") || "Cleanup was incomplete",
+      };
+    } catch (error) {
+      debugLogger.error("Failed to purge debug artifacts:", error);
+      return { success: false, error: error?.message || String(error) };
     }
   });
 
@@ -75,7 +98,10 @@ function registerDebugLoggingHandlers(
     }
 
     try {
-      const logsDir = debugLogger.getLogsDir?.() || path.join(app.getPath("userData"), "logs");
+      const logsDir =
+        debugLogger.getArtifactLogsDir?.() ||
+        debugLogger.getLogsDir?.() ||
+        path.join(app.getPath("userData"), "logs");
       const audioBuffer = payload?.audioBuffer;
 
       if (!audioBuffer) {
@@ -106,4 +132,3 @@ function registerDebugLoggingHandlers(
 }
 
 module.exports = { registerDebugLoggingHandlers };
-
