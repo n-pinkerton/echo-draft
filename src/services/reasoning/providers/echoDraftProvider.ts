@@ -6,9 +6,8 @@ import type { ReasoningConfig } from "../../BaseReasoningService";
 export async function processWithEchoDraftProvider({
   text,
   model,
-  agentName,
+  agentName: _agentName,
   _config,
-  getCustomDictionary,
   getPreferredLanguage,
   cloudReason,
 }: {
@@ -16,13 +15,11 @@ export async function processWithEchoDraftProvider({
   model: string;
   agentName: string | null;
   _config: ReasoningConfig;
-  getCustomDictionary: () => string[];
   getPreferredLanguage: () => string;
   cloudReason: (text: string, payload: any, requestId: string) => Promise<any>;
 }): Promise<string> {
-  logger.logReasoning("OPENWHISPR_START", { model, agentName });
+  logger.logReasoning("OPENWHISPR_START", { model });
 
-  const customDictionary = getCustomDictionary();
   const language = getPreferredLanguage();
 
   // Use withSessionRefresh to handle AUTH_EXPIRED automatically
@@ -33,8 +30,6 @@ export async function processWithEchoDraftProvider({
           text,
           {
             model,
-            agentName,
-            customDictionary,
             language,
           },
           requestId

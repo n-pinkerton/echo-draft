@@ -45,24 +45,31 @@ describe("customEndpointModels", () => {
       );
     });
 
-    it("fetches /models and maps options", async () => {
-      const fetchFn = async (input: RequestInfo | URL, _init?: RequestInit) => {
-        expect(String(input)).toBe("https://example.com/v1/models");
+    it("uses the secure model-discovery bridge and maps options", async () => {
+      const requestFn = async (endpoint: string) => {
+        expect(endpoint).toBe("https://example.com/v1/models");
         return {
-          ok: true,
-          json: async () => ({ data: [{ id: "gpt-4.1", owned_by: "openai" }] }),
-        } as any;
+          status: 200,
+          body: JSON.stringify({ data: [{ id: "gpt-4.1", owned_by: "openai" }] }),
+        };
       };
 
       const options = await fetchCustomEndpointModels({
         baseUrl: "https://example.com/v1",
-        apiKey: "test",
-        fetchFn,
+        requestFn,
       });
 
       expect(options).toHaveLength(1);
       expect(options[0]?.value).toBe("gpt-4.1");
     });
+
+    it("rejects malformed model-discovery responses", async () => {
+      await expect(
+        fetchCustomEndpointModels({
+          baseUrl: "https://example.com/v1",
+          requestFn: async () => ({ status: 200, body: "not-json" }),
+        })
+      ).rejects.toThrow(/invalid JSON/i);
+    });
   });
 });
-

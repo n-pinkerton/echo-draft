@@ -2,7 +2,7 @@ export interface ElectronAPICloud {
   // EchoDraft Cloud API
   cloudTranscribe?: (
     audioBuffer: ArrayBuffer,
-    opts: { language?: string; prompt?: string },
+    opts: { language?: string },
     requestId: string
   ) => Promise<{
     success: boolean;
@@ -15,7 +15,7 @@ export interface ElectronAPICloud {
   }>;
   cloudReason?: (
     text: string,
-    opts: { model?: string; agentName?: string; customDictionary?: string[] },
+    opts: { model?: string; language?: string },
     requestId: string
   ) => Promise<{
     success: boolean;

@@ -3,7 +3,6 @@ import {
   Sliders,
   Mic,
   Brain,
-  User,
   Sparkles,
   UserCircle,
   Wrench,
@@ -64,7 +63,7 @@ export default function SettingsModal({
       id: "dictionary",
       label: "Dictionary",
       icon: BookOpen,
-      description: "Custom words & phrases",
+      description: "Custom names and technical terms",
       group: "Speech",
     },
     {
@@ -75,17 +74,10 @@ export default function SettingsModal({
       group: "Intelligence",
     },
     {
-      id: "agentConfig",
-      label: "Agent",
-      icon: User,
-      description: "Voice agent setup",
-      group: "Intelligence",
-    },
-    {
       id: "prompts",
-      label: "Prompts",
+      label: "Cleanup Policy",
       icon: Sparkles,
-      description: "System prompt studio",
+      description: "View and test protected cleanup behavior",
       group: "Intelligence",
     },
     {

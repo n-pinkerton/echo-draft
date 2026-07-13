@@ -5,6 +5,7 @@ import type { ConfirmDialogState } from "../../../hooks/useDialogs";
 import {
   dedupeDictionaryEntries,
   getFileNameFromPath,
+  normalizeDictionaryEntry,
   parseDictionaryEntries,
 } from "../dictionaryUtils";
 import DictionaryAddWordPanel from "./dictionary/DictionaryAddWordPanel";
@@ -39,16 +40,31 @@ export default function DictionarySection(props: Props) {
   const dictionaryBatchPreview = useMemo(() => {
     const parsedEntries = parseDictionaryEntries(dictionaryBatchText);
     const uniqueWords = dedupeDictionaryEntries(parsedEntries);
+    const invalidEntriesRemoved = parsedEntries.filter(
+      (entry) => normalizeDictionaryEntry(entry) === null
+    ).length;
     return {
       parsedCount: parsedEntries.length,
       uniqueWords,
       uniqueWordsCount: uniqueWords.length,
-      duplicatesRemoved: Math.max(0, parsedEntries.length - uniqueWords.length),
+      duplicatesRemoved: Math.max(
+        0,
+        parsedEntries.length - uniqueWords.length - invalidEntriesRemoved
+      ),
+      invalidEntriesRemoved,
     };
   }, [dictionaryBatchText]);
 
   const handleAddDictionaryWord = useCallback(() => {
-    const word = newDictionaryWord.trim();
+    const word = normalizeDictionaryEntry(newDictionaryWord);
+    if (!word && newDictionaryWord.trim()) {
+      toast({
+        title: "Use one lexical term",
+        description: "Add a single word, name, or identifier of up to 80 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (word) {
       const nextWords = dedupeDictionaryEntries([...customDictionary, word]);
       if (nextWords.length !== customDictionary.length) {
@@ -56,7 +72,7 @@ export default function DictionarySection(props: Props) {
       }
       setNewDictionaryWord("");
     }
-  }, [newDictionaryWord, customDictionary, setCustomDictionary]);
+  }, [newDictionaryWord, customDictionary, setCustomDictionary, toast]);
 
   const handleRemoveDictionaryWord = useCallback(
     (wordToRemove: string) => {
@@ -145,7 +161,7 @@ export default function DictionarySection(props: Props) {
 
       toast({
         title: "File imported",
-        description: `Loaded ${importedWords.length} unique words from file.`,
+        description: `Loaded ${importedWords.length} valid unique terms from file${result.unsupportedRemoved ? `; skipped ${result.unsupportedRemoved} unsupported entries` : ""}.`,
         variant: "success",
       });
     } catch (error) {
@@ -223,6 +239,7 @@ export default function DictionarySection(props: Props) {
           parsedCount: dictionaryBatchPreview.parsedCount,
           uniqueWordsCount: dictionaryBatchPreview.uniqueWordsCount,
           duplicatesRemoved: dictionaryBatchPreview.duplicatesRemoved,
+          invalidEntriesRemoved: dictionaryBatchPreview.invalidEntriesRemoved,
         }}
         importedDictionaryFileName={importedDictionaryFileName}
         isImportingDictionaryFile={isImportingDictionaryFile}

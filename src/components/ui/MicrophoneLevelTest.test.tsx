@@ -8,6 +8,7 @@ describe("MicrophoneLevelTest", () => {
   const originalAudioContext = window.AudioContext;
   const originalRequestAnimationFrame = window.requestAnimationFrame;
   const originalCancelAnimationFrame = window.cancelAnimationFrame;
+  const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
   let frameCallbacks: Map<number, FrameRequestCallback>;
   let nextFrameId: number;
   let endedHandler: (() => void) | null;
@@ -15,6 +16,11 @@ describe("MicrophoneLevelTest", () => {
   let contextClose: ReturnType<typeof vi.fn>;
   let getUserMedia: ReturnType<typeof vi.fn>;
   let sampleValue: number;
+
+  const runFrame = (timestamp: number) => {
+    const frame = [...frameCallbacks.values()].at(-1);
+    act(() => frame?.(timestamp));
+  };
 
   beforeEach(() => {
     frameCallbacks = new Map();
@@ -77,6 +83,11 @@ describe("MicrophoneLevelTest", () => {
     });
     window.requestAnimationFrame = originalRequestAnimationFrame;
     window.cancelAnimationFrame = originalCancelAnimationFrame;
+    if (originalPlatform) {
+      Object.defineProperty(navigator, "platform", originalPlatform);
+    } else {
+      Reflect.deleteProperty(navigator, "platform");
+    }
     vi.restoreAllMocks();
   });
 
@@ -91,8 +102,9 @@ describe("MicrophoneLevelTest", () => {
     });
     await screen.findByText("USB Cond. Mic external");
 
-    const frame = [...frameCallbacks.values()][0];
-    act(() => frame?.(performance.now()));
+    for (let index = 0; index < 6; index += 1) {
+      runFrame(index * 80);
+    }
 
     expect(screen.getByText("Good signal")).toBeInTheDocument();
     expect(
@@ -103,6 +115,28 @@ describe("MicrophoneLevelTest", () => {
     expect(trackStop).toHaveBeenCalled();
     expect(contextClose).toHaveBeenCalled();
     expect(screen.getByText(/Last result: Good signal/i)).toBeInTheDocument();
+    expect(screen.getByRole("meter", { name: "Completed microphone test result" })).toHaveAttribute(
+      "aria-valuetext",
+      "Good signal"
+    );
+    expect(
+      screen.queryByRole("progressbar", { name: "Live microphone input level" })
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["60 Hz", Array.from({ length: 31 }, (_, index) => index * (1000 / 60))],
+    ["30 Hz", Array.from({ length: 16 }, (_, index) => index * (1000 / 30))],
+    ["jittered", [0, 18, 49, 65, 103, 119, 156, 190, 208, 246, 279, 301, 339, 371, 405]],
+  ])("recognizes sustained speech at realistic %s frame intervals", async (_label, timestamps) => {
+    render(<MicrophoneLevelTest deviceLabel="System Default" />);
+    fireEvent.click(screen.getByRole("button", { name: "Start microphone test" }));
+    await waitFor(() => expect(frameCallbacks.size).toBeGreaterThan(0));
+
+    for (const timestamp of timestamps as number[]) runFrame(timestamp);
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop microphone test" }));
+    expect(screen.getByText("Last result: Good signal")).toBeInTheDocument();
   });
 
   it("reports a device disconnect instead of silently losing the signal", async () => {
@@ -118,22 +152,86 @@ describe("MicrophoneLevelTest", () => {
     expect(trackStop).toHaveBeenCalled();
   });
 
-  it("keeps the strongest observed result when speech ends before the test", async () => {
+  it("keeps the strongest sustained result when speech ends before the test", async () => {
     render(<MicrophoneLevelTest deviceLabel="System Default" />);
     fireEvent.click(screen.getByRole("button", { name: "Start microphone test" }));
     await waitFor(() => expect(frameCallbacks.size).toBeGreaterThan(0));
 
-    const speechFrame = [...frameCallbacks.values()][0];
-    act(() => speechFrame?.(performance.now()));
+    for (let index = 0; index < 6; index += 1) {
+      runFrame(index * 80);
+    }
     expect(screen.getByText("Good signal")).toBeInTheDocument();
 
     sampleValue = 0;
-    const silenceFrame = [...frameCallbacks.values()].at(-1);
-    act(() => silenceFrame?.(performance.now()));
+    runFrame(480);
     expect(screen.getByText(/No signal yet/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Stop microphone test" }));
     expect(screen.getByText("Last result: Good signal")).toBeInTheDocument();
+  });
+
+  it("does not classify one loud spike as a sustained loud result", async () => {
+    sampleValue = 0.25;
+    render(<MicrophoneLevelTest deviceLabel="System Default" />);
+    fireEvent.click(screen.getByRole("button", { name: "Start microphone test" }));
+    await waitFor(() => expect(frameCallbacks.size).toBeGreaterThan(0));
+
+    runFrame(0);
+    expect(screen.getByText("Loud signal")).toBeInTheDocument();
+
+    sampleValue = 0;
+    for (let index = 1; index <= 6; index += 1) {
+      runFrame(index * 80);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Stop microphone test" }));
+
+    expect(screen.getByText("Last result: No signal detected")).toBeInTheDocument();
+    expect(screen.queryByText("Last result: Loud signal")).not.toBeInTheDocument();
+  });
+
+  it("classifies a loud result only after sustained voiced samples", async () => {
+    sampleValue = 0.25;
+    render(<MicrophoneLevelTest deviceLabel="System Default" />);
+    fireEvent.click(screen.getByRole("button", { name: "Start microphone test" }));
+    await waitFor(() => expect(frameCallbacks.size).toBeGreaterThan(0));
+
+    for (let index = 0; index < 6; index += 1) {
+      runFrame(index * 80);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Stop microphone test" }));
+
+    expect(screen.getByText("Last result: Loud signal")).toBeInTheDocument();
+  });
+
+  it("distinguishes completed silence from a test that has not detected a signal yet", async () => {
+    sampleValue = 0;
+    render(<MicrophoneLevelTest deviceLabel="System Default" />);
+    fireEvent.click(screen.getByRole("button", { name: "Start microphone test" }));
+    await waitFor(() => expect(frameCallbacks.size).toBeGreaterThan(0));
+
+    runFrame(0);
+    expect(screen.getByText(/No signal yet/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop microphone test" }));
+    expect(screen.getByText("Last result: No signal detected")).toBeInTheDocument();
+    expect(screen.getByRole("meter", { name: "Completed microphone test result" })).toHaveAttribute(
+      "aria-valuetext",
+      "No signal detected"
+    );
+  });
+
+  it.each([
+    ["Win32", "Settings > Privacy & security > Microphone"],
+    ["MacIntel", "System Settings > Privacy & Security > Microphone"],
+    ["Linux x86_64", "your system settings"],
+  ])("explains denied microphone permission on %s", async (platform, guidance) => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+    getUserMedia.mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+
+    render(<MicrophoneLevelTest deviceLabel="System Default" />);
+    fireEvent.click(screen.getByRole("button", { name: "Start microphone test" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(guidance);
   });
 
   it("releases the stream and context when audio graph setup fails", async () => {

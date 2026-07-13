@@ -24,7 +24,7 @@ describe("normalizeTriggerPayload", () => {
       triggeredAt: 100,
       startedAt: 200,
       releasedAt: 300,
-      insertionTarget: { hwnd: 123 },
+      insertionTarget: null,
       stopReason: "manual",
       stopSource: "released",
     });
@@ -49,4 +49,3 @@ describe("normalizeTriggerPayload", () => {
     expect(result.stopSource).toBeNull();
   });
 });
-

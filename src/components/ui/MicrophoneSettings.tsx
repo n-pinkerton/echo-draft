@@ -1,6 +1,7 @@
 import { Mic, RefreshCw } from "lucide-react";
 
 import { useAudioInputDevices } from "../../hooks/useAudioInputDevices";
+import { getMicrophoneLabelPermissionGuidance } from "../../utils/microphonePermissionGuidance";
 import { Button } from "./button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select";
 import { SettingsRow } from "./SettingsSection";
@@ -152,7 +153,7 @@ export const MicrophoneSettings = ({
             className="shrink-0"
             onClick={() => onDeviceSelect("")}
           >
-            Switch to Windows default
+            Switch to system default
           </Button>
         </div>
       )}
@@ -179,7 +180,7 @@ export const MicrophoneSettings = ({
       {hasHiddenLabels && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-3">
           <p className="text-xs text-muted-foreground">
-            Windows is hiding microphone names until access is granted.
+            {getMicrophoneLabelPermissionGuidance()}
           </p>
           <Button
             type="button"

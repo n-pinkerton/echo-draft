@@ -7,21 +7,19 @@ export default function DictionaryHowItWorks() {
       <SettingsPanel>
         <SettingsPanelRow>
           <p className="text-[12px] text-muted-foreground leading-relaxed">
-            Words in your dictionary are provided as context hints to the speech recognition model.
-            This helps it correctly identify uncommon names, technical jargon, brand names, or
-            anything that's frequently misrecognized.
+            Single words in your dictionary can be provided as lexical hints to transcription
+            engines that expose a safe structured hint field. This helps with uncommon names,
+            technical terms, and brands that are frequently misrecognized.
           </p>
         </SettingsPanelRow>
         <SettingsPanelRow>
           <p className="text-[12px] text-muted-foreground leading-relaxed">
-            <span className="font-medium text-foreground">Tip</span> — For difficult words, add
-            context phrases like "The word is Synty" alongside the word itself. Adding related
-            terms (e.g. "Synty" and "SyntyStudios") also helps the model understand the intended
-            spelling.
+            <span className="font-medium text-foreground">Tip</span> — Add one term per entry, such
+            as "Synty" and "SyntyStudios". EchoDraft does not send dictionary text as a free-text
+            instruction to cloud models; unsupported providers simply transcribe without a hint.
           </p>
         </SettingsPanelRow>
       </SettingsPanel>
     </div>
   );
 }
-

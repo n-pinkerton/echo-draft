@@ -3,11 +3,13 @@ const WebSocket = require("ws");
 const debugLogger = require("../debugLogger");
 const {
   KEEPALIVE_INTERVAL_MS,
+  MAX_STREAMING_INBOUND_MESSAGE_BYTES,
   MAX_REWARM_ATTEMPTS,
   REWARM_DELAY_MS,
   WEBSOCKET_TIMEOUT_MS,
 } = require("./constants");
 const { buildAssemblyAiWebSocketUrl } = require("./urlBuilder");
+const { getSafeErrorCode, toPublicStreamingError } = require("./publicErrors");
 
 function stopKeepAlive(self) {
   if (self.keepAliveInterval) {
@@ -108,6 +110,8 @@ function useWarmConnection(self) {
 
   self.ws = self.warmConnection;
   self.isConnected = true;
+  self.sessionStartedAt = Date.now();
+  self.limitErrorRaised = false;
   self.sessionId = self.warmSessionId || null;
   self.warmConnection = null;
   self.warmConnectionReady = false;
@@ -120,9 +124,12 @@ function useWarmConnection(self) {
 
   self.ws.removeAllListeners("error");
   self.ws.on("error", (error) => {
-    debugLogger.error("AssemblyAI WebSocket error", { error: error.message });
+    const publicError = toPublicStreamingError(error);
+    debugLogger.error("AssemblyAI WebSocket error", {
+      errorCategory: getSafeErrorCode(error),
+    });
     self.cleanup();
-    self.onError?.(error);
+    self.onError?.(publicError);
   });
 
   self.ws.removeAllListeners("close");
@@ -130,7 +137,7 @@ function useWarmConnection(self) {
     const wasActive = self.isConnected;
     debugLogger.debug("AssemblyAI WebSocket closed", {
       code,
-      reason: reason?.toString(),
+      reasonBytes: reason?.byteLength || reason?.length || 0,
       wasActive,
     });
     self.cleanup();
@@ -168,12 +175,24 @@ async function warmupConnection(self, options = {}) {
   debugLogger.debug("AssemblyAI warming up connection");
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const settleResolve = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const settleReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     const warmupTimeout = setTimeout(() => {
       cleanupWarmConnection(self);
-      reject(new Error("AssemblyAI warmup connection timeout"));
+      settleReject(new Error("AssemblyAI warmup connection timeout"));
     }, WEBSOCKET_TIMEOUT_MS);
 
-    self.warmConnection = new WebSocket(url);
+    const WebSocketConstructor = self.WebSocketConstructor || WebSocket;
+    self.warmConnection = new WebSocketConstructor(url);
 
     self.warmConnection.on("open", () => {
       debugLogger.debug("AssemblyAI warm connection socket opened");
@@ -181,6 +200,13 @@ async function warmupConnection(self, options = {}) {
 
     self.warmConnection.on("message", (data) => {
       try {
+        const byteLength =
+          typeof data?.byteLength === "number"
+            ? data.byteLength
+            : Buffer.byteLength(String(data ?? ""), "utf8");
+        if (byteLength < 1 || byteLength > MAX_STREAMING_INBOUND_MESSAGE_BYTES) {
+          throw new Error("AssemblyAI warmup response exceeded the size limit");
+        }
         const message = JSON.parse(data.toString());
         if (message.type === "Begin") {
           clearTimeout(warmupTimeout);
@@ -188,18 +214,36 @@ async function warmupConnection(self, options = {}) {
           self.warmSessionId = message.id || null;
           startKeepAlive(self);
           debugLogger.debug("AssemblyAI connection warmed up", { sessionId: message.id });
-          resolve();
+          settleResolve();
+        } else if (message.type === "Error") {
+          clearTimeout(warmupTimeout);
+          debugLogger.error("AssemblyAI warmup service reported an error", {
+            errorPresent: typeof message.error === "string" && message.error.length > 0,
+          });
+          const publicError = toPublicStreamingError(
+            { code: "STREAMING_PROVIDER_ERROR" },
+            "STREAMING_PROVIDER_ERROR"
+          );
+          cleanupWarmConnection(self);
+          settleReject(publicError);
         }
       } catch (err) {
-        debugLogger.error("AssemblyAI warmup message parse error", { error: err.message });
+        debugLogger.error("AssemblyAI warmup message parse error", {
+          errorCategory: err?.name || "Error",
+        });
+        clearTimeout(warmupTimeout);
+        cleanupWarmConnection(self);
+        settleReject(new Error("AssemblyAI warmup returned an invalid response"));
       }
     });
 
     self.warmConnection.on("error", (error) => {
       clearTimeout(warmupTimeout);
-      debugLogger.error("AssemblyAI warmup connection error", { error: error.message });
+      debugLogger.error("AssemblyAI warmup connection error", {
+        errorCategory: getSafeErrorCode(error),
+      });
       cleanupWarmConnection(self);
-      reject(error);
+      settleReject(toPublicStreamingError(error));
     });
 
     self.warmConnection.on("close", (code, reason) => {
@@ -210,12 +254,14 @@ async function warmupConnection(self, options = {}) {
       debugLogger.debug("AssemblyAI warm connection closed", {
         wasReady,
         code,
-        reason: reason?.toString(),
+        reasonBytes: reason?.byteLength || reason?.length || 0,
       });
       cleanupWarmConnection(self);
       if (wasReady && savedOptions) {
         self.warmConnectionOptions = savedOptions;
         scheduleRewarm(self);
+      } else {
+        settleReject(new Error(`AssemblyAI warmup connection closed (${code})`));
       }
     });
   });
@@ -230,4 +276,3 @@ module.exports = {
   useWarmConnection,
   warmupConnection,
 };
-

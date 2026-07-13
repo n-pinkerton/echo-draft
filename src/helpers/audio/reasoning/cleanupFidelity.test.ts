@@ -19,6 +19,59 @@ describe("assessCleanupFidelity", () => {
     });
   });
 
+  it("rejects removal of a tentative hedge that makes a request firmer", () => {
+    const original =
+      "Could you make the shortcut key maybe just two keys if possible, something memorable and preferably close together?";
+    const cleaned =
+      "Could you make the shortcut key just two keys, if possible - something memorable and preferably close together?";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["stance-marker-loss"]),
+      metrics: expect.objectContaining({ changedStanceMarkerCount: 1 }),
+    });
+  });
+
+  it("accepts mechanical cleanup that retains stance and uncertainty markers", () => {
+    const original =
+      "maybe keep this just a little shorter if possible and preferably leave the caveat in";
+    const cleaned =
+      "Maybe keep this just a little shorter, if possible, and preferably leave the caveat in.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it.each(["somewhat", "almost", "about", "around", "generally", "usually"])(
+    "rejects loss of the %s qualifier",
+    (qualifier) => {
+      const original = `Please keep the ${qualifier} complete draft and retain the budget caveat.`;
+      const cleaned = "Please keep the complete draft and retain the budget caveat.";
+
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining(["stance-marker-loss"]),
+      });
+    }
+  );
+
+  it("retries a trailing workflow progression that still lacks a governing verb", () => {
+    const original =
+      "Keep doing the lightweight pass until the review gates clear and then the heavier validation and commit gates.";
+    const stillIncomplete =
+      "Keep doing the lightweight pass until the review gates clear, and then the heavier validation and commit gates.";
+
+    expect(assessCleanupFidelity(original, stillIncomplete)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["incomplete-workflow-progression"]),
+    });
+    expect(
+      assessCleanupFidelity(
+        original,
+        "Keep doing the lightweight pass until the review gates clear, and then move to the heavier validation and commit gates."
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
   it("allows an explicit false start to be replaced by its correction", () => {
     const original =
       "send it Tuesday no sorry Thursday and quote Sam said hold the release until legal confirms end quote";
@@ -106,6 +159,146 @@ describe("assessCleanupFidelity", () => {
     });
   });
 
+  it("retries a short rewrite that moves a qualifier onto a named term", () => {
+    const original =
+      "Please keep working a little on Atlas and preserve the budget caveat, fallback owner, unresolved security question, July pilot example, and both team notices before release.";
+    const cleaned =
+      "Please keep working on the lightweight Atlas project, preserving the budget caveat, fallback owner, unresolved security question, July pilot example, and both team notices before release.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["attachment-rewrite-risk"]),
+    });
+  });
+
+  it("retries a short reorder even when every content word is retained", () => {
+    const original =
+      "Please keep the budget caveat, fallback owner, unresolved security question, July pilot example, and both team notices in that order before release.";
+    const cleaned =
+      "Before release, please keep both team notices, the July pilot example, unresolved security question, fallback owner, and budget caveat in that order.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["attachment-rewrite-risk"]),
+      metrics: {
+        semanticMissingContentWordCount: 0,
+        semanticAddedContentWordCount: 0,
+        orderedBigramRetention: expect.any(Number),
+      },
+    });
+  });
+
+  it("measures adjacent pairs in sequence instead of as an unordered bag", () => {
+    const original =
+      "Review the alpha draft and archive the beta copy, then record the gamma note and retain the delta example.";
+    const cleaned =
+      "Record the gamma note and retain the delta example, then review the alpha draft and archive the beta copy.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["attachment-rewrite-risk"]),
+      metrics: {
+        semanticMissingContentWordCount: 0,
+        semanticAddedContentWordCount: 0,
+        orderedBigramRetention: expect.any(Number),
+      },
+    });
+  });
+
+  it.each([
+    ["Review and send the draft.", "Review the draft."],
+    ["Please review the draft before release.", "Please approve the draft before release."],
+    [
+      "Review the draft, review the appendix, and send both documents.",
+      "Review the draft and send both documents.",
+    ],
+  ])("rejects occurrence-aware substantive loss or replacement: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it("rejects an unmatched explanatory insertion even when all source words remain", () => {
+    const original =
+      "Please keep the budget caveat, fallback owner, customer example, and Friday deadline in the release note.";
+    const cleaned =
+      "Please keep the budget caveat, fallback owner, customer example, and Friday deadline, with added clarity, in the release note.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({
+        semanticMissingContentWordCount: 0,
+        semanticAddedContentWordCount: 2,
+      }),
+    });
+  });
+
+  it("does not mistake a comma-delimited workflow insertion for an approved governing verb", () => {
+    const original =
+      "Keep doing the lightweight pass until the review gates clear and then the heavier validation gates.";
+    const cleaned =
+      "Keep doing the lightweight pass until the review gates clear and then, with added clarity, the heavier validation gates.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it.each([
+    [
+      "Do not delete the draft and archive the copy.",
+      "Do delete the draft and not archive the copy.",
+      "negation-attachment-change",
+    ],
+    [
+      "The first team might approve and the second team must wait.",
+      "The first team must approve and the second team might wait.",
+      "modal-attachment-change",
+    ],
+    [
+      "Keep the draft before release and notify the team after approval.",
+      "Keep the draft after release and notify the team before approval.",
+      "relation-attachment-change",
+    ],
+    [
+      "Work only on Atlas and review Beta later.",
+      "Work on Atlas and review only Beta later.",
+      "stance-attachment-change",
+    ],
+  ])("rejects a marker moved onto a different target: %s", (original, cleaned, reason) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining([reason]),
+    });
+  });
+
+  it("accepts punctuation cleanup that keeps marker attachment intact", () => {
+    const original =
+      "do not delete the draft before approval and only archive the copy after review";
+    const cleaned =
+      "Do not delete the draft before approval, and only archive the copy after review.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("allows explicit spoken punctuation and a transposition spelling repair", () => {
+    expect(
+      assessCleanupFidelity(
+        "Do not move the Friday deadline question mark",
+        "Do not move the Friday deadline?"
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+    expect(
+      assessCleanupFidelity(
+        "Please keep the formta settings and preserve every note",
+        "Please keep the format settings and preserve every note."
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
   it("allows harmless inflection and one-character spelling repairs in long text", () => {
     const original =
       "Please keep the reviewers work aligned with the agreed workflow, preserve every caveat, record the customer examples, name the fallback owner, retain the unresolved timing question, and bring the proposed wording back before making a change. The teams has asked that grammer errors be corrected while every substantive point remains in its original sequence.";
@@ -161,6 +354,77 @@ describe("assessCleanupFidelity", () => {
     });
   });
 
+  it("rejects a direct dictation request rewritten as a false completion claim", () => {
+    const original = "Email Sarah the revised proposal and mention the Friday deadline.";
+    const cleaned = "I emailed Sarah the revised proposal and mentioned the Friday deadline.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["request-execution-output"]),
+    });
+  });
+
+  it.each([
+    [
+      "Buy the replacement cable and retain the receipt.",
+      "I bought the replacement cable and retained the receipt.",
+    ],
+    [
+      "Take the draft to Sam and mention the Friday deadline.",
+      "I took the draft to Sam and mentioned the Friday deadline.",
+    ],
+    [
+      "Put the signed copy in the archive and notify the team.",
+      "I put the signed copy in the archive and notified the team.",
+    ],
+  ])("rejects an irregular false-completion rewrite", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["request-execution-output"]),
+    });
+  });
+
+  it("accepts a first-person statement that was already dictated", () => {
+    const original = "i bought the replacement cable and put the signed receipt in the archive";
+    const cleaned = "I bought the replacement cable and put the signed receipt in the archive.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it.each([
+    [
+      "The release might slip if legal needs another review.",
+      "The release will slip if legal needs another review.",
+    ],
+    [
+      "This approach could fail under sustained load.",
+      "This approach can fail under sustained load.",
+    ],
+    ["The team should retain the fallback owner.", "The team must retain the fallback owner."],
+  ])("rejects a declarative modal certainty change", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["modal-certainty-change"]),
+      metrics: expect.objectContaining({ changedModalMarkerCount: 2 }),
+    });
+  });
+
+  it("keeps polite request modality separate from declarative certainty", () => {
+    const original = "could you keep the budget caveat and the fallback owner in the note";
+    const cleaned = "Could you keep the budget caveat and the fallback owner in the note?";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
+    expect(
+      assessCleanupFidelity(
+        original,
+        "Would you keep the budget caveat and the fallback owner in the note?"
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["request-modality-change"]),
+    });
+  });
+
   it("rejects lost numbers, URLs, negations, and questions", () => {
     const original = "Do not change item 5.6. Is https://example.com ready?";
     const cleaned = "Change the item. The site is ready.";
@@ -212,6 +476,53 @@ describe("assessCleanupFidelity", () => {
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
   });
 
+  it("allows a near-homophone repair only when its target is a trusted preferred spelling", () => {
+    const original = "Use the codecs agent to review the release note today.";
+    const cleaned = "Use the Codex agent to review the release note today.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk", "technical-token-change"]),
+    });
+    expect(
+      assessCleanupFidelity(original, cleaned, { preferredSpellings: ["Codex"] })
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({
+        preferredSpellingCorrectionCount: 1,
+        missingProtectedTechnicalTokenCount: 0,
+      }),
+    });
+  });
+
+  it("does not allow an unrelated replacement merely because it is in the dictionary", () => {
+    expect(
+      assessCleanupFidelity(
+        "Use the codecs agent to review the release note today.",
+        "Use the Cobalt agent to review the release note today.",
+        { preferredSpellings: ["Cobalt"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk", "technical-token-change"]),
+    });
+  });
+
+  it("does not waive a common-word semantic substitution from a user dictionary entry", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please keep the form attached to the request today.",
+        "Please keep the farm attached to the request today.",
+        { preferredSpellings: ["Farm"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
   it("does not freeze ordinary prose hyphenation", () => {
     const original = "Please make this user-facing explanation easier to read.";
     const cleaned = "Please make this user facing explanation easier to read.";
@@ -235,6 +546,87 @@ describe("assessCleanupFidelity", () => {
     const cleaned = "“Please keep this request exactly as written for the final response.”";
 
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("rejects a spoken quotation detached from a governing verb", () => {
+    const original = "Please revise the note and write and quote Hold the release end quote.";
+    const cleaned = "Please revise the note and write, and “Hold the release.”";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["quote-attachment-risk"]),
+    });
+  });
+
+  it.each([
+    ["Delete the draft.", "The draft was deleted."],
+    ["Please update the release note.", "The release note has been updated."],
+    ["Send the invoice.", "Nigel sent the invoice."],
+    ["Tell me whether the build passed.", "The build passed."],
+    ["What should we do with the stale draft?", "The answer is to delete the stale draft."],
+    ["Proceed with the reinstall and run the smoke test.", "The reinstall was completed."],
+    ["Should we retain the fallback path?", "The fallback path was retained."],
+  ])("rejects instruction or action-question completion: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["request-execution-output"]),
+    });
+  });
+
+  it.each([
+    ["Proceed with the release.", "Everything is ready."],
+    ["Run the migration.", "Successful."],
+    ["Complete the installation.", "Complete."],
+    ["Resolve the deployment issue.", "The deployment is resolved."],
+    ["Should we publish the release?", "All set."],
+  ])("rejects a short request rewritten as a generic result state: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["request-execution-output"]),
+    });
+  });
+
+  it.each([
+    ["Deploy the release.", "Everything looks good."],
+    ["Deploy the release.", "Everything is in order."],
+    ["Deploy the release.", "Everything is under control."],
+    ["Should we deploy the release?", "Everything looks good."],
+  ])(
+    "rejects a short action rewritten as an unrelated declarative: %s",
+    (original, cleaned) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining(["request-execution-output"]),
+      });
+    }
+  );
+
+  it.each([
+    ["everything looks good", "Everything looks good."],
+    ["the release is under control", "The release is under control."],
+    ["deployment is in order", "Deployment is in order."],
+    ["should we deploy the release", "Should we deploy the release?"],
+    [
+      "what should we do with the stale draft",
+      "What should we do with the stale draft?",
+    ],
+  ])("accepts a genuine declarative or retained-intent question: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("does not mistake a retained result-state question for execution", () => {
+    const original = "Ask whether everything is ready.";
+    const cleaned = "Ask, ‘Is everything ready?’";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it.each([
+    "The draft was deleted.",
+    "Nigel sent the invoice.",
+    "The answer is in the release note.",
+  ])("preserves originally dictated declarative statements: %s", (original) => {
+    expect(assessCleanupFidelity(original, original)).toMatchObject({ accepted: true, reasons: [] });
   });
 
   it("allows filler-only empty input to remain empty", () => {

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { CancelableRequestRegistry } = require("../ipc/cancelableRequestRegistry");
 const { registerCloudApiHandlers } = require("../ipc/handlers/cloudApiHandlers");
 const { registerDictationKeyHandlers } = require("../ipc/handlers/dictationKeyHandlers");
-const { registerModelManagementHandlers } = require("../ipc/handlers/modelManagementHandlers");
+const { registerProviderRequestHandlers } = require("../ipc/handlers/providerRequestHandlers");
 
 const REQUEST_ID = "22222222-2222-4222-8222-222222222222";
 
@@ -15,8 +15,19 @@ const createEvent = () => {
   };
   sender.id = 7;
   sender.send = vi.fn();
-  return { sender };
+  (sender as any).getURL = () => "file:///app/index.html?view=dictation";
+  (sender as any).mainFrame = { url: (sender as any).getURL() };
+  return { sender, senderFrame: (sender as any).mainFrame };
 };
+
+const createWindowManager = (event: ReturnType<typeof createEvent>) => ({
+  mainWindow: {
+    __echoDraftTrustedUrl: (event.sender as any).getURL(),
+    webContents: event.sender,
+    isDestroyed: () => false,
+  },
+  controlPanelWindow: null,
+});
 
 const createIpcMain = () => {
   const handlers = new Map<string, (...args: any[]) => any>();
@@ -64,6 +75,7 @@ describe("cancelable IPC handlers", () => {
     request.write = vi.fn();
     request.end = vi.fn();
     const http = { request: vi.fn(() => request) };
+    const event = createEvent();
 
     registerCloudApiHandlers(
       {
@@ -75,15 +87,15 @@ describe("cancelable IPC handlers", () => {
       },
       {
         cloudContext: {
-          getApiUrl: () => "http://example.test",
+          getApiUrl: () => "https://example.test",
           getSessionCookies: vi.fn(async () => "session=safe"),
         },
         sessionId: "session",
         whisperManager: { getModelsDir: vi.fn() },
         cancelableRequests: registry,
+        windowManager: createWindowManager(event),
       }
     );
-    const event = createEvent();
     const pending = handlers.get("cloud-transcribe")?.(event, new ArrayBuffer(4), {}, REQUEST_ID);
     await vi.waitFor(() => expect(http.request).toHaveBeenCalledOnce());
 
@@ -102,6 +114,7 @@ describe("cancelable IPC handlers", () => {
     const registry = new CancelableRequestRegistry();
     const fetchMock = createAbortableFetch();
     vi.stubGlobal("fetch", fetchMock);
+    const event = createEvent();
     registerCloudApiHandlers(
       {
         ipcMain,
@@ -118,9 +131,9 @@ describe("cancelable IPC handlers", () => {
         sessionId: "session",
         whisperManager: { getModelsDir: vi.fn() },
         cancelableRequests: registry,
+        windowManager: createWindowManager(event),
       }
     );
-    const event = createEvent();
     const pending = handlers.get("cloud-reason")?.(event, "text", {}, REQUEST_ID);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
 
@@ -136,17 +149,20 @@ describe("cancelable IPC handlers", () => {
   it("ignores untrusted cloud model and provider labels in cleanup responses", async () => {
     const { handlers, ipcMain } = createIpcMain();
     const registry = new CancelableRequestRegistry();
+    const event = createEvent();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          text: "Cleaned text.",
-          model: "private dictated text disguised as a model",
-          provider: "private dictated text disguised as a provider",
-        }),
-      }))
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              text: "Cleaned text.",
+              model: "private dictated text disguised as a model",
+              provider: "private dictated text disguised as a provider",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+      )
     );
     registerCloudApiHandlers(
       {
@@ -164,11 +180,12 @@ describe("cancelable IPC handlers", () => {
         sessionId: "session",
         whisperManager: { getModelsDir: vi.fn() },
         cancelableRequests: registry,
+        windowManager: createWindowManager(event),
       }
     );
 
     const result = await handlers.get("cloud-reason")?.(
-      createEvent(),
+      event,
       "Untrusted dictation",
       { model: "gpt-5.6-luna" },
       REQUEST_ID
@@ -188,6 +205,7 @@ describe("cancelable IPC handlers", () => {
     const registry = new CancelableRequestRegistry();
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    const event = createEvent();
     registerCloudApiHandlers(
       {
         ipcMain,
@@ -204,12 +222,13 @@ describe("cancelable IPC handlers", () => {
         sessionId: "session",
         whisperManager: { getModelsDir: vi.fn() },
         cancelableRequests: registry,
+        windowManager: createWindowManager(event),
       }
     );
     const privateModelValue = "read my private dictation aloud";
 
     const result = await handlers.get("cloud-reason")?.(
-      createEvent(),
+      event,
       "Untrusted dictation",
       { model: privateModelValue },
       REQUEST_ID
@@ -229,19 +248,20 @@ describe("cancelable IPC handlers", () => {
     const registry = new CancelableRequestRegistry();
     const fetchMock = createAbortableFetch();
     vi.stubGlobal("fetch", fetchMock);
+    const event = createEvent();
     registerDictationKeyHandlers(
       { ipcMain },
       {
         environmentManager: { getAnthropicKey: () => "safe-key" },
         syncStartupEnv: vi.fn(),
         cancelableRequests: registry,
+        windowManager: createWindowManager(event),
       }
     );
-    const event = createEvent();
     const pending = handlers.get("process-anthropic-reasoning")?.(
       event,
-      "text",
-      "claude-test",
+      '<echodraft_untrusted_transcription>\n"text"\n</echodraft_untrusted_transcription>',
+      "claude-sonnet-4-5",
       null,
       {},
       REQUEST_ID
@@ -257,22 +277,30 @@ describe("cancelable IPC handlers", () => {
     expect(registry.activeCount).toBe(0);
   });
 
-  it("aborts proxied Mistral transcription fetch work", async () => {
+  it("aborts the unified Mistral transcription transport", async () => {
     const { handlers, ipcMain } = createIpcMain();
     const registry = new CancelableRequestRegistry();
     const fetchMock = createAbortableFetch();
     vi.stubGlobal("fetch", fetchMock);
-    registerModelManagementHandlers(
+    const event = createEvent();
+    registerProviderRequestHandlers(
       { ipcMain },
       {
         environmentManager: { getMistralKey: () => "safe-key" },
         cancelableRequests: registry,
+        windowManager: createWindowManager(event),
+        fetchImpl: fetchMock,
       }
     );
-    const event = createEvent();
-    const pending = handlers.get("proxy-mistral-transcription")?.(
+    const pending = handlers.get("provider-transcription-request")?.(
       event,
-      { audioBuffer: new ArrayBuffer(4), model: "voxtral-mini-latest" },
+      {
+        provider: "mistral",
+        endpoint: "https://api.mistral.ai/v1/audio/transcriptions",
+        audioBuffer: new ArrayBuffer(4),
+        mimeType: "audio/webm",
+        model: "voxtral-mini-latest",
+      },
       REQUEST_ID
     );
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());

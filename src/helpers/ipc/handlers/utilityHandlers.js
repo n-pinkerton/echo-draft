@@ -1,27 +1,36 @@
 const AppUtils = require("../../../utils");
 const debugLogger = require("../../debugLogger");
 const GnomeShortcutManager = require("../../gnomeShortcut");
+const { requireTrustedRenderer } = require("../trustedRenderer");
+const { normalizeExternalHttpsUrl } = require("../../externalUrl");
 
-function registerUtilityHandlers(
-  { ipcMain, shell },
-  { windowManager, windowsKeyManager }
-) {
-  ipcMain.handle("cleanup-app", async () => {
+function registerUtilityHandlers({ ipcMain, shell }, { windowManager, windowsKeyManager }) {
+  const requireControlPanel = (event) =>
+    requireTrustedRenderer(event, windowManager, ["control-panel"]);
+
+  ipcMain.handle("cleanup-app", async (event) => {
+    requireTrustedRenderer(event, windowManager);
     AppUtils.cleanup(windowManager.mainWindow);
     return { success: true, message: "Cleanup completed successfully" };
   });
 
-  ipcMain.handle("update-hotkey", async (_event, hotkey) => {
+  ipcMain.handle("update-hotkey", async (event, hotkey) => {
+    requireControlPanel(event);
     return await windowManager.updateHotkey(hotkey);
   });
 
-  ipcMain.handle("update-clipboard-hotkey", async (_event, hotkey) => {
+  ipcMain.handle("update-clipboard-hotkey", async (event, hotkey) => {
+    requireControlPanel(event);
     return await windowManager.updateClipboardHotkey(hotkey);
   });
 
   ipcMain.handle(
     "set-hotkey-listening-mode",
-    async (_event, enabled, newHotkey = null, target = "insert") => {
+    async (event, enabled, newHotkey = null, target = "insert") => {
+      requireControlPanel(event);
+      if (typeof enabled !== "boolean" || !["insert", "clipboard"].includes(target)) {
+        throw new Error("Invalid hotkey capture request");
+      }
       windowManager.setHotkeyListeningMode(enabled);
       const hotkeyManager = windowManager.hotkeyManager;
       const currentInsertHotkey = hotkeyManager.getCurrentHotkey();
@@ -170,23 +179,27 @@ function registerUtilityHandlers(
     }
   );
 
-  ipcMain.handle("get-hotkey-mode-info", async () => {
+  ipcMain.handle("get-hotkey-mode-info", async (event) => {
+    requireControlPanel(event);
     return {
       isUsingGnome: windowManager.isUsingGnomeHotkeys(),
     };
   });
 
-  ipcMain.handle("start-window-drag", async () => {
+  ipcMain.handle("start-window-drag", async (event) => {
+    requireTrustedRenderer(event, windowManager, ["dictation"]);
     return await windowManager.startWindowDrag();
   });
 
-  ipcMain.handle("stop-window-drag", async () => {
+  ipcMain.handle("stop-window-drag", async (event) => {
+    requireTrustedRenderer(event, windowManager, ["dictation"]);
     return await windowManager.stopWindowDrag();
   });
 
-  ipcMain.handle("open-external", async (_event, url) => {
+  ipcMain.handle("open-external", async (event, url) => {
+    requireControlPanel(event);
     try {
-      await shell.openExternal(url);
+      await shell.openExternal(normalizeExternalHttpsUrl(url));
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -195,4 +208,3 @@ function registerUtilityHandlers(
 }
 
 module.exports = { registerUtilityHandlers };
-

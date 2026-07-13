@@ -19,7 +19,7 @@ describe("LocalTranscriber", () => {
     };
   });
 
-  it("processWithLocalWhisper forwards language + custom dictionary prompt", async () => {
+  it("processWithLocalWhisper forwards language and structured dictionary terms", async () => {
     localStorage.setItem("preferredLanguage", "en-US");
     localStorage.setItem("customDictionary", JSON.stringify(["Foo", "Bar"]));
 
@@ -46,7 +46,7 @@ describe("LocalTranscriber", () => {
     expect(options).toMatchObject({
       model: "base",
       language: "en",
-      initialPrompt: "Foo, Bar",
+      dictionaryEntries: ["Foo", "Bar"],
     });
 
     expect(result).toMatchObject({
@@ -56,6 +56,213 @@ describe("LocalTranscriber", () => {
       source: "local",
     });
     expect(result.timings?.transcriptionProcessingDurationMs).toEqual(expect.any(Number));
+  });
+
+  it("rejects a local transcript that only echoes dictionary hints", async () => {
+    const dictionaryEntries = [
+      "Alpha",
+      "Beta",
+      "Gamma",
+      "Delta",
+      "Epsilon",
+      "Zeta",
+      "Eta",
+      "Theta",
+      "Iota",
+      "Kappa",
+    ];
+    localStorage.setItem("customDictionary", JSON.stringify(dictionaryEntries));
+    (window as any).electronAPI.transcribeLocalWhisper.mockResolvedValue({
+      success: true,
+      text: dictionaryEntries.join(", "),
+    });
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => false,
+      reasoningCleanupService: { processTranscription: vi.fn() },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+    const audioBlob = {
+      type: "audio/webm",
+      arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+    } as any;
+
+    await expect(transcriber.processWithLocalWhisper(audioBlob, "base", {})).rejects.toThrow(
+      /dictionary hints/i
+    );
+  });
+
+  it.each([
+    [["Alpha"], "Alpha.", "alpha"],
+    [["Alpha", "Beta"], "Alpha, Beta.", "alpha beta"],
+  ])(
+    "keeps a genuine exact short dictation after one unprompted confirmation",
+    async (dictionaryEntries, promptedText, confirmedText) => {
+      localStorage.setItem("customDictionary", JSON.stringify(dictionaryEntries));
+      (window as any).electronAPI.transcribeLocalWhisper
+        .mockResolvedValueOnce({ success: true, text: promptedText })
+        .mockResolvedValueOnce({ success: true, text: confirmedText });
+      const transcriber = new LocalTranscriber({
+        logger: createLogger(),
+        shouldApplyReasoningCleanup: () => false,
+        reasoningCleanupService: { processTranscription: vi.fn() },
+        openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+      });
+
+      const result = await transcriber.processWithLocalWhisper(
+        {
+          type: "audio/webm",
+          arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+        } as any,
+        "base",
+        {}
+      );
+
+      expect(result.text).toBe(confirmedText);
+      expect((window as any).electronAPI.transcribeLocalWhisper).toHaveBeenCalledTimes(2);
+      expect(
+        (window as any).electronAPI.transcribeLocalWhisper.mock.calls[0][1].dictionaryEntries
+      ).toEqual(dictionaryEntries);
+      expect(
+        (window as any).electronAPI.transcribeLocalWhisper.mock.calls[1][1].dictionaryEntries
+      ).toBeUndefined();
+    }
+  );
+
+  it.each([
+    [{ success: false, message: "No audio detected" }],
+    [{ success: true, text: "Different speech" }],
+  ])("rejects a short prompt echo when unprompted confirmation does not corroborate it", async (confirmation) => {
+    localStorage.setItem("customDictionary", JSON.stringify(["Alpha", "Beta"]));
+    (window as any).electronAPI.transcribeLocalWhisper
+      .mockResolvedValueOnce({ success: true, text: "Alpha, Beta." })
+      .mockResolvedValueOnce(confirmation);
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => false,
+      reasoningCleanupService: { processTranscription: vi.fn() },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+
+    await expect(
+      transcriber.processWithLocalWhisper(
+        {
+          type: "audio/webm",
+          arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+        } as any,
+        "base",
+        {}
+      )
+    ).rejects.toThrow(/dictionary hints/i);
+    expect((window as any).electronAPI.transcribeLocalWhisper).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a two-term Unicode-punctuated echo after empty confirmation", async () => {
+    localStorage.setItem("customDictionary", JSON.stringify(["東京", "مرحبا"]));
+    (window as any).electronAPI.transcribeLocalWhisper
+      .mockResolvedValueOnce({ success: true, text: "東京, مرحبا؟" })
+      .mockResolvedValueOnce({ success: false, message: "No audio detected" });
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => false,
+      reasoningCleanupService: { processTranscription: vi.fn() },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+
+    await expect(
+      transcriber.processWithLocalWhisper(
+        {
+          type: "audio/webm",
+          arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+        } as any,
+        "base",
+        {}
+      )
+    ).rejects.toThrow(/dictionary hints/i);
+    expect((window as any).electronAPI.transcribeLocalWhisper).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a Japanese-quoted short echo after empty confirmation", async () => {
+    localStorage.setItem("customDictionary", JSON.stringify(["東京"]));
+    (window as any).electronAPI.transcribeLocalWhisper
+      .mockResolvedValueOnce({ success: true, text: "「東京。」" })
+      .mockResolvedValueOnce({ success: false, message: "No audio detected" });
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => false,
+      reasoningCleanupService: { processTranscription: vi.fn() },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+
+    await expect(
+      transcriber.processWithLocalWhisper(
+        {
+          type: "audio/webm",
+          arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+        } as any,
+        "base",
+        {}
+      )
+    ).rejects.toThrow(/dictionary hints/i);
+    expect((window as any).electronAPI.transcribeLocalWhisper).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["C++", "C#"],
+    ["C#", "C"],
+    ["Node.js", "Node js"],
+    ["100%", "100"],
+  ])(
+    "rejects a technical-term echo when unprompted confirmation changes meaningful symbols",
+    async (dictionaryEntry, confirmationText) => {
+      localStorage.setItem("customDictionary", JSON.stringify([dictionaryEntry]));
+      (window as any).electronAPI.transcribeLocalWhisper
+        .mockResolvedValueOnce({ success: true, text: `${dictionaryEntry}.` })
+        .mockResolvedValueOnce({ success: true, text: confirmationText });
+      const transcriber = new LocalTranscriber({
+        logger: createLogger(),
+        shouldApplyReasoningCleanup: () => false,
+        reasoningCleanupService: { processTranscription: vi.fn() },
+        openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+      });
+
+      await expect(
+        transcriber.processWithLocalWhisper(
+          {
+            type: "audio/webm",
+            arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+          } as any,
+          "base",
+          {}
+        )
+      ).rejects.toThrow(/dictionary hints/i);
+      expect((window as any).electronAPI.transcribeLocalWhisper).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it("keeps real speech that contains short dictionary terms", async () => {
+    localStorage.setItem("customDictionary", JSON.stringify(["Alpha", "Beta"]));
+    (window as any).electronAPI.transcribeLocalWhisper.mockResolvedValue({
+      success: true,
+      text: "Please ask Alpha and Beta to review the draft.",
+    });
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => false,
+      reasoningCleanupService: { processTranscription: vi.fn() },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+
+    const result = await transcriber.processWithLocalWhisper(
+      {
+        type: "audio/webm",
+        arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+      } as any,
+      "base",
+      {}
+    );
+
+    expect(result.text).toBe("Please ask Alpha and Beta to review the draft.");
   });
 
   it("processWithLocalWhisper applies reasoning cleanup when enabled", async () => {
@@ -162,6 +369,46 @@ describe("LocalTranscriber", () => {
 
     await expect(pending).rejects.toMatchObject({ code: "TRANSCRIPTION_CANCELLED" });
     expect(cancelIpcRequest).toHaveBeenCalledWith(requestId);
+  });
+
+  it("cancels one pending short-echo confirmation without retry or cloud fallback", async () => {
+    localStorage.setItem("customDictionary", JSON.stringify(["Alpha"]));
+    localStorage.setItem("allowOpenAIFallback", "true");
+    localStorage.setItem("useLocalWhisper", "true");
+    const controller = new AbortController();
+    const cancelIpcRequest = vi.fn(async () => ({ success: true }));
+    const openAiTranscriber = { processWithOpenAIAPI: vi.fn() };
+    (window as any).electronAPI.cancelIpcRequest = cancelIpcRequest;
+    (window as any).electronAPI.transcribeLocalWhisper
+      .mockResolvedValueOnce({ success: true, text: "Alpha." })
+      .mockImplementationOnce(async () => await new Promise(() => {}));
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => false,
+      reasoningCleanupService: { processTranscription: vi.fn() },
+      openAiTranscriber,
+    });
+
+    const pending = transcriber.processWithLocalWhisper(
+      {
+        type: "audio/webm",
+        arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
+      } as any,
+      "base",
+      {},
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() =>
+      expect((window as any).electronAPI.transcribeLocalWhisper).toHaveBeenCalledTimes(2)
+    );
+    const confirmationRequestId = (window as any).electronAPI.transcribeLocalWhisper.mock.calls[1][2];
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: "TRANSCRIPTION_CANCELLED" });
+    expect(cancelIpcRequest).toHaveBeenCalledWith(confirmationRequestId);
+    expect((window as any).electronAPI.transcribeLocalWhisper).toHaveBeenCalledTimes(2);
+    expect(openAiTranscriber.processWithOpenAIAPI).not.toHaveBeenCalled();
   });
 
   it("processWithLocalWhisper falls back to OpenAI when configured", async () => {

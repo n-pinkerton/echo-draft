@@ -1,5 +1,174 @@
 const { PASTE_DELAYS, RESTORE_DELAYS } = require("../constants");
 
+const SECURE_TARGET_PASTE_TIMEOUT_MS = 5_000;
+const MAX_POWERSHELL_OUTPUT_CHARS = 16_384;
+
+const SECURE_TARGET_PASTE_SCRIPT = `
+param([Int64]$TargetHwnd, [Int32]$ExpectedPid, [Int64]$ExpectedStartTicks)
+Add-Type @"
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+public static class EchoDraftSecureTargetPaste {
+  const uint INPUT_KEYBOARD = 1;
+  const uint KEYEVENTF_KEYUP = 0x0002;
+  const ushort VK_CONTROL = 0x11;
+  const ushort VK_V = 0x56;
+
+  [StructLayout(LayoutKind.Sequential)]
+  public struct INPUT {
+    public uint type;
+    public InputUnion data;
+  }
+
+  [StructLayout(LayoutKind.Explicit)]
+  public struct InputUnion {
+    [FieldOffset(0)] public KEYBDINPUT keyboard;
+  }
+
+  [StructLayout(LayoutKind.Sequential)]
+  public struct KEYBDINPUT {
+    public ushort virtualKey;
+    public ushort scanCode;
+    public uint flags;
+    public uint time;
+    public UIntPtr extraInfo;
+  }
+
+  public sealed class PasteResult {
+    public bool success { get; set; }
+    public bool injected { get; set; }
+    public string reason { get; set; }
+    public string phase { get; set; }
+    public long activeHwnd { get; set; }
+    public int actualPid { get; set; }
+    public int nativeError { get; set; }
+  }
+
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll", SetLastError=true)]
+  static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll", SetLastError=true)]
+  static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+  static PasteResult Failure(string reason, string phase, IntPtr active, int actualPid = 0) {
+    return new PasteResult {
+      success = false,
+      injected = false,
+      reason = reason,
+      phase = phase,
+      activeHwnd = active.ToInt64(),
+      actualPid = actualPid,
+      nativeError = Marshal.GetLastWin32Error()
+    };
+  }
+
+  static PasteResult ValidateIdentity(
+    IntPtr target,
+    int expectedPid,
+    long expectedStartTicks,
+    string phase
+  ) {
+    if (!IsWindow(target)) return Failure("window_not_found", phase, GetForegroundWindow());
+    uint actualPid = 0;
+    GetWindowThreadProcessId(target, out actualPid);
+    if ((int)actualPid != expectedPid) {
+      return Failure("target_process_changed", phase, GetForegroundWindow(), (int)actualPid);
+    }
+    try {
+      using (Process process = Process.GetProcessById((int)actualPid)) {
+        long actualStartTicks = process.StartTime.ToUniversalTime().Ticks;
+        if (actualStartTicks != expectedStartTicks) {
+          return Failure("target_process_changed", phase, GetForegroundWindow(), (int)actualPid);
+        }
+      }
+    } catch {
+      return Failure("target_process_unavailable", phase, GetForegroundWindow(), (int)actualPid);
+    }
+    return null;
+  }
+
+  static INPUT Key(ushort virtualKey, uint flags) {
+    return new INPUT {
+      type = INPUT_KEYBOARD,
+      data = new InputUnion {
+        keyboard = new KEYBDINPUT {
+          virtualKey = virtualKey,
+          scanCode = 0,
+          flags = flags,
+          time = 0,
+          extraInfo = UIntPtr.Zero
+        }
+      }
+    };
+  }
+
+  public static PasteResult Execute(long targetHwnd, int expectedPid, long expectedStartTicks) {
+    IntPtr target = new IntPtr(targetHwnd);
+    PasteResult identityFailure = ValidateIdentity(
+      target,
+      expectedPid,
+      expectedStartTicks,
+      "before_activation"
+    );
+    if (identityFailure != null) return identityFailure;
+
+    INPUT[] inputs = new INPUT[] {
+      Key(VK_CONTROL, 0),
+      Key(VK_V, 0),
+      Key(VK_V, KEYEVENTF_KEYUP),
+      Key(VK_CONTROL, KEYEVENTF_KEYUP)
+    };
+
+    SetForegroundWindow(target);
+    for (int attempt = 0; attempt < 20 && GetForegroundWindow() != target; attempt++) {
+      Thread.Sleep(20);
+    }
+
+    identityFailure = ValidateIdentity(
+      target,
+      expectedPid,
+      expectedStartTicks,
+      "before_injection"
+    );
+    if (identityFailure != null) return identityFailure;
+
+    // This is the final foreground check. SendInput follows immediately in this
+    // same native operation; no timer, process hop, or renderer work is allowed
+    // between target authorization and injection.
+    IntPtr active = GetForegroundWindow();
+    if (active != target) {
+      return Failure("foreground_changed_before_injection", "before_injection", active, expectedPid);
+    }
+    uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    if (sent != inputs.Length) {
+      return Failure("send_input_failed", "injection", GetForegroundWindow(), expectedPid);
+    }
+
+    return new PasteResult {
+      success = true,
+      injected = true,
+      reason = "",
+      phase = "complete",
+      activeHwnd = targetHwnd,
+      actualPid = expectedPid,
+      nativeError = 0
+    };
+  }
+}
+"@ | Out-Null
+
+[EchoDraftSecureTargetPaste]::Execute(
+  $TargetHwnd,
+  $ExpectedPid,
+  $ExpectedStartTicks
+) | ConvertTo-Json -Compress
+`.trim();
+
 function getNircmdPath(manager) {
   if (manager.nircmdChecked) {
     return manager.nircmdPath;
@@ -49,31 +218,119 @@ function getNircmdStatus(manager) {
 }
 
 async function pasteWindows(manager, originalClipboardSnapshot, options = {}) {
-  const nircmdPath = getNircmdPath(manager);
-  const preferNircmd = manager.shouldPreferNircmd();
+  if (!options?.insertionTarget) {
+    throw new Error(
+      "Automatic insertion requires an authenticated target. Text is copied to the clipboard; paste it manually with Ctrl+V."
+    );
+  }
+  return await pasteSecurelyToTarget(manager, originalClipboardSnapshot, options);
+}
 
-  if (preferNircmd && nircmdPath) {
-    try {
-      return await pasteWithNircmd(manager, nircmdPath, originalClipboardSnapshot, options);
-    } catch (error) {
-      manager.safeLog("⚠️ Preferred nircmd paste failed, trying PowerShell fallback", {
-        error: error?.message,
-      });
-      return pasteWithPowerShell(manager, originalClipboardSnapshot, options);
-    }
+async function pasteSecurelyToTarget(manager, originalClipboardSnapshot, options = {}) {
+  const target = options?.insertionTarget;
+  const hwnd = Number(target?.hwnd);
+  const expectedPid = Number(target?.pid);
+  const expectedStartTicks = String(target?.processStartTimeUtcTicks || "");
+  if (
+    !Number.isSafeInteger(hwnd) ||
+    hwnd <= 0 ||
+    !Number.isSafeInteger(expectedPid) ||
+    expectedPid <= 0 ||
+    !/^\d{1,20}$/.test(expectedStartTicks) ||
+    expectedStartTicks === "0"
+  ) {
+    throw new Error(
+      "The original app can no longer be authenticated. Text is copied to the clipboard; paste it manually with Ctrl+V."
+    );
   }
 
-  try {
-    return await pasteWithPowerShell(manager, originalClipboardSnapshot, options);
-  } catch (error) {
-    if (nircmdPath) {
-      manager.safeLog("⚠️ PowerShell paste failed, trying optional nircmd fallback", {
-        error: error?.message,
-      });
-      return pasteWithNircmd(manager, nircmdPath, originalClipboardSnapshot, options);
-    }
-    throw error;
-  }
+  const { spawn, killProcess } = manager.deps;
+  const wrappedScript = `& {\n${SECURE_TARGET_PASTE_SCRIPT}\n}`;
+  const args = [
+    "-NoProfile",
+    "-NonInteractive",
+    "-WindowStyle",
+    "Hidden",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    wrappedScript,
+    String(hwnd),
+    String(expectedPid),
+    expectedStartTicks,
+  ];
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+    let timeoutId = null;
+    const processHandle = spawn("powershell.exe", args);
+    const appendBounded = (current, chunk) =>
+      `${current}${chunk?.toString?.() || ""}`.slice(-MAX_POWERSHELL_OUTPUT_CHARS);
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      callback();
+    };
+
+    processHandle.stdout?.on("data", (chunk) => {
+      stdout = appendBounded(stdout, chunk);
+    });
+    processHandle.stderr?.on("data", (chunk) => {
+      stderr = appendBounded(stderr, chunk);
+    });
+    processHandle.on("error", (error) =>
+      finish(() =>
+        reject(
+          new Error(
+            `Windows secure paste failed: ${error.message}. Text is copied to the clipboard; paste it manually with Ctrl+V.`
+          )
+        )
+      )
+    );
+    processHandle.on("close", (code) =>
+      finish(() => {
+        const parsed = manager.parsePowerShellJsonOutput(stdout);
+        if (code !== 0 || parsed?.success !== true || parsed?.injected !== true) {
+          manager.safeLog("Windows secure target paste rejected", {
+            code,
+            reason: parsed?.reason || "secure_paste_failed",
+            phase: parsed?.phase || "unknown",
+            hasStderr: Boolean(stderr.trim()),
+          });
+          reject(
+            new Error(
+              "The original app lost focus or could not be authenticated. Text is copied to the clipboard; paste it manually with Ctrl+V."
+            )
+          );
+          return;
+        }
+
+        manager.scheduleClipboardRestore(
+          originalClipboardSnapshot,
+          RESTORE_DELAYS.win32_pwsh,
+          options.webContents
+        );
+        resolve();
+      })
+    );
+
+    timeoutId = setTimeout(() => {
+      try {
+        killProcess(processHandle, "SIGKILL");
+      } catch {}
+      finish(() =>
+        reject(
+          new Error(
+            "Windows secure paste timed out. Text is copied to the clipboard; paste it manually with Ctrl+V."
+          )
+        )
+      );
+    }, SECURE_TARGET_PASTE_TIMEOUT_MS);
+    timeoutId.unref?.();
+  });
 }
 
 async function pasteWithNircmd(manager, nircmdPath, originalClipboardSnapshot, options = {}) {
@@ -246,10 +503,12 @@ async function pasteWithPowerShell(manager, originalClipboardSnapshot, options =
 }
 
 module.exports = {
+  SECURE_TARGET_PASTE_SCRIPT,
+  SECURE_TARGET_PASTE_TIMEOUT_MS,
   getNircmdPath,
   getNircmdStatus,
+  pasteSecurelyToTarget,
   pasteWindows,
   pasteWithNircmd,
   pasteWithPowerShell,
 };
-

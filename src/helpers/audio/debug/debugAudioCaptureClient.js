@@ -19,14 +19,14 @@ export async function saveDebugAudioCaptureIfEnabled(audioBlob, payload = {}) {
       ...payload,
     });
 
-    if (result?.success && result?.filePath) {
+    if (result?.success) {
       logger.debug(
         "Debug audio capture saved",
         {
-          filePath: result.filePath,
           bytes: result.bytes,
           kept: result.kept,
           deleted: result.deleted,
+          bytesKept: result.bytesKept,
         },
         "audio"
       );
@@ -36,11 +36,6 @@ export async function saveDebugAudioCaptureIfEnabled(audioBlob, payload = {}) {
       logger.debug("Debug audio capture failed", { error: result.error }, "audio");
     }
   } catch (error) {
-    logger.debug(
-      "Debug audio capture failed",
-      { error: error?.message || String(error) },
-      "audio"
-    );
+    logger.debug("Debug audio capture failed", { error: error?.message || String(error) }, "audio");
   }
 }
-

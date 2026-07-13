@@ -25,6 +25,7 @@ type Props = {
   cloudTranscriptionBaseUrl: string;
   setCloudTranscriptionBaseUrl?: (url: string) => void;
   onBaseUrlBlur: () => void;
+  customEndpointError?: string | null;
   openaiApiKey: string;
   setOpenaiApiKey: (key: string) => void;
   groqApiKey: string;
@@ -47,6 +48,7 @@ export default function CloudModePanel(props: Props) {
     cloudTranscriptionBaseUrl,
     setCloudTranscriptionBaseUrl,
     onBaseUrlBlur,
+    customEndpointError,
     openaiApiKey,
     setOpenaiApiKey,
     groqApiKey,
@@ -74,14 +76,33 @@ export default function CloudModePanel(props: Props) {
           <div className="space-y-2">
             {/* Endpoint URL */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">Endpoint URL</label>
+              <label
+                htmlFor="custom-transcription-endpoint"
+                className="block text-xs font-medium text-foreground"
+              >
+                Endpoint URL
+              </label>
               <Input
+                id="custom-transcription-endpoint"
                 value={cloudTranscriptionBaseUrl}
                 onChange={(e) => setCloudTranscriptionBaseUrl?.(e.target.value)}
                 onBlur={onBaseUrlBlur}
                 placeholder="https://your-api.example.com/v1"
                 className="h-8 text-sm"
+                aria-describedby={
+                  customEndpointError ? "custom-transcription-endpoint-error" : undefined
+                }
+                aria-invalid={customEndpointError ? "true" : undefined}
               />
+              {customEndpointError ? (
+                <p
+                  id="custom-transcription-endpoint-error"
+                  className="text-xs text-destructive"
+                  role="alert"
+                >
+                  {customEndpointError}
+                </p>
+              ) : null}
             </div>
 
             {/* API Key */}
@@ -94,8 +115,14 @@ export default function CloudModePanel(props: Props) {
 
             {/* Model Name */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-foreground">Model</label>
+              <label
+                htmlFor="custom-transcription-model"
+                className="block text-xs font-medium text-foreground"
+              >
+                Model
+              </label>
               <Input
+                id="custom-transcription-model"
                 value={selectedCloudModel}
                 onChange={(e) => onCloudModelSelect(e.target.value)}
                 placeholder="whisper-1"
@@ -155,4 +182,3 @@ export default function CloudModePanel(props: Props) {
     </div>
   );
 }
-

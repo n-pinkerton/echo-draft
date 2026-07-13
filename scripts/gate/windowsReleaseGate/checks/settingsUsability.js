@@ -21,7 +21,7 @@ async function checkSettingsUsability(panel, record, outputDir, runId, options =
       );
       const microphoneChoicesPresent =
         microphoneOptions.includes("Automatic (prefer built-in)") &&
-        microphoneOptions.includes("Windows default microphone");
+        microphoneOptions.includes("System default microphone");
       shortcutButton.click();
       await sleep(500);
 

@@ -1,7 +1,11 @@
 const path = require("path");
+const { requireTrustedRenderer } = require("../trustedRenderer");
 
-function registerLlamaServerHandlers({ ipcMain }) {
-  ipcMain.handle("llama-server-start", async (_event, modelId) => {
+function registerLlamaServerHandlers({ ipcMain }, { windowManager }) {
+  const requireControlPanel = (event) =>
+    requireTrustedRenderer(event, windowManager, ["control-panel"]);
+  ipcMain.handle("llama-server-start", async (event, modelId) => {
+    requireControlPanel(event);
     try {
       const modelManager = require("../../modelManagerBridge").default;
       const modelInfo = modelManager.findModelById(modelId);
@@ -23,7 +27,8 @@ function registerLlamaServerHandlers({ ipcMain }) {
     }
   });
 
-  ipcMain.handle("llama-server-stop", async () => {
+  ipcMain.handle("llama-server-stop", async (event) => {
+    requireControlPanel(event);
     try {
       const modelManager = require("../../modelManagerBridge").default;
       await modelManager.stopServer();
@@ -33,7 +38,8 @@ function registerLlamaServerHandlers({ ipcMain }) {
     }
   });
 
-  ipcMain.handle("llama-server-status", async () => {
+  ipcMain.handle("llama-server-status", async (event) => {
+    requireControlPanel(event);
     try {
       const modelManager = require("../../modelManagerBridge").default;
       return modelManager.getServerStatus();
@@ -44,4 +50,3 @@ function registerLlamaServerHandlers({ ipcMain }) {
 }
 
 module.exports = { registerLlamaServerHandlers };
-

@@ -11,8 +11,8 @@ import {
   isTranscriptionCancelled,
   throwIfTranscriptionCancelled,
 } from "../pipeline/cancellation";
-import { getCustomDictionaryArray } from "../transcription/customDictionary";
 import { cleanupStreamingListeners } from "./assemblyAiStreamingCleanup";
+import { cancelStreamingStartup } from "./assemblyAiStreamingStart";
 
 const STREAMING_WORKLET_FLUSH_TIMEOUT_MS = 1000;
 const STREAMING_POST_FLUSH_GRACE_MS = 150;
@@ -57,8 +57,9 @@ export function stopStreamingRecording(manager) {
     return manager.streamingStopPromise;
   }
 
+  const startupCancelled = cancelStreamingStartup(manager);
   if (!manager.isStreaming) {
-    return Promise.resolve(false);
+    return Promise.resolve(startupCancelled);
   }
 
   const controller = new AbortController();
@@ -291,7 +292,6 @@ async function performStopStreamingRecording(manager, runtime = {}) {
       context: manager.streamingContext,
     });
     const reasoningStart = performance.now();
-    const agentName = localStorage.getItem("agentName") || "";
     const cloudReasoningMode = localStorage.getItem("cloudReasoningMode") || ECHO_DRAFT_CLOUD_MODE;
 
     try {
@@ -302,8 +302,6 @@ async function performStopStreamingRecording(manager, runtime = {}) {
               window.electronAPI.cloudReason(
                 finalText,
                 {
-                  agentName,
-                  customDictionary: getCustomDictionaryArray(),
                   language: localStorage.getItem("preferredLanguage") || "auto",
                 },
                 requestId
@@ -376,14 +374,14 @@ async function performStopStreamingRecording(manager, runtime = {}) {
               ? await manager.reasoningCleanupService.processWithReasoningModelResult(
                   rawText,
                   reasoningModel,
-                  agentName,
+                  null,
                   runtime
                 )
               : {
                   text: await manager.reasoningCleanupService.processWithReasoningModel(
                     rawText,
                     reasoningModel,
-                    agentName,
+                    null,
                     runtime
                   ),
                   retryCount: 0,

@@ -1,9 +1,20 @@
 const WebSocket = require("ws");
 
 const debugLogger = require("../debugLogger");
-const { TERMINATION_TIMEOUT_MS, WEBSOCKET_TIMEOUT_MS } = require("./constants");
+const {
+  MAX_STREAMING_BUFFERED_BYTES,
+  MAX_STREAMING_INBOUND_MESSAGE_BYTES,
+  MAX_STREAMING_SESSION_AUDIO_BYTES,
+  MAX_STREAMING_SESSION_MS,
+  MAX_STREAMING_TRANSCRIPT_CHARS,
+  MAX_STREAMING_TURN_CHARS,
+  MAX_STREAMING_TURNS,
+  TERMINATION_TIMEOUT_MS,
+  WEBSOCKET_TIMEOUT_MS,
+} = require("./constants");
 const { buildAssemblyAiWebSocketUrl } = require("./urlBuilder");
 const { applyEndOfTurnTranscript } = require("./turns");
+const { getSafeErrorCode, toPublicStreamingError } = require("./publicErrors");
 const {
   copyAudioStats,
   recordChunkDropped,
@@ -19,18 +30,20 @@ async function connectSession(self, options = {}) {
 
   if (self.isConnected) {
     debugLogger.debug("AssemblyAI streaming already connected");
-    return;
+    return { usedWarmConnection: false, alreadyConnected: true };
   }
 
   self.accumulatedText = "";
   self.lastTurnText = "";
   self.turns = [];
   self.resetAudioStats();
+  self.sessionStartedAt = null;
+  self.limitErrorRaised = false;
 
   if (self.hasWarmConnection()) {
     if (self.useWarmConnection()) {
       debugLogger.debug("AssemblyAI using warm connection - instant start");
-      return;
+      return { usedWarmConnection: true };
     }
   }
 
@@ -38,15 +51,15 @@ async function connectSession(self, options = {}) {
   debugLogger.debug("AssemblyAI streaming connecting (cold start)");
 
   return new Promise((resolve, reject) => {
-    self.pendingResolve = resolve;
+    self.pendingResolve = () => resolve({ usedWarmConnection: false });
     self.pendingReject = reject;
 
     self.connectionTimeout = setTimeout(() => {
-      self.cleanup();
-      reject(new Error("AssemblyAI WebSocket connection timeout"));
+      self.cleanup(new Error("AssemblyAI WebSocket connection timeout"));
     }, WEBSOCKET_TIMEOUT_MS);
 
-    self.ws = new WebSocket(url);
+    const WebSocketConstructor = self.WebSocketConstructor || WebSocket;
+    self.ws = new WebSocketConstructor(url);
 
     self.ws.on("open", () => {
       debugLogger.debug("AssemblyAI WebSocket connected");
@@ -57,24 +70,23 @@ async function connectSession(self, options = {}) {
     });
 
     self.ws.on("error", (error) => {
-      debugLogger.error("AssemblyAI WebSocket error", { error: error.message });
-      self.cleanup();
-      if (self.pendingReject) {
-        self.pendingReject(error);
-        self.pendingReject = null;
-        self.pendingResolve = null;
-      }
-      self.onError?.(error);
+      const publicError = toPublicStreamingError(error);
+      debugLogger.error("AssemblyAI WebSocket error", {
+        errorCategory: getSafeErrorCode(error),
+      });
+      self.cleanup(publicError);
+      self.onError?.(publicError);
     });
 
     self.ws.on("close", (code, reason) => {
       const wasActive = self.isConnected;
       debugLogger.debug("AssemblyAI WebSocket closed", {
         code,
-        reason: reason?.toString(),
+        reasonBytes: reason?.byteLength || reason?.length || 0,
         wasActive,
       });
-      self.cleanup();
+      const closeError = new Error(`AssemblyAI connection closed before completion (${code})`);
+      self.cleanup(closeError);
       if (wasActive && !self.isDisconnecting) {
         self.onError?.(new Error(`Connection lost (code: ${code})`));
       }
@@ -83,13 +95,31 @@ async function connectSession(self, options = {}) {
 }
 
 function handleSessionMessage(self, data) {
+  const inboundBytes =
+    typeof data?.byteLength === "number"
+      ? data.byteLength
+      : Buffer.byteLength(String(data ?? ""), "utf8");
+  if (inboundBytes < 1 || inboundBytes > MAX_STREAMING_INBOUND_MESSAGE_BYTES) {
+    failStreamingSession(
+      self,
+      "The streaming service sent an invalid or oversized message",
+      "STREAMING_RESPONSE_LIMIT"
+    );
+    return;
+  }
+
   try {
     const message = JSON.parse(data.toString());
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      throw new Error("Streaming message must be an object");
+    }
 
     switch (message.type) {
       case "Begin":
-        self.sessionId = message.id;
+        self.sessionId =
+          typeof message.id === "string" && message.id.length <= 256 ? message.id : null;
         self.isConnected = true;
+        self.sessionStartedAt = Date.now();
         clearTimeout(self.connectionTimeout);
         debugLogger.debug("AssemblyAI session started", { sessionId: self.sessionId });
         if (self.pendingResolve) {
@@ -100,7 +130,18 @@ function handleSessionMessage(self, data) {
         break;
 
       case "Turn":
-        if (message.transcript) {
+        if (typeof message.transcript === "string" && message.transcript) {
+          if (
+            message.transcript.length > MAX_STREAMING_TURN_CHARS ||
+            self.turns.length >= MAX_STREAMING_TURNS
+          ) {
+            failStreamingSession(
+              self,
+              "The streaming transcript exceeded its safety limit",
+              "STREAMING_TRANSCRIPT_LIMIT"
+            );
+            return;
+          }
           if (message.end_of_turn) {
             const update = applyEndOfTurnTranscript(
               self.turns,
@@ -111,6 +152,14 @@ function handleSessionMessage(self, data) {
             if (update.action === "added") {
               self.lastTurnText = update.lastTurnText;
               self.accumulatedText = update.accumulatedText;
+              if (self.accumulatedText.length > MAX_STREAMING_TRANSCRIPT_CHARS) {
+                failStreamingSession(
+                  self,
+                  "The streaming transcript exceeded its safety limit",
+                  "STREAMING_TRANSCRIPT_LIMIT"
+                );
+                return;
+              }
               self.onFinalTranscript?.(self.accumulatedText);
               debugLogger.debug("AssemblyAI final transcript (end_of_turn)", {
                 turnLength: String(message.transcript).length,
@@ -119,6 +168,14 @@ function handleSessionMessage(self, data) {
             } else if (update.action === "replaced-previous") {
               self.lastTurnText = update.lastTurnText;
               self.accumulatedText = update.accumulatedText;
+              if (self.accumulatedText.length > MAX_STREAMING_TRANSCRIPT_CHARS) {
+                failStreamingSession(
+                  self,
+                  "The streaming transcript exceeded its safety limit",
+                  "STREAMING_TRANSCRIPT_LIMIT"
+                );
+                return;
+              }
               self.onFinalTranscript?.(self.accumulatedText);
               debugLogger.debug("AssemblyAI formatted turn update applied", {
                 turnLength: update.lastTurnText.length,
@@ -161,15 +218,41 @@ function handleSessionMessage(self, data) {
       }
 
       case "Error":
-        debugLogger.error("AssemblyAI streaming error", { error: message.error });
-        self.onError?.(new Error(message.error));
+        debugLogger.error("AssemblyAI streaming service reported an error", {
+          errorPresent: typeof message.error === "string" && message.error.length > 0,
+        });
+        failStreamingSession(
+          self,
+          "The streaming service reported an error",
+          "STREAMING_PROVIDER_ERROR"
+        );
         break;
 
       default:
         debugLogger.debug("AssemblyAI unknown message type", { type: message.type });
     }
   } catch (err) {
-    debugLogger.error("AssemblyAI message parse error", { error: err.message });
+    debugLogger.error("AssemblyAI message parse error", { errorCategory: err?.name || "Error" });
+    failStreamingSession(
+      self,
+      "The streaming service sent an invalid message",
+      "STREAMING_RESPONSE_INVALID"
+    );
+  }
+}
+
+function failStreamingSession(self, message, code) {
+  if (self.limitErrorRaised) return;
+  self.limitErrorRaised = true;
+  const error = new Error(message);
+  error.code = code;
+  cleanupSession(self, error);
+  try {
+    self.onError?.(error);
+  } catch (callbackError) {
+    debugLogger.error("AssemblyAI streaming error callback failed", {
+      errorCategory: callbackError?.name || "Error",
+    });
   }
 }
 
@@ -184,12 +267,45 @@ function sendAudioChunk(self, pcmBuffer) {
   const now = Date.now();
   recordChunkReceived(self.audioStats, byteLength, now);
 
+  if (
+    self.audioStats.bytesReceived > MAX_STREAMING_SESSION_AUDIO_BYTES ||
+    (self.sessionStartedAt && now - self.sessionStartedAt > MAX_STREAMING_SESSION_MS)
+  ) {
+    recordChunkDropped(self.audioStats, now);
+    failStreamingSession(
+      self,
+      "The streaming session reached its safety limit",
+      "STREAMING_SESSION_LIMIT"
+    );
+    return false;
+  }
+
   if (!self.ws || self.ws.readyState !== WebSocket.OPEN) {
     recordChunkDropped(self.audioStats, now);
     return false;
   }
 
-  self.ws.send(pcmBuffer);
+  if (Number(self.ws.bufferedAmount || 0) > MAX_STREAMING_BUFFERED_BYTES) {
+    recordChunkDropped(self.audioStats, now);
+    failStreamingSession(
+      self,
+      "The streaming connection could not keep up with microphone audio",
+      "STREAMING_BACKPRESSURE"
+    );
+    return false;
+  }
+
+  try {
+    self.ws.send(pcmBuffer);
+  } catch (error) {
+    recordChunkDropped(self.audioStats, now);
+    failStreamingSession(
+      self,
+      "The streaming connection stopped accepting microphone audio",
+      "STREAMING_SEND_FAILED"
+    );
+    return false;
+  }
   recordChunkSent(self.audioStats, byteLength, self.ws.bufferedAmount, now);
   return true;
 }
@@ -234,7 +350,9 @@ async function disconnectSession(self, terminate = true) {
         } catch (error) {
           clearTimeout(timeoutId);
           self.terminationResolve = null;
-          debugLogger.debug("AssemblyAI terminate send failed", { error: error.message });
+          debugLogger.debug("AssemblyAI terminate send failed", {
+            errorCategory: error?.name || "Error",
+          });
           resolve(buildUnconfirmedResult({ terminationUnavailable: true }));
         }
       });
@@ -255,17 +373,21 @@ async function disconnectSession(self, terminate = true) {
   return result;
 }
 
-function cleanupSession(self) {
+function cleanupSession(self, pendingError = null) {
+  const pendingReject = self.pendingReject;
+  const terminationResolve = self.terminationResolve;
   clearTimeout(self.connectionTimeout);
   self.connectionTimeout = null;
 
   if (self.ws) {
+    const socket = self.ws;
+    self.ws = null;
     try {
-      self.ws.close();
+      socket.removeAllListeners?.();
+      socket.close();
     } catch {
       // Ignore close errors
     }
-    self.ws = null;
   }
 
   self.isConnected = false;
@@ -273,6 +395,19 @@ function cleanupSession(self) {
   self.pendingResolve = null;
   self.pendingReject = null;
   self.terminationResolve = null;
+  self.sessionStartedAt = null;
+
+  if (pendingReject) {
+    pendingReject(pendingError || new Error("AssemblyAI connection setup was interrupted"));
+  }
+  if (terminationResolve) {
+    terminationResolve({
+      text: self.accumulatedText,
+      audioStats: self.getAudioStats(),
+      terminationConfirmed: false,
+      terminationUnavailable: true,
+    });
+  }
 }
 
 function cleanupAll(self) {

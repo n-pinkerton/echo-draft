@@ -11,7 +11,6 @@ import { useDialogs } from "../hooks/useDialogs";
 import { usePermissions } from "../hooks/usePermissions";
 import { useClipboard } from "../hooks/useClipboard";
 import { useSettings } from "../hooks/useSettings";
-import { getAgentName, setAgentNameIfEmpty } from "../utils/agentName";
 import { formatHotkeyLabel, getDefaultHotkey } from "../utils/hotkeys";
 import { useAuth } from "../hooks/useAuth";
 import { useHotkeyRegistration } from "../hooks/useHotkeyRegistration";
@@ -163,7 +162,6 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       return false;
     }
     settings.setDictationKey(hotkey);
-    setAgentNameIfEmpty(getAgentName());
 
     const skippedAuth = skipAuth;
     localStorage.setItem("authenticationSkipped", skippedAuth.toString());

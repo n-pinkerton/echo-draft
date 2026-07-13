@@ -3,6 +3,7 @@ const debugLogger = require("./debugLogger");
 const GnomeShortcutManager = require("./gnomeShortcut");
 const { isModifierOnlyHotkey, isRightSideModifier } = require("./hotkey/hotkeyPatterns");
 const { setupShortcuts: setupShortcutsImpl } = require("./hotkey/hotkeySetupShortcuts");
+const { isControlPanelShortcut } = require("./app/controlPanelShortcutPolicy");
 
 // Delay to ensure localStorage is accessible after window load
 const HOTKEY_REGISTRATION_DELAY_MS = 1000;
@@ -76,13 +77,22 @@ class HotkeyManager {
             const savedHotkey = await mainWindow.webContents.executeJavaScript(`
               localStorage.getItem("dictationKey") || ""
             `);
-            const hotkey = savedHotkey && savedHotkey.trim() !== "" ? savedHotkey : "Control+Super";
+            const shouldMigrate = isControlPanelShortcut(savedHotkey);
+            const hotkey = shouldMigrate
+              ? "Control+Super"
+              : savedHotkey && savedHotkey.trim() !== ""
+                ? savedHotkey
+                : "Control+Super";
             const gnomeHotkey = GnomeShortcutManager.convertToGnomeFormat(hotkey);
 
             const success = await this.gnomeManager.registerKeybinding(gnomeHotkey);
             if (success) {
               this.currentHotkey = hotkey;
               debugLogger.log(`[HotkeyManager] GNOME hotkey "${hotkey}" registered successfully`);
+              if (shouldMigrate) {
+                await this.saveHotkeyToRenderer(hotkey);
+                this.notifyHotkeyFallback(savedHotkey, hotkey);
+              }
             } else {
               debugLogger.log("[HotkeyManager] GNOME keybinding failed, falling back to X11");
               this.useGnome = false;
@@ -136,6 +146,30 @@ class HotkeyManager {
       }
 
       if (savedHotkey && savedHotkey.trim() !== "") {
+        if (isControlPanelShortcut(savedHotkey)) {
+          const fallbackHotkey = process.platform === "darwin" ? "GLOBE" : "Control+Super";
+
+          if (fallbackHotkey === "GLOBE") {
+            this.currentHotkey = fallbackHotkey;
+          } else {
+            const fallbackResult = this.setupShortcuts(fallbackHotkey, callback);
+            if (!fallbackResult.success) {
+              debugLogger.log(
+                `[HotkeyManager] Reserved hotkey fallback "${fallbackHotkey}" failed to register`
+              );
+              this.notifyHotkeyFailure(fallbackHotkey, fallbackResult);
+              return;
+            }
+          }
+
+          await this.saveHotkeyToRenderer(fallbackHotkey);
+          this.notifyHotkeyFallback(savedHotkey, fallbackHotkey);
+          debugLogger.log(
+            `[HotkeyManager] Migrated reserved hotkey "${savedHotkey}" to "${fallbackHotkey}"`
+          );
+          return;
+        }
+
         const result = this.setupShortcuts(savedHotkey, callback);
         if (result.success) {
           debugLogger.log(`[HotkeyManager] Restored saved hotkey: "${savedHotkey}"`);
@@ -158,6 +192,10 @@ class HotkeyManager {
         debugLogger.log(
           `[HotkeyManager] Default hotkey "${defaultHotkey}" registered successfully`
         );
+        if (savedHotkey && savedHotkey.trim() && savedHotkey !== defaultHotkey) {
+          await this.saveHotkeyToRenderer(defaultHotkey);
+          this.notifyHotkeyFallback(savedHotkey, defaultHotkey);
+        }
         return;
       }
 
@@ -171,7 +209,7 @@ class HotkeyManager {
         if (fallbackResult.success) {
           debugLogger.log(`[HotkeyManager] Fallback hotkey "${fallback}" registered successfully`);
           await this.saveHotkeyToRenderer(fallback);
-          this.notifyHotkeyFallback(defaultHotkey, fallback);
+          this.notifyHotkeyFallback(savedHotkey || defaultHotkey, fallback);
           return;
         }
       }

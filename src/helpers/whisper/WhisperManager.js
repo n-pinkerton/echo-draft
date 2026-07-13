@@ -5,6 +5,7 @@ const { throwIfAborted } = require("../abortUtils");
 const WhisperServerManager = require("../whisperServer");
 const { clearCache: clearFFmpegCache, getFFmpegPath } = require("../ffmpegUtils");
 const { coerceAudioBlobToBuffer } = require("../audioBufferUtils");
+const { sanitizeLexicalDictionaryEntries } = require("../../utils/dictionaryLexicon.cjs");
 
 const { getValidWhisperModelNames } = require("./modelRegistry");
 const { parseWhisperResult } = require("./resultParser");
@@ -19,6 +20,7 @@ class WhisperManager {
     this.models = new WhisperModelStore();
     this.serverManager = new WhisperServerManager();
     this.currentServerModel = null;
+    this.transcriptionQueue = Promise.resolve();
   }
 
   getModelsDir() {
@@ -202,8 +204,21 @@ class WhisperManager {
   async transcribeLocalWhisper(audioBlob, options = {}, runtime = {}) {
     const signal = runtime?.signal || null;
     throwIfAborted(signal);
+    const requestedDictionaryEntries = Array.isArray(options.dictionaryEntries)
+      ? options.dictionaryEntries
+      : [];
+    const dictionaryEntries = sanitizeLexicalDictionaryEntries(requestedDictionaryEntries, {
+      maxEntries: 100,
+      maxEntryLength: 80,
+      maxWords: 1,
+    });
+    if (dictionaryEntries.length !== requestedDictionaryEntries.length) {
+      throw new Error("Local Whisper dictionary must contain unique lexical terms only");
+    }
     debugLogger.logWhisperPipeline("transcribeLocalWhisper - start", {
-      options,
+      model: options.model || "base",
+      language: options.language || "auto",
+      dictionaryEntryCount: dictionaryEntries.length,
       audioBlobType: audioBlob?.constructor?.name,
       audioBlobSize: audioBlob?.byteLength || audioBlob?.size || 0,
       serverAvailable: this.serverManager.isAvailable(),
@@ -218,7 +233,7 @@ class WhisperManager {
 
     const model = options.model || "base";
     const language = options.language || null;
-    const initialPrompt = options.initialPrompt || null;
+    const initialPrompt = dictionaryEntries.length > 0 ? dictionaryEntries.join(", ") : null;
     const modelPath = this.getModelPath(model);
 
     if (!fs.existsSync(modelPath)) {
@@ -231,6 +246,14 @@ class WhisperManager {
   }
 
   async transcribeViaServer(audioBlob, model, language, initialPrompt = null, signal = null) {
+    const transcription = this.transcriptionQueue.then(() =>
+      this._transcribeViaServer(audioBlob, model, language, initialPrompt, signal)
+    );
+    this.transcriptionQueue = transcription.catch(() => {});
+    return await transcription;
+  }
+
+  async _transcribeViaServer(audioBlob, model, language, initialPrompt = null, signal = null) {
     throwIfAborted(signal);
     debugLogger.info("Transcription mode: SERVER", { model, language: language || "auto" });
     const modelPath = this.getModelPath(model);

@@ -4,6 +4,7 @@ const { isModifierOnlyHotkey, isRightSideModifier } = HotkeyManager;
 const { isWindowsNativeHotkeySupported } = require("./hotkey/windowsNativeHotkey");
 const DragManager = require("./dragManager");
 const debugLogger = require("./debugLogger");
+const { accelerator: CONTROL_PANEL_ACCELERATOR } = require("../shared/controlPanelShortcut.json");
 const { loadWindowContent: loadWindowContentImpl } = require("./windowManager/windowContentLoader");
 const {
   createControlPanelWindow: createControlPanelWindowImpl,
@@ -43,6 +44,7 @@ const {
 
 const DEFAULT_CLIPBOARD_HOTKEY =
   process.platform === "darwin" ? "Control+Option+Space" : "Control+Alt";
+const ISSUED_SESSION_TTL_MS = 60 * 60 * 1000;
 
 class WindowManager {
   constructor() {
@@ -50,6 +52,7 @@ class WindowManager {
     this.controlPanelWindow = null;
     this.tray = null;
     this.hotkeyManager = new HotkeyManager();
+    this.debugLogger = debugLogger;
     this.dragManager = new DragManager();
     this.isQuitting = false;
     this.isMainWindowInteractive = false;
@@ -60,14 +63,68 @@ class WindowManager {
     this._cachedActivationMode = "tap";
     this.currentClipboardHotkey = DEFAULT_CLIPBOARD_HOTKEY;
     this.registeredClipboardAccelerator = null;
+    this.controlPanelShortcutStatus = {
+      accelerator: CONTROL_PANEL_ACCELERATOR,
+      registered: false,
+      reason: "starting",
+    };
+    this.issuedDictationSessions = new Map();
 
     app.on("before-quit", () => {
       this.isQuitting = true;
     });
   }
 
+  onClipboardHotkeyRegistrationFailure(failure = {}) {
+    const payload = {
+      hotkey: failure.hotkey || this.currentClipboardHotkey,
+      error:
+        failure.message ||
+        "The clipboard hotkey could not be restored. Choose another shortcut in Settings.",
+      suggestions: ["F9", "Alt+F7", "Control+Shift+Space"],
+    };
+    for (const window of [this.mainWindow, this.controlPanelWindow]) {
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("hotkey-registration-failed", payload);
+      }
+    }
+  }
+
+  onInsertHotkeyRegistrationFailure(failure = {}) {
+    const payload = {
+      hotkey: failure.hotkey || this.hotkeyManager.getCurrentHotkey?.(),
+      error:
+        failure.message ||
+        "The insert hotkey could not be restored. Choose another shortcut in Settings.",
+      suggestions: ["F9", "Alt+F7", "Control+Shift+Space"],
+    };
+    for (const window of [this.mainWindow, this.controlPanelWindow]) {
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("hotkey-registration-failed", payload);
+      }
+    }
+  }
+
   setWindowsPushToTalkAvailable(available) {
     this.windowsPushToTalkAvailable = available;
+  }
+
+  setControlPanelShortcutStatus(status = {}) {
+    this.controlPanelShortcutStatus = {
+      accelerator: status.accelerator || CONTROL_PANEL_ACCELERATOR,
+      registered: Boolean(status.registered),
+      reason: status.reason || null,
+    };
+    for (const window of [this.mainWindow, this.controlPanelWindow]) {
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("control-panel-shortcut-status", this.controlPanelShortcutStatus);
+      }
+    }
+    return this.controlPanelShortcutStatus;
+  }
+
+  getControlPanelShortcutStatus() {
+    return { ...this.controlPanelShortcutStatus };
   }
 
   setWindowsNativeListenerReady(routeId, ready) {
@@ -116,7 +173,55 @@ class WindowManager {
   }
 
   createSessionPayload(outputMode = "insert") {
-    return createSessionPayloadImpl(outputMode);
+    const payload = createSessionPayloadImpl(outputMode);
+    this._purgeExpiredDictationSessions();
+    this.issuedDictationSessions.set(payload.sessionId, {
+      outputMode: payload.outputMode,
+      expiresAt: Date.now() + ISSUED_SESSION_TTL_MS,
+      insertionTargetClaimed: false,
+      debugAudioClaimed: false,
+    });
+    return payload;
+  }
+
+  _purgeExpiredDictationSessions(now = Date.now()) {
+    for (const [sessionId, session] of this.issuedDictationSessions) {
+      if (!session || session.expiresAt <= now) {
+        this.issuedDictationSessions.delete(sessionId);
+      }
+    }
+  }
+
+  isIssuedDictationSession(sessionId, outputMode = null) {
+    this._purgeExpiredDictationSessions();
+    const session = this.issuedDictationSessions.get(String(sessionId || ""));
+    if (!session) return false;
+    return !outputMode || session.outputMode === outputMode;
+  }
+
+  claimInsertionTargetSession(sessionId) {
+    this._purgeExpiredDictationSessions();
+    const key = String(sessionId || "");
+    const session = this.issuedDictationSessions.get(key);
+    if (!session || session.outputMode !== "insert" || session.insertionTargetClaimed) {
+      return false;
+    }
+    session.insertionTargetClaimed = true;
+    return true;
+  }
+
+  claimDebugAudioSession(sessionId, outputMode = null) {
+    this._purgeExpiredDictationSessions();
+    const session = this.issuedDictationSessions.get(String(sessionId || ""));
+    if (
+      !session ||
+      session.debugAudioClaimed ||
+      (outputMode && session.outputMode !== outputMode)
+    ) {
+      return false;
+    }
+    session.debugAudioClaimed = true;
+    return true;
   }
 
   emitDictationEvent(channel, payload) {

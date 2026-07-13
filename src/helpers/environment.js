@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const { app } = require("electron");
 
 const PERSISTED_KEYS = [
@@ -10,6 +11,8 @@ const PERSISTED_KEYS = [
   "MISTRAL_API_KEY",
   "CUSTOM_TRANSCRIPTION_API_KEY",
   "CUSTOM_REASONING_API_KEY",
+  "CUSTOM_TRANSCRIPTION_BASE_URL",
+  "CUSTOM_REASONING_BASE_URL",
   "OPENWHISPR_LOG_LEVEL",
   "LOCAL_TRANSCRIPTION_PROVIDER",
   "PARAKEET_MODEL",
@@ -20,9 +23,56 @@ const PERSISTED_KEYS = [
   "DICTATION_KEY_CLIPBOARD",
   "ACTIVATION_MODE",
 ];
+const PERSISTED_KEY_SET = new Set(PERSISTED_KEYS);
+const MAX_PERSISTED_VALUE_CHARS = 32_768;
+const DEBUG_CONSENT_FILE = "debug-consent.json";
+
+const validatePersistedValue = (envVarName, value) => {
+  if (!PERSISTED_KEY_SET.has(envVarName)) {
+    throw new Error("Unsupported persisted setting");
+  }
+  if (typeof value !== "string") {
+    throw new Error("Persisted settings must be strings");
+  }
+  if (value.length > MAX_PERSISTED_VALUE_CHARS || /[\r\n\0]/.test(value)) {
+    throw new Error("Persisted setting contains unsupported characters or exceeds its limit");
+  }
+  return value;
+};
+
+const writePrivateFileAtomic = (targetPath, content) => {
+  const parent = path.dirname(targetPath);
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const tempPath = path.join(
+    parent,
+    `.${path.basename(targetPath)}.${process.pid}.${crypto.randomUUID()}.tmp`
+  );
+  try {
+    fs.writeFileSync(tempPath, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    try {
+      fs.chmodSync(tempPath, 0o600);
+    } catch {
+      // Windows does not expose POSIX mode bits; the user-data ACL remains authoritative.
+    }
+    fs.renameSync(tempPath, targetPath);
+    try {
+      fs.chmodSync(targetPath, 0o600);
+    } catch {
+      // See note above.
+    }
+  } finally {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {}
+  }
+};
 
 class EnvironmentManager {
-  constructor() {
+  constructor({ appImpl = app } = {}) {
+    if (!appImpl || typeof appImpl.getPath !== "function") {
+      throw new Error("Electron app paths are unavailable");
+    }
+    this.app = appImpl;
     this._envWriteInProgress = false;
     this._envWriteNeedsRetry = false;
     this.loadEnvironmentVariables();
@@ -30,20 +80,34 @@ class EnvironmentManager {
 
   loadEnvironmentVariables() {
     // Loaded in priority order — dotenv won't override, so first file wins per variable
+    const resourcesPath = typeof process.resourcesPath === "string" ? process.resourcesPath : "";
     const possibleEnvPaths = [
-      path.join(app.getPath("userData"), ".env"),
+      path.join(this.app.getPath("userData"), ".env"),
       path.join(__dirname, "..", "..", ".env"), // Development
-      path.join(process.resourcesPath, ".env"),
-      path.join(process.resourcesPath, "app.asar.unpacked", ".env"),
-      path.join(process.resourcesPath, "app", ".env"), // Legacy
+      ...(resourcesPath
+        ? [
+            path.join(resourcesPath, ".env"),
+            path.join(resourcesPath, "app.asar.unpacked", ".env"),
+            path.join(resourcesPath, "app", ".env"), // Legacy
+          ]
+        : []),
     ];
 
+    const userDataEnvPath = possibleEnvPaths[0];
     for (const envPath of possibleEnvPaths) {
       try {
         if (fs.existsSync(envPath)) {
-          require("dotenv").config({ path: envPath });
+          if (envPath === userDataEnvPath) {
+            const parsed = require("dotenv").parse(fs.readFileSync(envPath, "utf8"));
+            for (const key of PERSISTED_KEYS) {
+              if (process.env[key] !== undefined || parsed[key] === undefined) continue;
+              process.env[key] = validatePersistedValue(key, parsed[key]);
+            }
+          } else {
+            require("dotenv").config({ path: envPath });
+          }
         }
-      } catch (error) {}
+      } catch {}
     }
   }
 
@@ -52,84 +116,58 @@ class EnvironmentManager {
   }
 
   _saveKey(envVarName, key) {
-    process.env[envVarName] = key;
+    const normalized = validatePersistedValue(envVarName, key);
+    if (normalized) process.env[envVarName] = normalized;
+    else delete process.env[envVarName];
+    return { success: true };
+  }
+
+  _saveKeyDurably(envVarName, key) {
+    const hadPreviousValue = Object.prototype.hasOwnProperty.call(process.env, envVarName);
+    const previousValue = process.env[envVarName];
+    const saveResult = this._saveKey(envVarName, key);
+    const persistResult = this.saveAllKeysToEnvFile();
+
+    if (persistResult?.success === true) {
+      return { ...saveResult, path: persistResult.path };
+    }
+
+    if (hadPreviousValue) process.env[envVarName] = previousValue;
+    else delete process.env[envVarName];
+    return {
+      success: false,
+      error: "The setting could not be written to durable storage",
+    };
+  }
+
+  savePersistedValue(envVarName, value) {
+    return this._saveKey(envVarName, value);
+  }
+
+  clearPersistedValue(envVarName) {
+    if (!PERSISTED_KEY_SET.has(envVarName)) {
+      throw new Error("Unsupported persisted setting");
+    }
+    delete process.env[envVarName];
     return { success: true };
   }
 
   _getUserDataEnvPath() {
-    return path.join(app.getPath("userData"), ".env");
-  }
-
-  _readDotEnvFile(envPath) {
-    try {
-      if (!fs.existsSync(envPath)) {
-        return "";
-      }
-      return fs.readFileSync(envPath, "utf8");
-    } catch {
-      return "";
-    }
-  }
-
-  _parseEnvLine(line) {
-    const trimmed = typeof line === "string" ? line.trim() : "";
-    if (!trimmed || trimmed.startsWith("#")) {
-      return null;
-    }
-    const eqIndex = line.indexOf("=");
-    if (eqIndex <= 0) {
-      return null;
-    }
-    return {
-      key: line.slice(0, eqIndex),
-      value: line.slice(eqIndex + 1),
-      raw: line,
-    };
+    return path.join(this.app.getPath("userData"), ".env");
   }
 
   _persistAllKeysToEnvFile(envPath) {
     try {
-      const existingLines = this._readDotEnvFile(envPath).split(/\r?\n/);
-      const persistedKeySet = new Set(PERSISTED_KEYS);
-      const wroteKeys = new Set();
-      const keptLines = [];
-
-      for (const line of existingLines) {
-        const parsed = this._parseEnvLine(line);
-        if (!parsed) {
-          if (line !== undefined && line !== null && line.length > 0) {
-            keptLines.push(line);
-          }
-          continue;
-        }
-
-        if (!persistedKeySet.has(parsed.key)) {
-          keptLines.push(line);
-          continue;
-        }
-
-        const envValue = process.env[parsed.key];
-        if (envValue) {
-          keptLines.push(`${parsed.key}=${envValue}`);
-          wroteKeys.add(parsed.key);
-        }
-      }
-
+      const keptLines = ["# EchoDraft user settings (managed by EchoDraft)"];
       for (const key of PERSISTED_KEYS) {
-        if (wroteKeys.has(key)) {
-          continue;
-        }
         const value = process.env[key];
-        if (!value) {
-          continue;
-        }
-        keptLines.push(`${key}=${value}`);
-        wroteKeys.add(key);
+        if (!value) continue;
+        const validated = validatePersistedValue(key, value);
+        keptLines.push(`${key}=${JSON.stringify(validated)}`);
       }
 
-      const output = keptLines.join("\n");
-      fs.writeFileSync(envPath, output, "utf8");
-      require("dotenv").config({ path: envPath });
+      const output = `${keptLines.join("\n")}\n`;
+      writePrivateFileAtomic(envPath, output);
 
       return { success: true, path: envPath };
     } catch (error) {
@@ -171,7 +209,7 @@ class EnvironmentManager {
   }
 
   saveOpenAIKey(key) {
-    return this._saveKey("OPENAI_API_KEY", key);
+    return this._saveKeyDurably("OPENAI_API_KEY", key);
   }
 
   getAnthropicKey() {
@@ -179,7 +217,7 @@ class EnvironmentManager {
   }
 
   saveAnthropicKey(key) {
-    return this._saveKey("ANTHROPIC_API_KEY", key);
+    return this._saveKeyDurably("ANTHROPIC_API_KEY", key);
   }
 
   getGeminiKey() {
@@ -187,7 +225,7 @@ class EnvironmentManager {
   }
 
   saveGeminiKey(key) {
-    return this._saveKey("GEMINI_API_KEY", key);
+    return this._saveKeyDurably("GEMINI_API_KEY", key);
   }
 
   getGroqKey() {
@@ -195,7 +233,7 @@ class EnvironmentManager {
   }
 
   saveGroqKey(key) {
-    return this._saveKey("GROQ_API_KEY", key);
+    return this._saveKeyDurably("GROQ_API_KEY", key);
   }
 
   getMistralKey() {
@@ -203,7 +241,7 @@ class EnvironmentManager {
   }
 
   saveMistralKey(key) {
-    return this._saveKey("MISTRAL_API_KEY", key);
+    return this._saveKeyDurably("MISTRAL_API_KEY", key);
   }
 
   getCustomTranscriptionKey() {
@@ -211,7 +249,7 @@ class EnvironmentManager {
   }
 
   saveCustomTranscriptionKey(key) {
-    return this._saveKey("CUSTOM_TRANSCRIPTION_API_KEY", key);
+    return this._saveKeyDurably("CUSTOM_TRANSCRIPTION_API_KEY", key);
   }
 
   getCustomReasoningKey() {
@@ -219,7 +257,23 @@ class EnvironmentManager {
   }
 
   saveCustomReasoningKey(key) {
-    return this._saveKey("CUSTOM_REASONING_API_KEY", key);
+    return this._saveKeyDurably("CUSTOM_REASONING_API_KEY", key);
+  }
+
+  getCustomTranscriptionBaseUrl() {
+    return this._getKey("CUSTOM_TRANSCRIPTION_BASE_URL");
+  }
+
+  saveCustomTranscriptionBaseUrl(url) {
+    return this._saveKey("CUSTOM_TRANSCRIPTION_BASE_URL", url);
+  }
+
+  getCustomReasoningBaseUrl() {
+    return this._getKey("CUSTOM_REASONING_BASE_URL");
+  }
+
+  saveCustomReasoningBaseUrl(url) {
+    return this._saveKey("CUSTOM_REASONING_BASE_URL", url);
   }
 
   getDictationKey() {
@@ -257,7 +311,11 @@ class EnvironmentManager {
   saveDebugLogLevel(level) {
     const normalizedLevel = typeof level === "string" ? level.trim().toLowerCase() : "info";
     const nextLevel =
-      normalizedLevel === "trace" || normalizedLevel === "debug" || normalizedLevel === "warn" || normalizedLevel === "error" || normalizedLevel === "fatal"
+      normalizedLevel === "trace" ||
+      normalizedLevel === "debug" ||
+      normalizedLevel === "warn" ||
+      normalizedLevel === "error" ||
+      normalizedLevel === "fatal"
         ? normalizedLevel
         : "info";
     const result = this._saveKey("OPENWHISPR_LOG_LEVEL", nextLevel);
@@ -269,18 +327,40 @@ class EnvironmentManager {
     };
   }
 
-  createProductionEnvFile(apiKey) {
-    const envPath = path.join(app.getPath("userData"), ".env");
+  _getDebugConsentPath() {
+    return path.join(this.app.getPath("userData"), DEBUG_CONSENT_FILE);
+  }
 
-    const envContent = `# EchoDraft Environment Variables
-# This file was created automatically for production use
-OPENAI_API_KEY=${apiKey}
-`;
+  hasDebugConsent() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this._getDebugConsentPath(), "utf8"));
+      return parsed?.version === 1 && parsed?.consented === true;
+    } catch {
+      return false;
+    }
+  }
 
-    fs.writeFileSync(envPath, envContent, "utf8");
-    require("dotenv").config({ path: envPath });
+  setDebugConsent(consented) {
+    const consentPath = this._getDebugConsentPath();
+    if (!consented) {
+      try {
+        fs.unlinkSync(consentPath);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      return { success: true };
+    }
+    writePrivateFileAtomic(consentPath, `${JSON.stringify({ version: 1, consented: true })}\n`);
+    return { success: true };
+  }
 
-    return { success: true, path: envPath };
+  enforceDebugConsent() {
+    const level = String(process.env.OPENWHISPR_LOG_LEVEL || "").toLowerCase();
+    if ((level === "debug" || level === "trace") && !this.hasDebugConsent()) {
+      process.env.OPENWHISPR_LOG_LEVEL = "info";
+      return this.saveAllKeysToEnvFile();
+    }
+    return { success: true };
   }
 
   saveAllKeysToEnvFile() {
@@ -296,3 +376,6 @@ OPENAI_API_KEY=${apiKey}
 }
 
 module.exports = EnvironmentManager;
+module.exports.PERSISTED_KEYS = PERSISTED_KEYS;
+module.exports.validatePersistedValue = validatePersistedValue;
+module.exports.writePrivateFileAtomic = writePrivateFileAtomic;

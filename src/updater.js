@@ -1,6 +1,17 @@
-const { autoUpdater } = require("electron-updater");
-
 const { isTruthyFlag } = require("./helpers/utils/flags");
+const { areAutomaticUpdatesTrusted } = require("./config/updateTrust");
+
+const UNSIGNED_WINDOWS_UPDATE_MESSAGE =
+  "Automatic updates are disabled for this unsigned Windows build. Install a verified EchoDraft release manually.";
+const UNSUPPORTED_LINUX_UPDATE_MESSAGE =
+  "Automatic installation is disabled on Linux until independently signed update verification is available. Install a verified EchoDraft release manually.";
+const VERIFIED_RELEASES_URL = "https://github.com/n-pinkerton/echo-draft/releases";
+const PINNED_UPDATE_CONFIG = Object.freeze({
+  provider: "github",
+  owner: "n-pinkerton",
+  repo: "echo-draft",
+  private: false,
+});
 
 function getErrorMessage(err) {
   if (!err) return "";
@@ -19,30 +30,69 @@ function isNoPublishedVersionsError(err) {
 }
 
 function getGithubUpdateConfig() {
-  // Fork-safe defaults: this should NOT point at upstream unless explicitly overridden.
-  const owner = process.env.OPENWHISPR_UPDATE_OWNER?.trim() || "n-pinkerton";
-  const repo = process.env.OPENWHISPR_UPDATE_REPO?.trim() || "echo-draft";
-
-  return { provider: "github", owner, repo, private: false };
+  return { ...PINNED_UPDATE_CONFIG };
 }
 
+const getAutomaticUpdatesDisabledMessage = (platform) =>
+  platform === "linux" ? UNSUPPORTED_LINUX_UPDATE_MESSAGE : UNSIGNED_WINDOWS_UPDATE_MESSAGE;
+
 class UpdateManager {
-  constructor() {
+  constructor({ platform = process.platform, updater = null } = {}) {
+    this.platform = platform;
     this.mainWindow = null;
     this.controlPanelWindow = null;
+    this.windowProvider = null;
     this.updateAvailable = false;
     this.updateDownloaded = false;
+    this.hasCheckedForUpdates = false;
+    this.isCheckingForUpdates = false;
     this.lastUpdateInfo = null;
     this.isInstalling = false;
     this.isDownloading = false;
     this.eventListeners = [];
+    this.startupCheckTimer = null;
+    this.inFlightCheckPromise = null;
+    this.activeCheckContext = null;
+    this.notifiedUpdateErrors = new WeakSet();
+    this.updatesTrusted = areAutomaticUpdatesTrusted({ platform });
+    this.disabledMessage = getAutomaticUpdatesDisabledMessage(platform);
+    this.autoUpdater = updater;
 
     this.setupAutoUpdater();
+  }
+
+  getAutoUpdater() {
+    if (!this.autoUpdater) {
+      this.autoUpdater = require("electron-updater").autoUpdater;
+    }
+    return this.autoUpdater;
   }
 
   setWindows(mainWindow, controlPanelWindow) {
     this.mainWindow = mainWindow;
     this.controlPanelWindow = controlPanelWindow;
+  }
+
+  setWindowProvider(provider) {
+    if (provider !== null && typeof provider !== "function") {
+      throw new Error("Update window provider must be a function");
+    }
+    this.windowProvider = provider;
+  }
+
+  getCurrentWindows() {
+    const current = this.windowProvider?.() || {};
+    const hasLiveMainWindow = Object.prototype.hasOwnProperty.call(current, "mainWindow");
+    const hasLiveControlPanelWindow = Object.prototype.hasOwnProperty.call(
+      current,
+      "controlPanelWindow"
+    );
+    return {
+      mainWindow: hasLiveMainWindow ? current.mainWindow : this.mainWindow,
+      controlPanelWindow: hasLiveControlPanelWindow
+        ? current.controlPanelWindow
+        : this.controlPanelWindow,
+    };
   }
 
   setupAutoUpdater() {
@@ -51,6 +101,12 @@ class UpdateManager {
       // Auto-updater disabled in development mode
       return;
     }
+
+    if (!this.updatesTrusted) {
+      return;
+    }
+
+    const autoUpdater = this.getAutoUpdater();
 
     // Configure auto-updater for GitHub releases
     autoUpdater.setFeedURL(getGithubUpdateConfig());
@@ -71,11 +127,16 @@ class UpdateManager {
   }
 
   setupEventHandlers() {
+    const autoUpdater = this.getAutoUpdater();
     const handlers = {
       "checking-for-update": () => {
-        this.notifyRenderers("checking-for-update");
+        const shouldNotify = !this.isCheckingForUpdates;
+        this.isCheckingForUpdates = true;
+        if (shouldNotify) this.notifyRenderers("checking-for-update");
       },
       "update-available": (info) => {
+        this.hasCheckedForUpdates = true;
+        this.isCheckingForUpdates = false;
         this.updateAvailable = true;
         if (info) {
           this.lastUpdateInfo = {
@@ -88,6 +149,8 @@ class UpdateManager {
         this.notifyRenderers("update-available", info);
       },
       "update-not-available": (info) => {
+        this.hasCheckedForUpdates = true;
+        this.isCheckingForUpdates = false;
         this.updateAvailable = false;
         this.updateDownloaded = false;
         this.isDownloading = false;
@@ -96,12 +159,14 @@ class UpdateManager {
       },
       error: (err) => {
         console.error("❌ Auto-updater error:", err);
+        this.isCheckingForUpdates = false;
         this.isDownloading = false;
         if (isNoPublishedVersionsError(err)) {
           // Common in forks: electron-updater throws when the repo has no releases yet.
           // Treat as "no updates available" instead of surfacing a disruptive error toast.
           this.updateAvailable = false;
           this.updateDownloaded = false;
+          this.hasCheckedForUpdates = true;
           this.lastUpdateInfo = null;
           this.notifyRenderers("update-not-available", {
             message: "No published versions available for updates",
@@ -109,7 +174,7 @@ class UpdateManager {
           return;
         }
 
-        this.notifyRenderers("update-error", err);
+        this.notifyUpdateErrorOnce(err, this.activeCheckContext);
       },
       "download-progress": (progressObj) => {
         console.log(
@@ -141,60 +206,123 @@ class UpdateManager {
   }
 
   notifyRenderers(channel, data) {
-    if (this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.webContents) {
-      this.mainWindow.webContents.send(channel, data);
-    }
-    if (
-      this.controlPanelWindow &&
-      !this.controlPanelWindow.isDestroyed() &&
-      this.controlPanelWindow.webContents
-    ) {
-      this.controlPanelWindow.webContents.send(channel, data);
+    const { mainWindow, controlPanelWindow } = this.getCurrentWindows();
+    const windows = new Set([mainWindow, controlPanelWindow]);
+    for (const window of windows) {
+      if (window && !window.isDestroyed() && window.webContents) {
+        window.webContents.send(channel, data);
+      }
     }
   }
 
+  notifyUpdateErrorOnce(error, context = null) {
+    if (context?.errorNotified) return;
+    if (error && typeof error === "object" && this.notifiedUpdateErrors.has(error)) return;
+    if (context) context.errorNotified = true;
+    if (error && typeof error === "object") this.notifiedUpdateErrors.add(error);
+    this.notifyRenderers("update-error", error);
+  }
+
   async checkForUpdates() {
+    if (process.env.NODE_ENV === "development") {
+      return {
+        updateAvailable: false,
+        message: "Update checks are disabled in development mode",
+      };
+    }
+
+    if (!this.updatesTrusted) {
+      return {
+        updateAvailable: false,
+        message: this.disabledMessage,
+      };
+    }
+
+    if (this.inFlightCheckPromise) {
+      return await this.inFlightCheckPromise;
+    }
+
+    const context = { errorNotified: false };
+    this.activeCheckContext = context;
+    const checkPromise = (async () => {
+      try {
+        console.log("🔍 Checking for updates...");
+        this.isCheckingForUpdates = true;
+        this.notifyRenderers("checking-for-update");
+        const result = await this.getAutoUpdater().checkForUpdates();
+
+        if (result?.isUpdateAvailable && result?.updateInfo) {
+          const shouldNotify = this.isCheckingForUpdates;
+          this.hasCheckedForUpdates = true;
+          this.isCheckingForUpdates = false;
+          this.updateAvailable = true;
+          this.lastUpdateInfo = {
+            version: result.updateInfo.version,
+            releaseDate: result.updateInfo.releaseDate,
+            releaseNotes: result.updateInfo.releaseNotes,
+            files: result.updateInfo.files,
+          };
+          if (shouldNotify) this.notifyRenderers("update-available", result.updateInfo);
+          console.log("📋 Update available:", result.updateInfo.version);
+          console.log(
+            "📦 Download size:",
+            result.updateInfo.files?.map((f) => `${(f.size / 1024 / 1024).toFixed(2)}MB`).join(", ")
+          );
+          return {
+            updateAvailable: true,
+            version: result.updateInfo.version,
+            releaseDate: result.updateInfo.releaseDate,
+            files: result.updateInfo.files,
+            releaseNotes: result.updateInfo.releaseNotes,
+          };
+        } else {
+          const shouldNotify = this.isCheckingForUpdates;
+          this.hasCheckedForUpdates = true;
+          this.isCheckingForUpdates = false;
+          this.updateAvailable = false;
+          this.updateDownloaded = false;
+          this.lastUpdateInfo = null;
+          if (shouldNotify) this.notifyRenderers("update-not-available", result?.updateInfo);
+          console.log("✅ Already on latest version");
+          return {
+            updateAvailable: false,
+            message: "You are running the latest version",
+          };
+        }
+      } catch (error) {
+        const shouldNotify = this.isCheckingForUpdates;
+        this.isCheckingForUpdates = false;
+        if (isNoPublishedVersionsError(error)) {
+          this.hasCheckedForUpdates = true;
+          this.updateAvailable = false;
+          this.updateDownloaded = false;
+          this.lastUpdateInfo = null;
+          if (shouldNotify) {
+            this.notifyRenderers("update-not-available", {
+              message: "No published versions available for updates",
+            });
+          }
+          return {
+            updateAvailable: false,
+            message: "No published versions available for updates",
+          };
+        }
+
+        this.notifyUpdateErrorOnce(error, context);
+        console.error("❌ Update check error:", error);
+        throw error;
+      }
+    })();
+    this.inFlightCheckPromise = checkPromise;
     try {
-      if (process.env.NODE_ENV === "development") {
-        return {
-          updateAvailable: false,
-          message: "Update checks are disabled in development mode",
-        };
+      return await checkPromise;
+    } finally {
+      if (this.inFlightCheckPromise === checkPromise) {
+        this.inFlightCheckPromise = null;
       }
-
-      console.log("🔍 Checking for updates...");
-      const result = await autoUpdater.checkForUpdates();
-
-      if (result?.isUpdateAvailable && result?.updateInfo) {
-        console.log("📋 Update available:", result.updateInfo.version);
-        console.log(
-          "📦 Download size:",
-          result.updateInfo.files?.map((f) => `${(f.size / 1024 / 1024).toFixed(2)}MB`).join(", ")
-        );
-        return {
-          updateAvailable: true,
-          version: result.updateInfo.version,
-          releaseDate: result.updateInfo.releaseDate,
-          files: result.updateInfo.files,
-          releaseNotes: result.updateInfo.releaseNotes,
-        };
-      } else {
-        console.log("✅ Already on latest version");
-        return {
-          updateAvailable: false,
-          message: "You are running the latest version",
-        };
+      if (this.activeCheckContext === context) {
+        this.activeCheckContext = null;
       }
-    } catch (error) {
-      if (isNoPublishedVersionsError(error)) {
-        return {
-          updateAvailable: false,
-          message: "No published versions available for updates",
-        };
-      }
-
-      console.error("❌ Update check error:", error);
-      throw error;
     }
   }
 
@@ -205,6 +333,10 @@ class UpdateManager {
           success: false,
           message: "Update downloads are disabled in development mode",
         };
+      }
+
+      if (!this.updatesTrusted) {
+        return { success: false, message: this.disabledMessage };
       }
 
       if (this.isDownloading) {
@@ -223,7 +355,7 @@ class UpdateManager {
 
       this.isDownloading = true;
       console.log("📥 Starting update download...");
-      await autoUpdater.downloadUpdate();
+      await this.getAutoUpdater().downloadUpdate();
       console.log("📥 Download initiated successfully");
 
       return { success: true, message: "Update download started" };
@@ -241,6 +373,10 @@ class UpdateManager {
           success: false,
           message: "Update installation is disabled in development mode",
         };
+      }
+
+      if (!this.updatesTrusted) {
+        return { success: false, message: this.disabledMessage };
       }
 
       if (!this.updateDownloaded) {
@@ -270,7 +406,7 @@ class UpdateManager {
       });
 
       const isSilent = process.platform === "win32";
-      autoUpdater.quitAndInstall(isSilent, true);
+      this.getAutoUpdater().quitAndInstall(isSilent, true);
 
       return { success: true, message: "Update installation started" };
     } catch (error) {
@@ -295,7 +431,11 @@ class UpdateManager {
       return {
         updateAvailable: this.updateAvailable,
         updateDownloaded: this.updateDownloaded,
+        hasCheckedForUpdates: this.hasCheckedForUpdates,
+        isChecking: this.isCheckingForUpdates,
         isDevelopment: process.env.NODE_ENV === "development",
+        updatesEnabled: process.env.NODE_ENV !== "development" && this.updatesTrusted,
+        ...(!this.updatesTrusted ? { disabledReason: this.disabledMessage } : {}),
       };
     } catch (error) {
       console.error("❌ Error getting update status:", error);
@@ -315,14 +455,17 @@ class UpdateManager {
   checkForUpdatesOnStartup() {
     if (
       isTruthyFlag(process.env.OPENWHISPR_E2E) ||
-      isTruthyFlag(process.env.OPENWHISPR_DISABLE_UPDATES)
+      isTruthyFlag(process.env.OPENWHISPR_DISABLE_UPDATES) ||
+      !this.updatesTrusted
     ) {
       return;
     }
     if (process.env.NODE_ENV !== "development") {
-      setTimeout(() => {
+      if (this.startupCheckTimer) clearTimeout(this.startupCheckTimer);
+      this.startupCheckTimer = setTimeout(() => {
+        this.startupCheckTimer = null;
         console.log("🔄 Checking for updates on startup...");
-        autoUpdater.checkForUpdates().catch((err) => {
+        this.checkForUpdates().catch((err) => {
           console.error("Startup update check failed:", err);
         });
       }, 3000);
@@ -330,6 +473,15 @@ class UpdateManager {
   }
 
   cleanup() {
+    if (this.startupCheckTimer) {
+      clearTimeout(this.startupCheckTimer);
+      this.startupCheckTimer = null;
+    }
+    const autoUpdater = this.autoUpdater;
+    if (!autoUpdater) {
+      this.eventListeners = [];
+      return;
+    }
     this.eventListeners.forEach(({ event, handler }) => {
       autoUpdater.removeListener(event, handler);
     });
@@ -338,3 +490,6 @@ class UpdateManager {
 }
 
 module.exports = UpdateManager;
+module.exports.PINNED_UPDATE_CONFIG = PINNED_UPDATE_CONFIG;
+module.exports.VERIFIED_RELEASES_URL = VERIFIED_RELEASES_URL;
+module.exports.getGithubUpdateConfig = getGithubUpdateConfig;

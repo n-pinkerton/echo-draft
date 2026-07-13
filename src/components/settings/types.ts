@@ -5,7 +5,6 @@ export type SettingsSectionType =
   | "transcription"
   | "dictionary"
   | "aiModels"
-  | "agentConfig"
   | "prompts"
   | "permissions"
   | "privacy"

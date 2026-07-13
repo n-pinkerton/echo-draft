@@ -1,6 +1,10 @@
-import { normalizeCleanupModelId, sanitizeProcessedText } from "../../../config/prompts";
+import {
+  getTrustedCleanupDictionary,
+  normalizeCleanupModelId,
+  sanitizeProcessedText,
+} from "../../../config/prompts";
 import { assessCleanupFidelity, CleanupFidelityError } from "./cleanupFidelity";
-import { repairRequestReasonFragment } from "./cleanupOutputRepairs";
+import { repairCleanupOutput } from "./cleanupOutputRepairs";
 import {
   createTranscriptionCancelledError,
   isTranscriptionCancelled,
@@ -8,29 +12,6 @@ import {
 } from "../pipeline/cancellation";
 
 const OPENAI_FIDELITY_RETRY_MODEL = "gpt-5.6-sol";
-// A strict rescue may overcome a conservative rewrite-risk score, but never a
-// detected change to ordering, causality, or other relation markers.
-const SOL_RESCUE_ADVISORY_REASONS = new Set(["high-rewrite-risk"]);
-
-const canAcceptStrictSolRescue = (assessment) => {
-  if (
-    !assessment ||
-    !Array.isArray(assessment.reasons) ||
-    assessment.reasons.length === 0 ||
-    !assessment.reasons.every((reason) => SOL_RESCUE_ADVISORY_REASONS.has(reason))
-  ) {
-    return false;
-  }
-
-  const metrics = assessment.metrics || {};
-  return (
-    metrics.contentCoverage >= 0.9 &&
-    metrics.contentPrecision >= 0.9 &&
-    metrics.orderedBigramRetention >= 0.75 &&
-    metrics.semanticMissingContentWordCount <= 5 &&
-    metrics.semanticAddedContentWordCount <= 5
-  );
-};
 
 /**
  * Shared cleanup/orchestration around `ReasoningService` for transcript post-processing.
@@ -91,6 +72,13 @@ export class ReasoningCleanupService {
     return storedValue === "none" || storedValue === "medium" ? storedValue : "low";
   }
 
+  _getPreferredSpellings() {
+    // User dictionary entries may bias speech recognition, but they must not authorize a
+    // model-generated semantic substitution during cleanup. Only fixed product spellings are
+    // trusted strongly enough to waive the fidelity check for a near-homophone correction.
+    return getTrustedCleanupDictionary();
+  }
+
   _getFidelityRetryModel(model) {
     const provider =
       typeof window !== "undefined" && window.localStorage
@@ -100,6 +88,16 @@ export class ReasoningCleanupService {
       /^(?:gpt-5\.6-luna|gpt-5\.6-terra)$/.test(model)
       ? OPENAI_FIDELITY_RETRY_MODEL
       : model;
+  }
+
+  _getFidelityRetryReasoningEffort(retryModel, selectedEffort) {
+    const provider =
+      typeof window !== "undefined" && window.localStorage
+        ? localStorage.getItem("reasoningProvider") || "auto"
+        : "auto";
+    const isFirstPartySolRescue =
+      (provider === "openai" || provider === "auto") && retryModel === OPENAI_FIDELITY_RETRY_MODEL;
+    return isFirstPartySolRescue ? "medium" : selectedEffort;
   }
 
   /**
@@ -167,24 +165,24 @@ export class ReasoningCleanupService {
    * @param {{signal?: AbortSignal}} runtime
    * @returns {Promise<{text: string, assessment: any, retryCount: number, appliedModel: string}>}
    */
-  async processWithReasoningModelResult(text, model, agentName, runtime = {}) {
+  async processWithReasoningModelResult(text, model, _agentName, runtime = {}) {
     this.logger?.logReasoning?.("CALLING_REASONING_SERVICE", {
       model,
-      agentName,
       textLength: text.length,
     });
 
     const startTime = Date.now();
     const reasoningEffort = this._getReasoningEffort();
+    const fidelityOptions = { preferredSpellings: this._getPreferredSpellings() };
     const signal = runtime?.signal || null;
     let retryAttempted = false;
     let attemptedRetryModel = null;
     try {
       throwIfTranscriptionCancelled(signal);
-      const firstResult = repairRequestReasonFragment(
+      const firstResult = repairCleanupOutput(
         text,
         sanitizeProcessedText(
-          await this.reasoningService.processText(text, model, agentName, {
+          await this.reasoningService.processText(text, model, null, {
             cleanupPromptMode: "preservation-first",
             reasoningEffort,
             ...(signal ? { signal } : {}),
@@ -192,7 +190,7 @@ export class ReasoningCleanupService {
         )
       );
       throwIfTranscriptionCancelled(signal);
-      const firstAssessment = assessCleanupFidelity(text, firstResult);
+      const firstAssessment = assessCleanupFidelity(text, firstResult, fidelityOptions);
 
       if (firstAssessment.accepted) {
         const processingTimeMs = Date.now() - startTime;
@@ -218,34 +216,28 @@ export class ReasoningCleanupService {
       });
 
       const retryModel = this._getFidelityRetryModel(model);
+      const retryReasoningEffort = this._getFidelityRetryReasoningEffort(
+        retryModel,
+        reasoningEffort
+      );
       retryAttempted = true;
       attemptedRetryModel = retryModel;
       throwIfTranscriptionCancelled(signal);
-      const retryResult = repairRequestReasonFragment(
+      const retryResult = repairCleanupOutput(
         text,
         sanitizeProcessedText(
-          await this.reasoningService.processText(text, retryModel, agentName, {
+          await this.reasoningService.processText(text, retryModel, null, {
             cleanupPromptMode: "strict-preservation",
-            reasoningEffort,
+            reasoningEffort: retryReasoningEffort,
             ...(signal ? { signal } : {}),
           })
         )
       );
       throwIfTranscriptionCancelled(signal);
-      const retryAssessment = assessCleanupFidelity(text, retryResult);
-      const solRescueAccepted =
-        retryModel === OPENAI_FIDELITY_RETRY_MODEL && canAcceptStrictSolRescue(retryAssessment);
-      const effectiveRetryAssessment = solRescueAccepted
-        ? {
-            ...retryAssessment,
-            accepted: true,
-            reasons: [],
-            advisoryReasons: retryAssessment.reasons,
-          }
-        : retryAssessment;
+      const retryAssessment = assessCleanupFidelity(text, retryResult, fidelityOptions);
       const processingTimeMs = Date.now() - startTime;
 
-      if (!effectiveRetryAssessment.accepted) {
+      if (!retryAssessment.accepted) {
         this.logger?.logReasoning?.("REASONING_FIDELITY_REJECTED", {
           model,
           retryModel,
@@ -257,19 +249,10 @@ export class ReasoningCleanupService {
         throw new CleanupFidelityError(retryAssessment);
       }
 
-      if (solRescueAccepted) {
-        this.logger?.logReasoning?.("REASONING_SOL_RESCUE_ACCEPTED", {
-          model,
-          retryModel,
-          processingTimeMs,
-          advisoryReasons: retryAssessment.reasons,
-          metrics: retryAssessment.metrics,
-        });
-      }
-
       this.logger?.logReasoning?.("REASONING_SERVICE_COMPLETE", {
         model,
         retryModel,
+        retryReasoningEffort,
         processingTimeMs,
         resultLength: retryResult.length,
         retryCount: 1,
@@ -278,7 +261,7 @@ export class ReasoningCleanupService {
 
       return {
         text: retryResult,
-        assessment: effectiveRetryAssessment,
+        assessment: retryAssessment,
         retryCount: 1,
         appliedModel: retryModel,
       };
@@ -307,7 +290,7 @@ export class ReasoningCleanupService {
   }
 
   validateCleanupCandidate(originalText, candidateText) {
-    const text = sanitizeProcessedText(candidateText);
+    const text = repairCleanupOutput(originalText, sanitizeProcessedText(candidateText));
     const assessment = assessCleanupFidelity(originalText, text);
     if (!assessment.accepted) {
       throw new CleanupFidelityError(assessment);
@@ -342,10 +325,6 @@ export class ReasoningCleanupService {
         ? localStorage.getItem("reasoningProvider") || "auto"
         : "auto";
     const reasoningModel = normalizeCleanupModelId(storedReasoningModel, reasoningProvider);
-    const agentName =
-      typeof window !== "undefined" && window.localStorage
-        ? localStorage.getItem("agentName") || null
-        : null;
     const requested = this._isReasoningEnabled(cleanupEnabledOverride);
     const baseOutcome = {
       requested,
@@ -390,7 +369,6 @@ export class ReasoningCleanupService {
       useReasoning,
       reasoningModel,
       reasoningProvider,
-      agentName,
     });
 
     if (!useReasoning || !normalizedText) {
@@ -414,7 +392,7 @@ export class ReasoningCleanupService {
       const result = await this.processWithReasoningModelResult(
         normalizedText,
         reasoningModel,
-        agentName,
+        null,
         runtime
       );
       this.logger?.logReasoning?.("REASONING_SUCCESS", {

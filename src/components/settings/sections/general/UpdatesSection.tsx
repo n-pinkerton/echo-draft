@@ -23,9 +23,11 @@ export default function UpdatesSection(props: Props) {
     status: updateStatus,
     info: updateInfo,
     downloadProgress: updateDownloadProgress,
-    isChecking: checkingForUpdates,
+    isChecking: hookCheckingForUpdates,
     isDownloading: downloadingUpdate,
     isInstalling: installInitiated,
+    isInitialized: updateStatusInitialized,
+    isInitializing: updateStatusLoading,
     checkForUpdates,
     downloadUpdate,
     installUpdate: installUpdateAction,
@@ -34,7 +36,11 @@ export default function UpdatesSection(props: Props) {
   } = useUpdater();
 
   const isUpdateAvailable =
-    !updateStatus.isDevelopment && (updateStatus.updateAvailable || updateStatus.updateDownloaded);
+    updateStatus.updatesEnabled &&
+    !updateStatus.isDevelopment &&
+    (updateStatus.updateAvailable || updateStatus.updateDownloaded);
+  const checkingForUpdates = hookCheckingForUpdates || updateStatus.isChecking;
+  const hasCheckedForUpdates = updateStatus.hasCheckedForUpdates === true;
 
   useEffect(() => {
     let mounted = true;
@@ -50,17 +56,6 @@ export default function UpdatesSection(props: Props) {
       clearTimeout(timer);
     };
   }, [getAppVersion]);
-
-  useEffect(() => {
-    if (updateError) {
-      showAlertDialog({
-        title: "Update Error",
-        description:
-          updateError.message ||
-          "The updater encountered a problem. Please try again or download the latest release manually.",
-      });
-    }
-  }, [updateError, showAlertDialog]);
 
   useEffect(() => {
     if (installInitiated) {
@@ -95,21 +90,41 @@ export default function UpdatesSection(props: Props) {
           <SettingsRow
             label="Current version"
             description={
-              updateStatus.isDevelopment
-                ? "Running in development mode"
-                : isUpdateAvailable
-                  ? "A newer version is available"
-                  : "You're on the latest version"
+              updateStatusLoading || !updateStatusInitialized
+                ? "Checking update status..."
+                : updateError
+                  ? "Update status is unavailable. Try again later or download updates manually."
+                  : updateStatus.isDevelopment
+                    ? "Running in development mode"
+                    : !updateStatus.updatesEnabled
+                      ? updateStatus.disabledReason || "Automatic updates are unavailable"
+                      : checkingForUpdates
+                        ? "Checking for updates..."
+                        : isUpdateAvailable
+                          ? "A newer version is available"
+                          : !hasCheckedForUpdates
+                            ? "Updates have not been checked yet"
+                            : "You're on the latest version"
             }
           >
             <div className="flex items-center gap-2.5">
               <span className="text-[13px] tabular-nums text-muted-foreground font-mono">
                 {currentVersion || "..."}
               </span>
-              {updateStatus.isDevelopment ? (
+              {updateStatusLoading || !updateStatusInitialized ? (
+                <Badge variant="outline">Loading</Badge>
+              ) : updateError ? (
+                <Badge variant="warning">Unavailable</Badge>
+              ) : updateStatus.isDevelopment ? (
                 <Badge variant="warning">Dev</Badge>
+              ) : !updateStatus.updatesEnabled ? (
+                <Badge variant="warning">Manual</Badge>
+              ) : checkingForUpdates ? (
+                <Badge variant="outline">Checking</Badge>
               ) : isUpdateAvailable ? (
                 <Badge variant="success">Update</Badge>
+              ) : !hasCheckedForUpdates ? (
+                <Badge variant="outline">Not checked</Badge>
               ) : (
                 <Badge variant="outline">Latest</Badge>
               )}
@@ -134,14 +149,17 @@ export default function UpdatesSection(props: Props) {
                       description: result?.message || "No updates available",
                     });
                   }
-                } catch (error: any) {
-                  showAlertDialog({
-                    title: "Update Check Failed",
-                    description: `Error checking for updates: ${error.message}`,
-                  });
+                } catch {
+                  // The control panel owns the single update-error presentation.
                 }
               }}
-              disabled={checkingForUpdates || updateStatus.isDevelopment}
+              disabled={
+                updateStatusLoading ||
+                !updateStatusInitialized ||
+                checkingForUpdates ||
+                updateStatus.isDevelopment ||
+                !updateStatus.updatesEnabled
+              }
               variant="outline"
               className="w-full"
               size="sm"
@@ -159,14 +177,11 @@ export default function UpdatesSection(props: Props) {
                   onClick={async () => {
                     try {
                       await downloadUpdate();
-                    } catch (error: any) {
-                      showAlertDialog({
-                        title: "Download Failed",
-                        description: `Failed to download update: ${error.message}`,
-                      });
+                    } catch {
+                      // The control panel owns the single update-error presentation.
                     }
                   }}
-                  disabled={downloadingUpdate}
+                  disabled={updateStatusLoading || downloadingUpdate}
                   variant="success"
                   className="w-full"
                   size="sm"
@@ -203,25 +218,47 @@ export default function UpdatesSection(props: Props) {
                     onConfirm: async () => {
                       try {
                         await installUpdateAction();
-                      } catch (error: any) {
-                        showAlertDialog({
-                          title: "Install Failed",
-                          description: `Failed to install update: ${error.message}`,
-                        });
+                      } catch {
+                        // The control panel owns the single update-error presentation.
                       }
                     },
                   });
                 }}
-                disabled={installInitiated}
+                disabled={updateStatusLoading || installInitiated}
                 className="w-full"
                 size="sm"
               >
-                <RefreshCw
-                  size={14}
-                  className={`mr-2 ${installInitiated ? "animate-spin" : ""}`}
-                />
+                <RefreshCw size={14} className={`mr-2 ${installInitiated ? "animate-spin" : ""}`} />
                 {installInitiated ? "Restarting..." : "Install & Restart"}
               </Button>
+            )}
+
+            {(!updateStatus.updatesEnabled || updateError) && (
+              <div className="rounded-md border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+                <p>
+                  Use the Windows <strong>Setup</strong> download for a normal upgrade. The portable
+                  build runs separately and does not replace an installed copy.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 w-full"
+                  onClick={async () => {
+                    try {
+                      await window.electronAPI.openVerifiedReleases();
+                    } catch {
+                      showAlertDialog({
+                        title: "Could Not Open Releases",
+                        description:
+                          "Open GitHub and go to n-pinkerton/echo-draft/releases to download the verified Setup file.",
+                      });
+                    }
+                  }}
+                >
+                  Open verified releases
+                </Button>
+              </div>
             )}
           </div>
 
@@ -240,4 +277,3 @@ export default function UpdatesSection(props: Props) {
     </div>
   );
 }
-

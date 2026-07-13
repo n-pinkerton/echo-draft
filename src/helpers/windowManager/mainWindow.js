@@ -5,6 +5,8 @@ const { DEV_SERVER_PORT } = DevServerManager;
 const MenuManager = require("../menuManager");
 const { MAIN_WINDOW_CONFIG, WINDOW_SIZES, WindowPositionUtil } = require("../windowConfig");
 const { shouldSuppressWindowPresentation } = require("./e2eWindowPresentation");
+const { moveWindowToCurrentVirtualDesktop } = require("./windowsVirtualDesktop");
+const { isTrustedAppNavigation } = require("../ipc/trustedRenderer");
 
 function handleMainWindowLoadFailure(
   manager,
@@ -52,6 +54,11 @@ async function createMainWindow(manager) {
 
   setMainWindowInteractivity(manager, false);
   registerMainWindowEvents(manager);
+  manager.mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isTrustedAppNavigation(manager.mainWindow, url)) return;
+    event.preventDefault();
+  });
+  manager.mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
   // Register load event handlers BEFORE loading to catch all events
   manager.mainWindow.webContents.on(
@@ -152,6 +159,12 @@ function showRecordingIndicator(manager, { screenModule = screen } = {}) {
 
   resizeMainWindow(manager, "RECORDING_INDICATOR", { screenModule });
   setMainWindowInteractivity(manager, false);
+  void moveWindowToCurrentVirtualDesktop(manager.mainWindow).then((result) => {
+    if (!result.success || !manager.mainWindow || manager.mainWindow.isDestroyed()) return;
+    if (typeof manager.mainWindow.showInactive === "function") manager.mainWindow.showInactive();
+    else manager.mainWindow.show();
+    enforceMainWindowOnTop(manager);
+  });
   if (!manager.mainWindow.isVisible()) {
     if (typeof manager.mainWindow.showInactive === "function") {
       manager.mainWindow.showInactive();

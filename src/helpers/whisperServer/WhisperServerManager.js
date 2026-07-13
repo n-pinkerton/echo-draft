@@ -21,6 +21,7 @@ const { convertBufferToWav } = require("./audioConversion");
 const STARTUP_TIMEOUT_MS = 30000;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 2000;
+const MAX_TRANSCRIPTION_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 class WhisperServerManager {
   constructor() {
@@ -32,6 +33,47 @@ class WhisperServerManager {
     this.healthCheckInterval = null;
     this.cachedServerBinaryPath = null;
     this.canConvert = false;
+  }
+
+  _markProcessUnavailable(targetProcess, { clearModel = false } = {}) {
+    if (this.process !== targetProcess) return;
+
+    this.process = null;
+    this.ready = false;
+    this.port = null;
+    if (clearModel) this.modelPath = null;
+    this.stopHealthCheck();
+  }
+
+  _handleProcessClose(startedProcess, code) {
+    debugLogger.debug("whisper-server process exited", { code });
+    this._markProcessUnavailable(startedProcess);
+  }
+
+  async _terminateProcess(targetProcess, { clearModel = false } = {}) {
+    if (!targetProcess) return;
+
+    this._markProcessUnavailable(targetProcess, { clearModel });
+    if (targetProcess.exitCode !== null || targetProcess.signalCode !== null) return;
+
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(forceKillTimeout);
+        targetProcess.removeListener("close", finish);
+        resolve();
+      };
+      const forceKillTimeout = setTimeout(() => {
+        killProcess(targetProcess, "SIGKILL");
+      }, 5000);
+
+      targetProcess.once("close", finish);
+      killProcess(targetProcess, "SIGTERM");
+
+      if (targetProcess.exitCode !== null || targetProcess.signalCode !== null) finish();
+    });
   }
 
   getServerBinaryPath() {
@@ -137,15 +179,12 @@ class WhisperServerManager {
 
     this.process.on("error", (error) => {
       debugLogger.error("whisper-server process error", { error: error.message });
-      this.ready = false;
+      if (this.process === startedProcess) this.ready = false;
     });
 
     this.process.on("close", (code) => {
       exitCode = code;
-      debugLogger.debug("whisper-server process exited", { code });
-      this.ready = false;
-      this.process = null;
-      this.stopHealthCheck();
+      this._handleProcessClose(startedProcess, code);
     });
 
     try {
@@ -237,11 +276,12 @@ class WhisperServerManager {
   startHealthCheck() {
     this.stopHealthCheck();
     this.healthCheckInterval = setInterval(async () => {
-      if (!this.process) {
+      const checkedProcess = this.process;
+      if (!checkedProcess) {
         this.stopHealthCheck();
         return;
       }
-      if (!(await this.checkHealth())) {
+      if (!(await this.checkHealth()) && this.process === checkedProcess) {
         debugLogger.warn("whisper-server health check failed");
         this.ready = false;
       }
@@ -279,12 +319,7 @@ class WhisperServerManager {
       throw new Error("FFmpeg not found - required for audio conversion");
     }
 
-    const finalBuffer = await convertBufferToWav({
-      audioBuffer,
-      convertToWav,
-      tempPrefix: "whisper",
-      signal,
-    });
+    const finalBuffer = await this.convertAudioBuffer(audioBuffer, signal);
     throwIfAborted(signal);
 
     const { boundary, body } = buildWhisperMultipartBody({
@@ -294,22 +329,40 @@ class WhisperServerManager {
     });
 
     if (initialPrompt) {
-      debugLogger.info("Using custom dictionary prompt", { prompt: initialPrompt });
+      debugLogger.info("Using custom dictionary prompt", {
+        promptPresent: true,
+        promptLength: initialPrompt.length,
+        entryCount: initialPrompt.split(",").filter(Boolean).length,
+      });
     }
+
+    const servingProcess = this.process;
+    const servingPort = this.port;
 
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
       let settled = false;
+      let cancelling = false;
       const finish = (fn, value) => {
         if (settled) return;
         settled = true;
         signal?.removeEventListener("abort", onAbort);
         fn(value);
       };
-      const req = http.request(
+      let req;
+      const terminateServingProcess = (error) => {
+        if (cancelling) return;
+        cancelling = true;
+        req?.destroy();
+        this._terminateProcess(servingProcess).then(
+          () => finish(reject, error),
+          () => finish(reject, new Error("whisper-server failed and could not be stopped cleanly"))
+        );
+      };
+      req = http.request(
         {
           hostname: "127.0.0.1",
-          port: this.port,
+          port: servingPort,
           path: "/inference",
           method: "POST",
           headers: {
@@ -319,11 +372,21 @@ class WhisperServerManager {
           timeout: 300000,
         },
         (res) => {
-          let data = "";
+          const chunks = [];
+          let responseBytes = 0;
           res.on("data", (chunk) => {
-            data += chunk;
+            if (cancelling) return;
+            const bytes = Buffer.from(chunk);
+            responseBytes += bytes.length;
+            if (responseBytes > MAX_TRANSCRIPTION_RESPONSE_BYTES) {
+              terminateServingProcess(new Error("whisper-server response exceeded the size limit"));
+              return;
+            }
+            chunks.push(bytes);
           });
           res.on("end", () => {
+            if (cancelling) return;
+            const data = Buffer.concat(chunks, responseBytes).toString("utf8");
             debugLogger.debug("whisper-server transcription completed", {
               statusCode: res.statusCode,
               elapsed: Date.now() - startTime,
@@ -349,21 +412,29 @@ class WhisperServerManager {
         }
       );
       const onAbort = () => {
-        req.destroy();
-        finish(reject, createAbortError());
+        terminateServingProcess(createAbortError());
       };
       signal?.addEventListener("abort", onAbort, { once: true });
 
-      req.on("error", (error) => {
-        finish(reject, new Error(`whisper-server request failed: ${error.message}`));
+      req.on("error", () => {
+        if (cancelling) return;
+        terminateServingProcess(new Error("whisper-server request failed"));
       });
       req.on("timeout", () => {
-        req.destroy();
-        finish(reject, new Error("whisper-server request timed out"));
+        terminateServingProcess(new Error("whisper-server request timed out"));
       });
 
       req.write(body);
       req.end();
+    });
+  }
+
+  async convertAudioBuffer(audioBuffer, signal = null) {
+    return await convertBufferToWav({
+      audioBuffer,
+      convertToWav,
+      tempPrefix: "whisper",
+      signal,
     });
   }
 
@@ -372,40 +443,21 @@ class WhisperServerManager {
 
     if (!this.process) {
       this.ready = false;
+      this.port = null;
+      this.modelPath = null;
       return;
     }
 
     debugLogger.debug("Stopping whisper-server");
+    const targetProcess = this.process;
 
     try {
-      killProcess(this.process, "SIGTERM");
-
-      await new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          if (this.process) {
-            killProcess(this.process, "SIGKILL");
-          }
-          resolve();
-        }, 5000);
-
-        if (this.process) {
-          this.process.once("close", () => {
-            clearTimeout(timeout);
-            resolve();
-          });
-        } else {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
+      await this._terminateProcess(targetProcess, { clearModel: true });
     } catch (error) {
       debugLogger.error("Error stopping whisper-server", { error: error.message });
     }
 
-    this.process = null;
-    this.ready = false;
-    this.port = null;
-    this.modelPath = null;
+    this._markProcessUnavailable(targetProcess, { clearModel: true });
   }
 
   getStatus() {
@@ -420,3 +472,4 @@ class WhisperServerManager {
 }
 
 module.exports = WhisperServerManager;
+module.exports.MAX_TRANSCRIPTION_RESPONSE_BYTES = MAX_TRANSCRIPTION_RESPONSE_BYTES;

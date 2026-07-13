@@ -1,7 +1,6 @@
 const { ipcMain, app, shell, BrowserWindow, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
 
@@ -27,6 +26,7 @@ const { registerLlamaCppHandlers } = require("./ipc/handlers/llamaCppHandlers");
 const { registerLlamaServerHandlers } = require("./ipc/handlers/llamaServerHandlers");
 const { registerModelManagementHandlers } = require("./ipc/handlers/modelManagementHandlers");
 const { registerParakeetHandlers } = require("./ipc/handlers/parakeetHandlers");
+const { registerProviderRequestHandlers } = require("./ipc/handlers/providerRequestHandlers");
 const { registerRendererLogHandlers } = require("./ipc/handlers/rendererLogHandlers");
 const { registerSystemSettingsHandlers } = require("./ipc/handlers/systemSettingsHandlers");
 const { registerTranscriptionDbHandlers } = require("./ipc/handlers/transcriptionDbHandlers");
@@ -39,6 +39,7 @@ const {
   CancelableRequestRegistry,
   registerCancelableRequestHandler,
 } = require("./ipc/cancelableRequestRegistry");
+const { requireTrustedRenderer } = require("./ipc/trustedRenderer");
 
 const IS_E2E_MODE = isTruthyFlag(process.env.OPENWHISPR_E2E);
 
@@ -63,13 +64,13 @@ class IPCHandlers {
     let changed = false;
     for (const [key, value] of Object.entries(setVars)) {
       if (process.env[key] !== value) {
-        process.env[key] = value;
+        this.environmentManager.savePersistedValue(key, String(value));
         changed = true;
       }
     }
     for (const key of clearVars) {
       if (process.env[key]) {
-        delete process.env[key];
+        this.environmentManager.clearPersistedValue(key);
         changed = true;
       }
     }
@@ -93,11 +94,22 @@ class IPCHandlers {
     });
 
     registerWindowControlHandlers({ ipcMain, app }, { windowManager: this.windowManager });
-    ipcMain.on("tray-status-update", (_event, status) => {
+    ipcMain.on("tray-status-update", (event, status) => {
+      try {
+        requireTrustedRenderer(event, this.windowManager, ["dictation"]);
+      } catch {
+        return;
+      }
       this.trayManager?.updateDictationStatus?.(status);
     });
-    registerEnvironmentHandlers({ ipcMain }, { environmentManager: this.environmentManager });
-    registerCancelableRequestHandler({ ipcMain }, { registry: this.cancelableRequests });
+    registerEnvironmentHandlers(
+      { ipcMain, dialog },
+      { environmentManager: this.environmentManager, windowManager: this.windowManager }
+    );
+    registerCancelableRequestHandler(
+      { ipcMain },
+      { registry: this.cancelableRequests, windowManager: this.windowManager }
+    );
 
     registerTranscriptionDbHandlers(
       { ipcMain, app, BrowserWindow, dialog, fs, path },
@@ -133,10 +145,17 @@ class IPCHandlers {
       { windowManager: this.windowManager }
     );
 
-    registerClipboardHandlers({ ipcMain }, { clipboardManager: this.clipboardManager });
+    registerClipboardHandlers(
+      { ipcMain },
+      { clipboardManager: this.clipboardManager, windowManager: this.windowManager }
+    );
     registerWhisperHandlers(
       { ipcMain },
-      { whisperManager: this.whisperManager, cancelableRequests: this.cancelableRequests }
+      {
+        whisperManager: this.whisperManager,
+        cancelableRequests: this.cancelableRequests,
+        windowManager: this.windowManager,
+      }
     );
     registerParakeetHandlers(
       { ipcMain },
@@ -144,6 +163,15 @@ class IPCHandlers {
         parakeetManager: this.parakeetManager,
         environmentManager: this.environmentManager,
         cancelableRequests: this.cancelableRequests,
+        windowManager: this.windowManager,
+      }
+    );
+    registerProviderRequestHandlers(
+      { ipcMain },
+      {
+        cancelableRequests: this.cancelableRequests,
+        environmentManager: this.environmentManager,
+        windowManager: this.windowManager,
       }
     );
 
@@ -152,13 +180,14 @@ class IPCHandlers {
       { windowManager: this.windowManager, windowsKeyManager: this.windowsKeyManager }
     );
 
-    registerAutoStartHandlers({ ipcMain, app });
+    registerAutoStartHandlers({ ipcMain, app }, { windowManager: this.windowManager });
 
     registerModelManagementHandlers(
       { ipcMain },
       {
         environmentManager: this.environmentManager,
         cancelableRequests: this.cancelableRequests,
+        windowManager: this.windowManager,
       }
     );
     registerDictationKeyHandlers(
@@ -166,22 +195,24 @@ class IPCHandlers {
       {
         environmentManager: this.environmentManager,
         cancelableRequests: this.cancelableRequests,
+        windowManager: this.windowManager,
         syncStartupEnv: (setVars, clearVars) => this._syncStartupEnv(setVars, clearVars),
       }
     );
-    registerLlamaCppHandlers({ ipcMain });
-    registerLlamaServerHandlers({ ipcMain });
-    registerRendererLogHandlers({ ipcMain });
-    registerSystemSettingsHandlers({ ipcMain, shell });
-    registerAuthHandlers({ ipcMain, BrowserWindow });
+    registerLlamaCppHandlers({ ipcMain }, { windowManager: this.windowManager });
+    registerLlamaServerHandlers({ ipcMain }, { windowManager: this.windowManager });
+    registerRendererLogHandlers({ ipcMain }, { windowManager: this.windowManager });
+    registerSystemSettingsHandlers({ ipcMain, shell }, { windowManager: this.windowManager });
+    registerAuthHandlers({ ipcMain, shell }, { cloudContext, windowManager: this.windowManager });
 
     registerCloudApiHandlers(
-      { ipcMain, app, http, https, shell },
+      { ipcMain, app, https, shell },
       {
         cloudContext,
         sessionId: this.sessionId,
         whisperManager: this.whisperManager,
         cancelableRequests: this.cancelableRequests,
+        windowManager: this.windowManager,
       }
     );
 
@@ -189,7 +220,10 @@ class IPCHandlers {
       { ipcMain, app, path, shell, dialog, BrowserWindow, debugLogger, saveDebugAudioCapture },
       { environmentManager: this.environmentManager, windowManager: this.windowManager }
     );
-    registerUpdateHandlers({ ipcMain }, { updateManager: this.updateManager });
+    registerUpdateHandlers(
+      { ipcMain, shell },
+      { updateManager: this.updateManager, windowManager: this.windowManager }
+    );
 
     const streamingState = {
       get: () => this.assemblyAiStreaming,
@@ -202,7 +236,7 @@ class IPCHandlers {
     };
     registerAssemblyAiStreamingHandlers(
       { ipcMain, BrowserWindow, debugLogger, AssemblyAiStreaming },
-      { cloudContext, streamingState }
+      { cloudContext, streamingState, windowManager: this.windowManager }
     );
   }
 

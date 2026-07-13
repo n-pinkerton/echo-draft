@@ -141,6 +141,15 @@
       "instruction": "LANGUAGE CONTEXT: The user's preferred language is British English. You MUST use British English spelling conventions throughout your response (e.g., \"colour\" not \"color\", \"organise\" not \"organize\", \"centre\" not \"center\", \"defence\" not \"defense\", \"analyse\" not \"analyze\")."
     },
     {
+      "code": "en-NZ",
+      "label": "English (New Zealand)",
+      "flag": "\uD83C\uDDF3\uD83C\uDDFF",
+      "whisper": true,
+      "parakeet": true,
+      "assemblyai": true,
+      "instruction": "LANGUAGE CONTEXT: The user's preferred language is New Zealand English. Use New Zealand spelling and punctuation conventions throughout the cleaned text, while preserving technical terms exactly as dictated."
+    },
+    {
       "code": "et",
       "label": "Estonian",
       "flag": "\uD83C\uDDEA\uD83C\uDDEA",

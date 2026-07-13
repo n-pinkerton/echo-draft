@@ -18,6 +18,7 @@ import { OpenAiEndpointResolver } from "./reasoning/openaiEndpoints";
 import { checkReasoningAvailability } from "./reasoning/availability";
 import { ECHO_DRAFT_CLOUD_MODE } from "../utils/branding";
 import { raceWithAbort, throwIfAborted } from "../utils/retry";
+import { createProviderFetch } from "./reasoning/providerFetch";
 
 /**
  * @deprecated Use UNIFIED_SYSTEM_PROMPT from ../config/prompts instead
@@ -55,7 +56,7 @@ class ReasoningService extends BaseReasoningService {
   async processText(
     text: string,
     model: string = "",
-    agentName: string | null = null,
+    _agentName: string | null = null,
     config: ReasoningConfig = {}
   ): Promise<string> {
     throwIfAborted(config.signal);
@@ -68,7 +69,6 @@ class ReasoningService extends BaseReasoningService {
     logger.logReasoning("PROVIDER_SELECTION", {
       model: trimmedModel,
       provider,
-      agentName,
       hasConfig: Object.keys(config).length > 0,
       textLength: text.length,
       timestamp: new Date().toISOString(),
@@ -85,22 +85,22 @@ class ReasoningService extends BaseReasoningService {
 
       switch (provider) {
         case "openai":
-          result = await this.processWithOpenAI(text, trimmedModel, agentName, config);
+          result = await this.processWithOpenAI(text, trimmedModel, null, config);
           break;
         case "anthropic":
-          result = await this.processWithAnthropic(text, trimmedModel, agentName, config);
+          result = await this.processWithAnthropic(text, trimmedModel, null, config);
           break;
         case "local":
-          result = await this.processWithLocal(text, trimmedModel, agentName, config);
+          result = await this.processWithLocal(text, trimmedModel, null, config);
           break;
         case "gemini":
-          result = await this.processWithGemini(text, trimmedModel, agentName, config);
+          result = await this.processWithGemini(text, trimmedModel, null, config);
           break;
         case "groq":
-          result = await this.processWithGroq(text, model, agentName, config);
+          result = await this.processWithGroq(text, model, null, config);
           break;
         case ECHO_DRAFT_CLOUD_MODE:
-          result = await this.processWithEchoDraft(text, model, agentName, config);
+          result = await this.processWithEchoDraft(text, model, null, config);
           break;
         default:
           throw new Error(`Unsupported reasoning provider: ${provider}`);
@@ -174,6 +174,10 @@ class ReasoningService extends BaseReasoningService {
           this.openAiEndpointResolver.getStoredPreference(base, storage),
         rememberOpenAiPreference: (base, preference) =>
           this.openAiEndpointResolver.rememberPreference(base, preference, storage),
+        fetchFn: createProviderFetch(isCustomProvider ? "custom" : "openai", {
+          cleanupPromptMode: config.cleanupPromptMode,
+          language: this.getPreferredLanguage(),
+        }),
       });
     } catch (error) {
       logger.logReasoning("OPENAI_ERROR", {
@@ -206,8 +210,7 @@ class ReasoningService extends BaseReasoningService {
       model,
       agentName,
       config,
-      getSystemPrompt: (value, selectedModel) =>
-        this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
+      getPreferredLanguage: () => this.getPreferredLanguage(),
       ipcCall: (userPrompt, modelName, agent, options, requestId) =>
         window.electronAPI.processAnthropicReasoning(
           userPrompt,
@@ -238,8 +241,7 @@ class ReasoningService extends BaseReasoningService {
       model,
       agentName,
       config,
-      getSystemPrompt: (value, selectedModel) =>
-        this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
+      getPreferredLanguage: () => this.getPreferredLanguage(),
       ipcCall: (userPrompt, modelName, agent, options, requestId) =>
         window.electronAPI.processLocalReasoning(userPrompt, modelName, agent, options, requestId),
     });
@@ -270,6 +272,10 @@ class ReasoningService extends BaseReasoningService {
           this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
+        fetchFn: createProviderFetch("gemini", {
+          cleanupPromptMode: config.cleanupPromptMode,
+          language: this.getPreferredLanguage(),
+        }),
       });
     } catch (error) {
       logger.logReasoning("GEMINI_ERROR", {
@@ -312,6 +318,10 @@ class ReasoningService extends BaseReasoningService {
           this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
+        fetchFn: createProviderFetch("groq", {
+          cleanupPromptMode: config.cleanupPromptMode,
+          language: this.getPreferredLanguage(),
+        }),
       });
     } catch (error) {
       logger.logReasoning("GROQ_ERROR", {
@@ -347,7 +357,6 @@ class ReasoningService extends BaseReasoningService {
         model,
         agentName,
         _config: config,
-        getCustomDictionary: () => this.getCustomDictionary(),
         getPreferredLanguage: () => this.getPreferredLanguage(),
         cloudReason: (input, payload, requestId) =>
           (window as any).electronAPI.cloudReason(input, payload, requestId),

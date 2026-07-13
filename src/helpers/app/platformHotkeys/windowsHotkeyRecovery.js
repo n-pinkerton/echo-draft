@@ -2,9 +2,11 @@ function registerWindowsHotkeyRecovery({
   powerMonitor,
   windowManager,
   windowsHotkeyController,
+  controlPanelShortcutRegistration,
   debugLogger,
   platform = process.platform,
   delayMs = 500,
+  retryDelayMs = 500,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
 } = {}) {
@@ -12,30 +14,105 @@ function registerWindowsHotkeyRecovery({
     return () => {};
   }
 
-  let timer = null;
+  const maxAttempts = 3;
+  let debounceTimer = null;
+  let retryTimer = null;
+  let disposed = false;
+  let recoveryInFlight = false;
+  let pendingReason = null;
+  let resolveRetryDelay = null;
+
+  const waitForRetry = () =>
+    new Promise((resolve) => {
+      resolveRetryDelay = resolve;
+      retryTimer = setTimeoutFn(() => {
+        retryTimer = null;
+        resolveRetryDelay = null;
+        resolve(!disposed);
+      }, retryDelayMs);
+    });
 
   const recover = async (reason) => {
-    timer = null;
+    recoveryInFlight = true;
+    let registration = null;
+    let attempt = 0;
+
     try {
       windowsHotkeyController?.forceStopActiveRoutes?.(`system-${reason}`);
-      const registration = await windowManager.recoverHotkeys?.();
+
+      while (!disposed && attempt < maxAttempts) {
+        attempt += 1;
+        let threw = false;
+        try {
+          registration = await windowManager.recoverHotkeys?.();
+        } catch {
+          registration = null;
+          threw = true;
+        }
+        if (disposed) return;
+
+        const insertSuccess = registration?.insert?.success === true;
+        debugLogger?.debug?.("[HotkeyRecovery] Insert registration attempt finished", {
+          reason,
+          attempt,
+          maxAttempts,
+          insertSuccess,
+          threw,
+          final: insertSuccess || attempt === maxAttempts,
+        });
+
+        if (insertSuccess) break;
+        if (attempt < maxAttempts && !(await waitForRetry())) return;
+      }
+
+      if (registration?.insert?.success !== true) {
+        windowManager.onInsertHotkeyRegistrationFailure?.(registration?.insert || {});
+        debugLogger?.warn?.("[HotkeyRecovery] Insert registration failed after final attempt", {
+          reason,
+          attempts: attempt,
+          final: true,
+        });
+      }
+
+      const controlPanel = controlPanelShortcutRegistration?.refresh?.(`system-${reason}`) || null;
       windowsHotkeyController?.refreshWindowsKeyListeners?.({ reason: `system-${reason}` });
-      debugLogger?.debug?.("[HotkeyRecovery] Hotkeys refreshed", {
+      debugLogger?.debug?.("[HotkeyRecovery] Recovery finished", {
         reason,
-        insertSuccess: registration?.insert?.success ?? null,
+        attempts: attempt,
+        insertSuccess: registration?.insert?.success ?? false,
         clipboardSuccess: registration?.clipboard?.success ?? null,
+        controlPanelSuccess: controlPanel?.registered ?? null,
+        final: true,
       });
     } catch (error) {
-      debugLogger?.warn?.("[HotkeyRecovery] Failed to refresh hotkeys", {
+      if (disposed) return;
+      debugLogger?.warn?.("[HotkeyRecovery] Recovery stopped unexpectedly", {
         reason,
-        error: error?.message || String(error),
+        errorType: error?.name || "Error",
+        final: true,
       });
+    } finally {
+      recoveryInFlight = false;
+      if (!disposed && pendingReason) {
+        const nextReason = pendingReason;
+        pendingReason = null;
+        void recover(nextReason);
+      }
     }
   };
 
   const scheduleRecovery = (reason) => {
-    if (timer) clearTimeoutFn(timer);
-    timer = setTimeoutFn(() => void recover(reason), delayMs);
+    if (disposed) return;
+    if (debounceTimer) clearTimeoutFn(debounceTimer);
+    debounceTimer = setTimeoutFn(() => {
+      debounceTimer = null;
+      if (disposed) return;
+      if (recoveryInFlight) {
+        pendingReason = reason;
+        return;
+      }
+      void recover(reason);
+    }, delayMs);
   };
 
   const onResume = () => scheduleRecovery("resume");
@@ -44,9 +121,20 @@ function registerWindowsHotkeyRecovery({
   powerMonitor.on("unlock-screen", onUnlock);
 
   return () => {
-    if (timer) {
-      clearTimeoutFn(timer);
-      timer = null;
+    disposed = true;
+    pendingReason = null;
+    if (debounceTimer) {
+      clearTimeoutFn(debounceTimer);
+      debounceTimer = null;
+    }
+    if (retryTimer) {
+      clearTimeoutFn(retryTimer);
+      retryTimer = null;
+    }
+    if (resolveRetryDelay) {
+      const resolve = resolveRetryDelay;
+      resolveRetryDelay = null;
+      resolve(false);
     }
     powerMonitor.removeListener("resume", onResume);
     powerMonitor.removeListener("unlock-screen", onUnlock);

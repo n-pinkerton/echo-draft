@@ -4,18 +4,6 @@ import { isSecureEndpoint } from "../../../utils/urlUtils";
 import { readOpenAiTranscriptionStream } from "./openAiSseStream";
 import { processWithOpenAIAPI as processWithOpenAIAPIRequest } from "./openAiTranscriptionProcessor";
 
-const PLACEHOLDER_KEYS = {
-  openai: "your_openai_api_key_here",
-  groq: "your_groq_api_key_here",
-  mistral: "your_mistral_api_key_here",
-};
-
-const isValidApiKey = (key, provider = "openai") => {
-  if (!key || key.trim() === "") return false;
-  const placeholder = PLACEHOLDER_KEYS[provider] || PLACEHOLDER_KEYS.openai;
-  return key !== placeholder;
-};
-
 /**
  * OpenAI/Groq/Mistral/custom HTTP transcription client used by AudioManager.
  *
@@ -74,57 +62,21 @@ export class OpenAiTranscriber {
       return this.cachedApiKey;
     }
 
-    let apiKey = null;
+    const status = await window.electronAPI?.getApiKeyStatus?.();
+    let apiKey = "configured-in-main";
 
     if (provider === "custom") {
-      try {
-        apiKey = await window.electronAPI.getCustomTranscriptionKey?.();
-      } catch (err) {
-        this.logger?.debug?.(
-          "Failed to get custom transcription key via IPC, falling back to localStorage",
-          { error: err?.message },
-          "transcription"
-        );
-      }
-      if (!apiKey || !apiKey.trim()) {
-        apiKey = localStorage.getItem("customTranscriptionApiKey") || "";
-      }
-      apiKey = apiKey?.trim() || "";
-
-      this.logger?.debug?.(
-        "Custom STT API key retrieval",
-        {
-          provider,
-          hasKey: !!apiKey,
-        },
-        "transcription"
-      );
-
-      if (!apiKey) {
-        apiKey = null;
-      }
+      apiKey = status?.customTranscription ? "configured-in-main" : null;
     } else if (provider === "mistral") {
-      apiKey = await window.electronAPI.getMistralKey?.();
-      if (!isValidApiKey(apiKey, "mistral")) {
-        apiKey = localStorage.getItem("mistralApiKey");
-      }
-      if (!isValidApiKey(apiKey, "mistral")) {
+      if (!status?.mistral) {
         throw new Error("Mistral API key not found. Please set your API key in the Control Panel.");
       }
     } else if (provider === "groq") {
-      apiKey = await window.electronAPI.getGroqKey?.();
-      if (!isValidApiKey(apiKey, "groq")) {
-        apiKey = localStorage.getItem("groqApiKey");
-      }
-      if (!isValidApiKey(apiKey, "groq")) {
+      if (!status?.groq) {
         throw new Error("Groq API key not found. Please set your API key in the Control Panel.");
       }
     } else {
-      apiKey = await window.electronAPI.getOpenAIKey();
-      if (!isValidApiKey(apiKey, "openai")) {
-        apiKey = localStorage.getItem("openaiApiKey");
-      }
-      if (!isValidApiKey(apiKey, "openai")) {
+      if (!status?.openai) {
         throw new Error(
           "OpenAI API key not found. Please set your API key in the .env file or Control Panel."
         );

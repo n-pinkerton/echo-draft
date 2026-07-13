@@ -1,4 +1,5 @@
 import { Globe, Download, Trash2, X } from "lucide-react";
+import { useId, type KeyboardEvent } from "react";
 import { Button } from "./button";
 import type { ColorScheme } from "../../utils/modelPickerStyles";
 
@@ -65,6 +66,7 @@ export default function ModelCardList({
   onCancelDownload,
   isCancelling = false,
 }: ModelCardListProps) {
+  const descriptionIdPrefix = useId();
   const styles = COLOR_CONFIG[colorScheme];
   const isLocalMode = Boolean(onDownload);
 
@@ -76,22 +78,52 @@ export default function ModelCardList({
     );
   }
 
+  const selectableModels = models.filter((model) => !isLocalMode || model.isDownloaded);
+  const selectedIsSelectable = selectableModels.some((model) => model.value === selectedModel);
+  const tabStopValue = selectedIsSelectable ? selectedModel : selectableModels[0]?.value;
+
   return (
-    <div className={`space-y-0.5 ${className}`}>
-      {models.map((model) => {
+    <div className={`space-y-0.5 ${className}`} role="radiogroup" aria-label="Models">
+      {models.map((model, index) => {
         const isSelected = selectedModel === model.value;
         const isDownloaded = model.isDownloaded;
         const isDownloading = model.isDownloading;
+        const isSelectable = !isLocalMode || Boolean(isDownloaded);
+        const descriptionId = `${descriptionIdPrefix}-${index}-description`;
 
-        // For local models, click to select if downloaded
-        const handleCardClick = () => {
-          if (isLocalMode) {
-            if (isDownloaded && !isSelected) {
-              onModelSelect(model.value);
-            }
-          } else {
+        const handleSelect = () => {
+          if (isSelectable && !isSelected) {
             onModelSelect(model.value);
           }
+        };
+
+        const handleSelectionKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            handleSelect();
+            return;
+          }
+          if (!["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End"].includes(event.key)) {
+            return;
+          }
+          event.preventDefault();
+          const group = event.currentTarget.closest('[role="radiogroup"]');
+          const radios = Array.from(
+            group?.querySelectorAll<HTMLButtonElement>('button[role="radio"]:not(:disabled)') || []
+          );
+          const currentIndex = radios.indexOf(event.currentTarget);
+          if (currentIndex < 0 || radios.length === 0) return;
+
+          let nextIndex;
+          if (event.key === "Home") nextIndex = 0;
+          else if (event.key === "End") nextIndex = radios.length - 1;
+          else if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+            nextIndex = (currentIndex + 1) % radios.length;
+          } else {
+            nextIndex = (currentIndex - 1 + radios.length) % radios.length;
+          }
+          radios[nextIndex].focus();
+          radios[nextIndex].click();
         };
 
         // Determine status dot color for local mode
@@ -115,10 +147,9 @@ export default function ModelCardList({
         return (
           <div
             key={model.value}
-            onClick={handleCardClick}
-            className={`relative w-full p-2 pl-2.5 rounded-md border text-left transition-all duration-200 group overflow-hidden ${
+            className={`relative w-full p-2 pl-2.5 rounded-md border text-left transition-all duration-200 group overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1 ${
               isSelected ? styles.selected : styles.default
-            } ${!isLocalMode || (isDownloaded && !isSelected) ? "cursor-pointer" : ""}`}
+            }`}
           >
             {/* Left accent bar for selected */}
             {isSelected && (
@@ -126,56 +157,74 @@ export default function ModelCardList({
             )}
 
             <div className="flex items-center gap-1.5">
-              {/* Status dot with LED glow */}
-              <div
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusDotClass()} ${
-                  isSelected && isDownloaded
-                    ? "animate-[pulse-glow_2s_ease-in-out_infinite]"
-                    : isDownloading
-                      ? "animate-[spinner-rotate_1s_linear_infinite]"
-                      : ""
-                }`}
-              />
-
-              {/* Icon */}
-              {model.icon ? (
-                <img
-                  src={model.icon}
-                  alt=""
-                  className={`w-3.5 h-3.5 shrink-0 ${model.invertInDark ? "icon-monochrome" : ""}`}
+              <button
+                type="button"
+                role="radio"
+                aria-describedby={descriptionId}
+                aria-checked={isSelected}
+                disabled={!isSelectable}
+                tabIndex={model.value === tabStopValue ? 0 : -1}
+                onClick={handleSelect}
+                onKeyDown={handleSelectionKeyDown}
+                className={`flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left focus-visible:outline-none ${isSelectable ? "cursor-pointer" : "cursor-default"}`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusDotClass()} ${
+                    isSelected && isDownloaded
+                      ? "animate-[pulse-glow_2s_ease-in-out_infinite]"
+                      : isDownloading
+                        ? "animate-[spinner-rotate_1s_linear_infinite]"
+                        : ""
+                  }`}
                   aria-hidden="true"
                 />
-              ) : (
-                <Globe className="w-3.5 h-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-              )}
 
-              {/* Model info - inline */}
-              <span className="text-sm font-semibold text-foreground truncate tracking-tight">
-                {model.label}
-              </span>
-              {model.description && (
-                <span className="text-[11px] text-muted-foreground/50 tabular-nums shrink-0">
-                  {model.description}
+                {model.icon ? (
+                  <img
+                    src={model.icon}
+                    alt=""
+                    className={`w-3.5 h-3.5 shrink-0 ${model.invertInDark ? "icon-monochrome" : ""}`}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Globe
+                    className="w-3.5 h-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                )}
+
+                <span className="text-sm font-semibold text-foreground truncate tracking-tight">
+                  {model.label}
                 </span>
-              )}
-
-              {/* Recommended badge */}
-              {model.recommended && (
-                <span className="text-[10px] font-medium text-primary px-1.5 py-0.5 bg-primary/10 rounded-sm shrink-0">
-                  Recommended
-                </span>
-              )}
-
-              {/* Actions - right aligned */}
-              <div className="ml-auto flex items-center gap-1.5 shrink-0">
-                {/* Selected/Active badge */}
+                {model.description && (
+                  <span
+                    aria-hidden="true"
+                    className="text-[11px] text-muted-foreground/50 tabular-nums shrink-0"
+                  >
+                    {model.description}
+                  </span>
+                )}
+                {model.recommended && (
+                  <span className="text-[10px] font-medium text-primary px-1.5 py-0.5 bg-primary/10 rounded-sm shrink-0">
+                    Recommended
+                  </span>
+                )}
                 {isSelected && (
-                  <span className="text-[10px] font-medium text-primary px-2 py-0.5 bg-primary/10 rounded-sm">
+                  <span
+                    aria-hidden="true"
+                    className="ml-auto text-[10px] font-medium text-primary px-2 py-0.5 bg-primary/10 rounded-sm"
+                  >
                     Active
                   </span>
                 )}
+              </button>
+              <span id={descriptionId} className="sr-only">
+                {model.description ? `${model.description}. ` : ""}
+                {isSelected ? "Selected model." : isSelectable ? "Available model." : "Not downloaded."}
+              </span>
 
-                {/* Local model action buttons */}
+              {/* Keep actions outside the radio selection control. */}
+              <div className="ml-auto flex items-center gap-1.5 shrink-0">
                 {isLocalMode && (
                   <>
                     {isDownloaded ? (
@@ -186,7 +235,8 @@ export default function ModelCardList({
                         }}
                         size="sm"
                         variant="ghost"
-                        className="h-6 w-6 p-0 text-muted-foreground/40 hover:text-destructive opacity-0 group-hover:opacity-100 transition-all active:scale-95"
+                        aria-label={`Delete ${model.label}`}
+                        className="h-6 w-6 p-0 text-muted-foreground/40 hover:text-destructive opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-destructive focus-visible:ring-offset-1 transition-all active:scale-95"
                       >
                         <Trash2 size={12} />
                       </Button>

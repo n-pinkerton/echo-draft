@@ -18,6 +18,17 @@ function createDeps(overrides: any = {}) {
 }
 
 describe("hotkeySetupShortcuts", () => {
+  it("rejects the control-panel shortcut before changing registrations", () => {
+    const manager: any = { currentHotkey: "F8" };
+    const deps = createDeps();
+
+    const result = setupShortcuts(manager, "Alt+C", vi.fn(), deps);
+
+    expect(result).toMatchObject({ success: false, reason: "reserved-by-echodraft" });
+    expect(deps.globalShortcut.unregister).not.toHaveBeenCalled();
+    expect(deps.globalShortcut.register).not.toHaveBeenCalled();
+  });
+
   it("throws when callback is missing", () => {
     const manager: any = { currentHotkey: "F8" };
     expect(() => setupShortcuts(manager, "F9", null, createDeps())).toThrow(

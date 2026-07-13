@@ -41,6 +41,15 @@ describe("hotkeyValidator", () => {
     expect(message).toMatch(/reserved/i);
   });
 
+  it.each(["win32", "darwin", "linux"] as const)(
+    "reserves Alt+C for the EchoDraft control panel on %s",
+    (platform) => {
+      const result = validateHotkey("alt+c", platform);
+      expect(result).toMatchObject({ valid: false, errorCode: "APP_RESERVED" });
+      expect(getValidationMessage("Alt+C", platform)).toMatch(/EchoDraft control panel/i);
+    }
+  );
+
   it("supports right-side single-modifier hotkeys on Windows but not Linux", () => {
     const win = validateHotkey("RightAlt", "win32");
     expect(win.valid).toBe(true);
@@ -55,4 +64,3 @@ describe("hotkeyValidator", () => {
     expect(validateHotkey("GLOBE", "win32").errorCode).toBe("INVALID_GLOBE");
   });
 });
-

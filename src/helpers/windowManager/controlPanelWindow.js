@@ -1,21 +1,32 @@
 const { app, BrowserWindow, shell, dialog } = require("electron");
 
 const MenuManager = require("../menuManager");
-const DevServerManager = require("../devServerManager");
 const { CONTROL_PANEL_CONFIG } = require("../windowConfig");
 const { shouldSuppressWindowPresentation } = require("./e2eWindowPresentation");
 const { loadWindowContent } = require("./windowContentLoader");
-const { pinWindowToAllVirtualDesktops } = require("./windowsVirtualDesktop");
+const {
+  moveWindowToCurrentVirtualDesktop,
+  shouldRecreateExistingWindow,
+} = require("./windowsVirtualDesktop");
+const { isTrustedAppNavigation } = require("../ipc/trustedRenderer");
+const { normalizeExternalHttpsUrl } = require("../externalUrl");
 
 function openExternalUrl(url, { showError = true } = {}) {
-  shell.openExternal(url).catch((error) => {
+  let safeUrl;
+  try {
+    safeUrl = normalizeExternalHttpsUrl(url);
+  } catch {
+    return false;
+  }
+  shell.openExternal(safeUrl).catch(() => {
     if (showError) {
       dialog.showErrorBox(
         "Unable to Open Link",
-        `Failed to open the link in your browser:\n${url}\n\nError: ${error.message}`
+        "EchoDraft could not open that HTTPS link in your default browser."
       );
     }
   });
+  return true;
 }
 
 function hideControlPanelToTray(manager) {
@@ -41,7 +52,18 @@ async function createControlPanelWindow(manager) {
     if (suppressPresentation) {
       return;
     }
-    await pinWindowToAllVirtualDesktops(manager.controlPanelWindow);
+    const existingWindow = manager.controlPanelWindow;
+    const moveResult = await moveWindowToCurrentVirtualDesktop(existingWindow);
+    // Recreate an existing Windows window whenever COM cannot prove it belongs
+    // to the active desktop. New windows are created on the active desktop, so
+    // the degraded path cannot recurse indefinitely.
+    if (shouldRecreateExistingWindow(moveResult)) {
+      existingWindow.destroy();
+      if (manager.controlPanelWindow === existingWindow) {
+        manager.controlPanelWindow = null;
+      }
+      return createControlPanelWindow(manager);
+    }
     if (typeof app.focus === "function") {
       app.focus({ steal: true });
     }
@@ -54,28 +76,40 @@ async function createControlPanelWindow(manager) {
     manager.controlPanelWindow.show();
     manager.controlPanelWindow.moveTop();
     manager.controlPanelWindow.focus();
+    if (
+      moveResult.success &&
+      manager.controlPanelWindow &&
+      !manager.controlPanelWindow.isDestroyed()
+    ) {
+      manager.controlPanelWindow.show();
+      manager.controlPanelWindow.moveTop();
+      manager.controlPanelWindow.focus();
+    }
     return;
   }
 
   manager.controlPanelWindow = new BrowserWindow(CONTROL_PANEL_CONFIG);
+  const createdWindow = manager.controlPanelWindow;
   const pinPromise = suppressPresentation
     ? Promise.resolve({ success: true, skipped: true })
-    : pinWindowToAllVirtualDesktops(manager.controlPanelWindow);
+    : moveWindowToCurrentVirtualDesktop(createdWindow);
+  let recreationPromise = null;
+  const ensureActiveDesktop = async () => {
+    const moveResult = await pinPromise;
+    if (!moveResult.needsRecreate) return { moveResult, recreated: false };
+    if (!recreationPromise) {
+      recreationPromise = (async () => {
+        if (!createdWindow.isDestroyed()) createdWindow.destroy();
+        if (manager.controlPanelWindow === createdWindow) manager.controlPanelWindow = null;
+        await createControlPanelWindow(manager);
+      })();
+    }
+    await recreationPromise;
+    return { moveResult, recreated: true };
+  };
 
   manager.controlPanelWindow.webContents.on("will-navigate", (event, url) => {
-    if (url.startsWith("file://") || url.startsWith("devtools://") || url.startsWith("about:"))
-      return;
-
-    const appUrl = DevServerManager.getAppUrl(true);
-    if (appUrl) {
-      try {
-        const allowedOrigin = new URL(appUrl).origin;
-        const targetOrigin = new URL(url).origin;
-        if (targetOrigin === allowedOrigin) return;
-      } catch {
-        // If URL parsing fails, treat it as external.
-      }
-    }
+    if (isTrustedAppNavigation(manager.controlPanelWindow, url)) return;
 
     event.preventDefault();
     openExternalUrl(url);
@@ -84,13 +118,6 @@ async function createControlPanelWindow(manager) {
   manager.controlPanelWindow.webContents.setWindowOpenHandler(({ url }) => {
     openExternalUrl(url);
     return { action: "deny" };
-  });
-
-  manager.controlPanelWindow.webContents.on("did-create-window", (childWindow, details) => {
-    childWindow.close();
-    if (details.url && !details.url.startsWith("devtools://")) {
-      openExternalUrl(details.url, { showError: false });
-    }
   });
 
   const visibilityTimer = suppressPresentation
@@ -114,14 +141,20 @@ async function createControlPanelWindow(manager) {
     if (suppressPresentation) {
       return;
     }
-    await pinPromise;
-    if (!manager.controlPanelWindow || manager.controlPanelWindow.isDestroyed()) return;
+    const desktopState = await ensureActiveDesktop();
+    if (desktopState.recreated || createdWindow.isDestroyed()) return;
     // Show dock icon on macOS when control panel opens
     if (process.platform === "darwin" && app.dock) {
       app.dock.show();
     }
-    manager.controlPanelWindow.show();
-    manager.controlPanelWindow.focus();
+    createdWindow.show();
+    createdWindow.moveTop();
+    createdWindow.focus();
+    if (desktopState.moveResult.success && !createdWindow.isDestroyed()) {
+      createdWindow.show();
+      createdWindow.moveTop();
+      createdWindow.focus();
+    }
   });
 
   manager.controlPanelWindow.on("close", (event) => {
@@ -137,7 +170,9 @@ async function createControlPanelWindow(manager) {
 
   manager.controlPanelWindow.on("closed", () => {
     clearVisibilityTimer();
-    manager.controlPanelWindow = null;
+    if (manager.controlPanelWindow === createdWindow) {
+      manager.controlPanelWindow = null;
+    }
   });
 
   // Set up menu for control panel to ensure text input works
@@ -166,7 +201,7 @@ async function createControlPanelWindow(manager) {
   );
 
   await loadControlPanel(manager);
-  await pinPromise;
+  await ensureActiveDesktop();
 }
 
 module.exports = {

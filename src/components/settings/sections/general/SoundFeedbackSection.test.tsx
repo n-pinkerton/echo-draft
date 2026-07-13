@@ -6,6 +6,7 @@ const cueMocks = vi.hoisted(() => ({
   playStartCue: vi.fn(),
   playStopCue: vi.fn(),
   playCompletionCue: vi.fn(),
+  playWarningCue: vi.fn(),
   playErrorCue: vi.fn(),
   playCancelCue: vi.fn(),
 }));
@@ -43,6 +44,11 @@ describe("SoundFeedbackSection", () => {
 
     await user.click(screen.getByRole("button", { name: "Preview recording started sound" }));
     expect(cueMocks.playStartCue).toHaveBeenCalledWith({ force: true, volume: 45 });
+
+    await user.click(
+      screen.getByRole("button", { name: "Preview text delivered with a warning sound" })
+    );
+    expect(cueMocks.playWarningCue).toHaveBeenCalledWith({ force: true, volume: 45 });
 
     await user.click(screen.getByRole("switch", { name: "Show recording timer" }));
     expect(localStorage.getItem("recordingIndicatorEnabled")).toBe("false");

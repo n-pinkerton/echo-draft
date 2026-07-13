@@ -6,13 +6,22 @@ const {
   scheduleClipboardRestore,
   snapshotClipboard,
 } = require("./clipboard/clipboardSnapshot");
-const { runWindowsPowerShellScript, parsePowerShellJsonOutput } = require("./clipboard/windows/powershellUtils");
+const {
+  runWindowsPowerShellScript,
+  parsePowerShellJsonOutput,
+} = require("./clipboard/windows/powershellUtils");
 const {
   activateInsertionTarget,
   captureInsertionTarget,
   resolveTargetLabel,
 } = require("./clipboard/windows/insertionTarget");
-const { getNircmdPath, getNircmdStatus, pasteWindows, pasteWithNircmd, pasteWithPowerShell } = require("./clipboard/windows/windowsPaste");
+const {
+  getNircmdPath,
+  getNircmdStatus,
+  pasteWindows,
+  pasteWithNircmd,
+  pasteWithPowerShell,
+} = require("./clipboard/windows/windowsPaste");
 const { resolveFastPasteBinary } = require("./clipboard/macos/fastPasteBinary");
 const {
   checkAccessibilityPermissions,
@@ -23,6 +32,10 @@ const {
 const { pasteMacOS, pasteMacOSWithOsascript } = require("./clipboard/macos/macosPaste");
 const { pasteLinux } = require("./clipboard/linux/linuxPaste");
 const { checkPasteTools } = require("./clipboard/pasteTools");
+const crypto = require("crypto");
+
+const INSERTION_TARGET_TTL_MS = 30 * 60 * 1000;
+const MAX_CLIPBOARD_TEXT_CHARS = 1_000_000;
 
 function writeClipboardInRenderer(webContents, text) {
   if (!webContents || !webContents.executeJavaScript) {
@@ -39,12 +52,16 @@ function resolveClipboardDeps(overrides = {}) {
   const now = deps.now || Date.now;
 
   const { clipboard, nativeImage } =
-    deps.clipboard && deps.nativeImage ? { clipboard: deps.clipboard, nativeImage: deps.nativeImage } : require("electron");
+    deps.clipboard && deps.nativeImage
+      ? { clipboard: deps.clipboard, nativeImage: deps.nativeImage }
+      : require("electron");
   const childProcess = deps.spawn && deps.spawnSync ? null : require("child_process");
   const spawn = deps.spawn || childProcess.spawn;
   const spawnSync = deps.spawnSync || childProcess.spawnSync;
 
-  const { killProcess } = deps.killProcess ? { killProcess: deps.killProcess } : require("../utils/process");
+  const { killProcess } = deps.killProcess
+    ? { killProcess: deps.killProcess }
+    : require("../utils/process");
 
   return {
     env,
@@ -74,6 +91,7 @@ class ClipboardManager {
     this.nircmdChecked = false;
     this.fastPastePath = null;
     this.fastPasteChecked = false;
+    this.insertionTargetCapabilities = new Map();
   }
 
   _isWayland() {
@@ -162,6 +180,53 @@ class ClipboardManager {
     return await captureInsertionTarget(this);
   }
 
+  issueInsertionTargetCapability(target, { ownerId, sessionId } = {}) {
+    const normalizedOwnerId = Number(ownerId);
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!target?.hwnd || !Number.isFinite(normalizedOwnerId) || !normalizedSessionId) {
+      throw new Error("A valid owner and session are required for an insertion target.");
+    }
+
+    this.purgeExpiredInsertionTargetCapabilities();
+    const capability = crypto.randomUUID();
+    const capturedAt = this.deps.now();
+    this.insertionTargetCapabilities.set(capability, {
+      target,
+      ownerId: normalizedOwnerId,
+      sessionId: normalizedSessionId,
+      expiresAt: capturedAt + INSERTION_TARGET_TTL_MS,
+    });
+    return { capability, sessionId: normalizedSessionId, capturedAt };
+  }
+
+  consumeInsertionTargetCapability(snapshot, { ownerId, sessionId } = {}) {
+    this.purgeExpiredInsertionTargetCapabilities();
+    const capability = typeof snapshot?.capability === "string" ? snapshot.capability : "";
+    const record = this.insertionTargetCapabilities.get(capability);
+    if (!record) return null;
+
+    const normalizedOwnerId = Number(ownerId);
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (
+      record.ownerId !== normalizedOwnerId ||
+      record.sessionId !== normalizedSessionId ||
+      snapshot?.sessionId !== normalizedSessionId
+    ) {
+      return null;
+    }
+
+    this.insertionTargetCapabilities.delete(capability);
+    return record.target;
+  }
+
+  purgeExpiredInsertionTargetCapabilities(now = this.deps.now()) {
+    for (const [capability, record] of this.insertionTargetCapabilities) {
+      if (!record || record.expiresAt <= now) {
+        this.insertionTargetCapabilities.delete(capability);
+      }
+    }
+  }
+
   async activateInsertionTarget(target) {
     return await activateInsertionTarget(this, target);
   }
@@ -184,6 +249,9 @@ class ClipboardManager {
   }
 
   async pasteText(text, options = {}) {
+    if (typeof text !== "string" || text.length > MAX_CLIPBOARD_TEXT_CHARS) {
+      throw new Error("Clipboard text must be a string within the supported size limit.");
+    }
     const startTime = Date.now();
     const platform = this.deps.platform;
     let method = "unknown";
@@ -201,7 +269,7 @@ class ClipboardManager {
       } else {
         this.deps.clipboard.writeText(text);
       }
-      this.safeLog("📋 Text copied to clipboard:", text.substring(0, 50) + "...");
+      this.safeLog("📋 Text copied to clipboard", { textLength: text.length });
 
       if (platform === "darwin") {
         method = this.resolveFastPasteBinary() ? "cgevent" : "applescript";
@@ -218,19 +286,7 @@ class ClipboardManager {
         this.safeLog("✅ Permissions granted, attempting to paste...");
         await this.pasteMacOS(originalClipboardSnapshot, options);
       } else if (platform === "win32") {
-        method = this.shouldPreferNircmd() && this.getNircmdPath() ? "nircmd" : "powershell";
-
-        if (options?.insertionTarget?.hwnd) {
-          const activationResult = await this.activateInsertionTarget(options.insertionTarget);
-          if (!activationResult.success) {
-            const targetLabel = this.resolveTargetLabel(options.insertionTarget);
-            const reason = activationResult.reason || "focus switch blocked";
-            throw new Error(
-              `Could not return focus to ${targetLabel} (${reason}). Text is copied to clipboard - please paste manually with Ctrl+V.`
-            );
-          }
-        }
-
+        method = "authenticated-send-input";
         await this.pasteWindows(originalClipboardSnapshot, options);
       } else {
         method = "linux-tools";
@@ -313,4 +369,3 @@ class ClipboardManager {
 }
 
 module.exports = ClipboardManager;
-

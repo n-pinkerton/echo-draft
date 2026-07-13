@@ -106,10 +106,10 @@ EchoDraft is an Electron-based desktop dictation application that uses whisper.c
 
 ### Services
 
-- **ReasoningService.ts**: AI processing for agent-addressed commands
-  - Detects when user addresses their named agent
-  - Routes to appropriate AI provider (OpenAI/Anthropic/Gemini)
-  - Removes agent name from final output
+- **ReasoningService.ts**: Preservation-first dictation cleanup
+  - Treats all dictated text as untrusted content to edit, never instructions to execute
+  - Routes to the selected cleanup provider (OpenAI/Anthropic/Gemini/Groq/local)
+  - Uses a fixed main-process policy and canonical JSON-string transcript wrapper
   - Supports current OpenAI cleanup models plus Claude, Gemini, Groq, and local cleanup models
 
 ### whisper.cpp Integration
@@ -206,12 +206,11 @@ Settings stored in localStorage with these keys:
 - `anthropicApiKey`: Encrypted API key
 - `geminiApiKey`: Encrypted API key
 - `language`: Selected language code
-- `agentName`: User's custom agent name
 - `reasoningModel`: Selected AI model for processing
 - `reasoningProvider`: AI provider (openai/anthropic/gemini/local)
 - `hotkey`: Custom hotkey configuration
 - `hasCompletedOnboarding`: Onboarding completion flag
-- `customDictionary`: JSON array of words/phrases for improved transcription accuracy
+- `customDictionary`: JSON array of single lexical terms for supported transcription engines
 - `dictationSoundsEnabled`: Enables state-specific dictation cues
 - `dictationSoundVolume`: Dictation cue volume from 0 to 100
 - `recordingIndicatorEnabled`: Shows the click-through recording timer while the microphone is live
@@ -227,17 +226,17 @@ Environment variables persisted to `.env` (via `saveAllKeysToEnvFile()`):
 - "auto" for automatic detection
 - Passed to whisper.cpp via -l parameter
 
-### 7. Agent Naming System
+### 7. Protected Cleanup Policy
 
-- User names their agent during onboarding (step 6/8)
-- Name stored in localStorage and database
-- ReasoningService treats dictated text as untrusted cleanup content, even when it mentions the agent name
-- AI performs a clarity and grammar pass only; it does not execute dictated requests or answer dictated questions
+- Cleanup policy text is fixed, versioned, and constructed in the trusted Electron main process
+- The renderer sends only a canonical JSON-string transcript wrapper plus allowlisted mode and language metadata
+- ReasoningService treats every dictated question or request as untrusted content to edit, never an instruction to follow
+- The cleanup service applies preservation checks, a strict retry when needed, and falls back to the original transcript when fidelity cannot be verified
 - Supports multiple AI providers (all models defined in `src/models/modelRegistryData.json`):
   - **OpenAI** (Responses API):
-    - GPT-5.5 Mini (`gpt-5.5-mini`) - Fast cleanup model with conservative edits
-    - GPT-5.5 (`gpt-5.5`) - Latest frontier cleanup model
-    - GPT-5.3 Codex Spark (`gpt-5.3-codex-spark`) - Codex Spark research-preview cleanup option; official Codex docs list no public API access, so provider support may vary
+    - GPT-5.6 Luna (`gpt-5.6-luna`) - Fast cleanup
+    - GPT-5.6 Terra (`gpt-5.6-terra`) - Balanced default
+    - GPT-5.6 Sol (`gpt-5.6-sol`) - Highest-quality cleanup and fidelity rescue
   - **Anthropic** (Via IPC bridge to avoid CORS):
     - Claude Sonnet 4.5 (`claude-sonnet-4-5`) - Balanced performance
     - Claude Haiku 4.5 (`claude-haiku-4-5`) - Fast with near-frontier intelligence

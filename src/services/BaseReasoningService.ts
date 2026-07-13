@@ -14,18 +14,6 @@ export interface ReasoningConfig {
 export abstract class BaseReasoningService {
   protected isProcessing = false;
 
-  protected getCustomDictionary(): string[] {
-    if (typeof window === "undefined" || !window.localStorage) return [];
-    try {
-      const raw = window.localStorage.getItem("customDictionary");
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-
   protected getPreferredLanguage(): string {
     if (typeof window === "undefined" || !window.localStorage) return "auto";
     return window.localStorage.getItem("preferredLanguage") || "auto";
@@ -37,7 +25,7 @@ export abstract class BaseReasoningService {
     mode: CleanupPromptMode = "standard"
   ): string {
     const language = this.getPreferredLanguage();
-    return getSystemPrompt(agentName, this.getCustomDictionary(), language, modelId, mode);
+    return getSystemPrompt(agentName, undefined, language, modelId, mode);
   }
 
   protected calculateMaxTokens(

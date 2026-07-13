@@ -1,4 +1,5 @@
 const debugLogger = require("../../debugLogger");
+const { requireTrustedRenderer } = require("../trustedRenderer");
 
 const SYSTEM_SETTINGS_URLS = {
   darwin: {
@@ -12,7 +13,7 @@ const SYSTEM_SETTINGS_URLS = {
   },
 };
 
-function registerSystemSettingsHandlers({ ipcMain, shell }) {
+function registerSystemSettingsHandlers({ ipcMain, shell }, { windowManager }) {
   const openSystemSettings = async (settingType) => {
     const platform = process.platform;
     const urls = SYSTEM_SETTINGS_URLS[platform];
@@ -41,11 +42,18 @@ function registerSystemSettingsHandlers({ ipcMain, shell }) {
     }
   };
 
-  ipcMain.handle("open-microphone-settings", () => openSystemSettings("microphone"));
-  ipcMain.handle("open-sound-input-settings", () => openSystemSettings("sound"));
-  ipcMain.handle("open-accessibility-settings", () => openSystemSettings("accessibility"));
+  const openTrustedSetting = (event, type) => {
+    requireTrustedRenderer(event, windowManager, ["control-panel"]);
+    return openSystemSettings(type);
+  };
+  ipcMain.handle("open-microphone-settings", (event) => openTrustedSetting(event, "microphone"));
+  ipcMain.handle("open-sound-input-settings", (event) => openTrustedSetting(event, "sound"));
+  ipcMain.handle("open-accessibility-settings", (event) =>
+    openTrustedSetting(event, "accessibility")
+  );
 
-  ipcMain.handle("request-microphone-access", async () => {
+  ipcMain.handle("request-microphone-access", async (event) => {
+    requireTrustedRenderer(event, windowManager, ["control-panel"]);
     if (process.platform !== "darwin") {
       return { granted: true };
     }
@@ -56,4 +64,3 @@ function registerSystemSettingsHandlers({ ipcMain, shell }) {
 }
 
 module.exports = { registerSystemSettingsHandlers };
-

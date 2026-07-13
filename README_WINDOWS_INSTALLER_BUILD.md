@@ -114,6 +114,8 @@ npm run build:win
 
 `npm run build:win` can also complete with unsigned artifacts when no Windows certificate is configured. Before distributing an installer, verify it explicitly with `Get-AuthenticodeSignature`; a local `NotSigned` result is suitable only for a trusted personal install, not a public release.
 
+Unsigned Windows builds also disable EchoDraft's in-app automatic updater. This is intentional: install a locally verified Setup artifact manually. Automatic update checks, downloads, and installs are enabled only when Windows code signing is configured with at least one pinned publisher name.
+
 ## Validating the installer
 
 1. Run the NSIS installer from `dist/` (or `Downloads/` if copied).

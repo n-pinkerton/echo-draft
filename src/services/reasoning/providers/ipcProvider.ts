@@ -2,6 +2,7 @@ import { getUserPrompt } from "../../../config/prompts";
 import logger from "../../../utils/logger";
 import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import type { ReasoningConfig } from "../../BaseReasoningService";
+import type { CleanupReasoningIpcOptions } from "../../../types/electronApi/models";
 
 export async function processWithIpcProvider({
   providerName,
@@ -9,7 +10,7 @@ export async function processWithIpcProvider({
   model,
   agentName,
   config,
-  getSystemPrompt,
+  getPreferredLanguage,
   ipcCall,
 }: {
   providerName: string;
@@ -17,12 +18,12 @@ export async function processWithIpcProvider({
   model: string;
   agentName: string | null;
   config: ReasoningConfig;
-  getSystemPrompt: (agentName: string | null, modelId?: string | null) => string;
+  getPreferredLanguage: () => string;
   ipcCall: (
     userPrompt: string,
     model: string,
     agentName: string | null,
-    options: any,
+    options: CleanupReasoningIpcOptions,
     requestId: string
   ) => Promise<any>;
 }): Promise<string> {
@@ -43,7 +44,6 @@ export async function processWithIpcProvider({
     textLength: text.length,
   });
 
-  const systemPrompt = getSystemPrompt(agentName, model);
   const userPrompt = getUserPrompt(text, model);
   const { signal, ...serializableConfig } = config;
   const result = await invokeCancelableIpc(signal, (requestId) =>
@@ -53,7 +53,7 @@ export async function processWithIpcProvider({
       agentName,
       {
         ...serializableConfig,
-        systemPrompt,
+        language: getPreferredLanguage(),
       },
       requestId
     )

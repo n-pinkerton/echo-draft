@@ -119,7 +119,7 @@ export default function ControlPanel() {
     if (updateError) {
       toast({
         title: "Update Error",
-        description: "Failed to update. Please try again later.",
+        description: updateError.message || "Failed to update. Please try again later.",
         variant: "destructive",
       });
     }
@@ -326,24 +326,16 @@ export default function ControlPanel() {
         onConfirm: async () => {
           try {
             await installUpdate();
-          } catch (error) {
-            toast({
-              title: "Install Failed",
-              description: "Failed to install update. Please try again.",
-              variant: "destructive",
-            });
+          } catch {
+            // useUpdater exposes this through the single update-error presentation above.
           }
         },
       });
     } else if (updateStatus.updateAvailable && !isDownloading) {
       try {
         await downloadUpdate();
-      } catch (error) {
-        toast({
-          title: "Download Failed",
-          description: "Failed to download update. Please try again.",
-          variant: "destructive",
-        });
+      } catch {
+        // useUpdater exposes this through the single update-error presentation above.
       }
     }
   };

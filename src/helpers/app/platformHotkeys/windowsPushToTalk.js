@@ -1,4 +1,5 @@
 const { isLiveWindow } = require("../windowUtils");
+const { requireTrustedRenderer } = require("../../ipc/trustedRenderer");
 
 function registerWindowsPushToTalk({
   ipcMain,
@@ -349,22 +350,34 @@ function registerWindowsPushToTalk({
   }, STARTUP_DELAY_MS);
 
   // Listen for activation mode changes from renderer
-  const onActivationModeChanged = (_event, mode) => {
+  const isTrustedControlPanelEvent = (event) => {
+    try {
+      requireTrustedRenderer(event, windowManager, ["control-panel"]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const onActivationModeChanged = (event, mode) => {
     if (disposed) return;
+    if (!isTrustedControlPanelEvent(event) || (mode !== "tap" && mode !== "push")) return;
     debugLogger.debug("[Push-to-Talk] IPC: Activation mode changed", { mode });
     refreshWindowsKeyListeners({ modeOverride: mode, reason: "activation-mode-changed" });
   };
 
   // Listen for hotkey changes from renderer
-  const onHotkeyChanged = (_event, hotkey) => {
+  const onHotkeyChanged = (event, hotkey) => {
     if (disposed) return;
+    if (!isTrustedControlPanelEvent(event) || typeof hotkey !== "string") return;
     debugLogger.debug("[Push-to-Talk] IPC: Hotkey changed", { hotkey });
     forceStopRoute("insert", "insert-hotkey-changed");
     refreshWindowsKeyListeners({ reason: "insert-hotkey-changed" });
   };
 
-  const onClipboardHotkeyChanged = (_event, hotkey) => {
+  const onClipboardHotkeyChanged = (event, hotkey) => {
     if (disposed) return;
+    if (!isTrustedControlPanelEvent(event) || typeof hotkey !== "string") return;
     debugLogger.debug("[Push-to-Talk] IPC: Clipboard hotkey changed", { hotkey });
     forceStopRoute("clipboard", "clipboard-hotkey-changed");
     refreshWindowsKeyListeners({ reason: "clipboard-hotkey-changed" });

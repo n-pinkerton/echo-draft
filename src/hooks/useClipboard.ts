@@ -14,7 +14,7 @@ export const useClipboard = (
 ): UseClipboardReturn => {
   const pasteFromClipboard = useCallback(async (setter: (value: string) => void) => {
     try {
-      const text = await window.electronAPI.readClipboard();
+      const text = await navigator.clipboard.readText();
       if (text && text.trim()) {
         setter(text.trim());
       } else {
@@ -29,25 +29,13 @@ export const useClipboard = (
   const pasteFromClipboardWithFallback = useCallback(
     async (setter: (value: string) => void) => {
       try {
-        // Try Electron clipboard first
-        const text = await window.electronAPI.readClipboard();
-        if (text && text.trim()) {
-          setter(text.trim());
-          return;
-        }
-      } catch (err) {
-        console.warn("Electron clipboard failed, trying web API:", err);
-      }
-
-      try {
-        // Fallback to web clipboard API
         const webText = await navigator.clipboard.readText();
         if (webText && webText.trim()) {
           setter(webText.trim());
           return;
         }
       } catch (err) {
-        console.error("Web clipboard also failed:", err);
+        console.error("Clipboard read failed:", err);
       }
 
       if (showAlertDialog) {

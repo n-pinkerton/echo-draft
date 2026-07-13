@@ -7,13 +7,11 @@ import { usePermissions } from "../hooks/usePermissions";
 import { useSettings } from "../hooks/useSettings";
 import { useToast } from "./ui/toastContext";
 import { AlertDialog, ConfirmDialog } from "./ui/dialog";
-import { useAgentName } from "../utils/agentName";
 
 import type { SettingsSectionType } from "./settings/types";
 export type { SettingsSectionType } from "./settings/types";
 
 import AccountSection from "./settings/sections/AccountSection";
-import AgentConfigSection from "./settings/sections/AgentConfigSection";
 import AiModelsSection from "./settings/sections/AiModelsSection";
 import DeveloperToolsSection from "./settings/sections/DeveloperToolsSection";
 import DictionarySection from "./settings/sections/DictionarySection";
@@ -42,7 +40,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
   const { isSignedIn } = useAuth();
   const permissionsHook = usePermissions(showAlertDialog);
   useClipboard(showAlertDialog);
-  const { agentName, setAgentName } = useAgentName();
 
   const {
     useLocalWhisper,
@@ -191,15 +188,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
             setCustomReasoningApiKey={setCustomReasoningApiKey}
             showAlertDialog={showAlertDialog}
             toast={toast}
-          />
-        );
-
-      case "agentConfig":
-        return (
-          <AgentConfigSection
-            agentName={agentName}
-            setAgentName={setAgentName}
-            showAlertDialog={showAlertDialog}
           />
         );
 

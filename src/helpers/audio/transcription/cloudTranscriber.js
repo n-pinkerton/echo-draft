@@ -6,8 +6,6 @@ import {
   ECHO_DRAFT_REASONED_SOURCE,
   normalizeCloudMode,
 } from "../../../utils/branding";
-import { getCustomDictionaryArray } from "./customDictionary";
-import { isLikelyDictionaryPromptEcho } from "./dictionaryPromptEcho";
 import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import {
   createTranscriptionCancelledError,
@@ -20,7 +18,6 @@ import {
  *
  * Responsibilities:
  * - IPC call to `cloudTranscribe`
- * - dictionary prompt echo guard
  * - optional reasoning/cleanup (cloud or BYOK reasoning)
  */
 export class CloudTranscriber {
@@ -66,10 +63,6 @@ export class CloudTranscriber {
     const opts = {};
     if (language) opts.language = language;
 
-    const dictionaryEntries = getCustomDictionaryArray();
-    const dictionaryPrompt = dictionaryEntries.length > 0 ? dictionaryEntries.join(", ") : null;
-    if (dictionaryPrompt) opts.prompt = dictionaryPrompt;
-
     const transcriptionStart = performance.now();
     const result = await this.withSessionRefresh(
       async () => {
@@ -91,12 +84,6 @@ export class CloudTranscriber {
     const rawText = result.text;
     let processedText = rawText;
 
-    if (dictionaryPrompt && isLikelyDictionaryPromptEcho(rawText, dictionaryEntries)) {
-      throw new Error(
-        "Transcription returned the dictionary prompt (likely no usable audio). Please try again."
-      );
-    }
-
     const override = this.getCleanupEnabledOverride?.() ?? null;
     const useReasoningModel =
       override !== null ? override : localStorage.getItem("useReasoningModel") === "true";
@@ -110,7 +97,6 @@ export class CloudTranscriber {
         provider: ECHO_DRAFT_CLOUD_SOURCE,
       });
       const reasoningStart = performance.now();
-      const agentName = localStorage.getItem("agentName") || "";
       const cloudReasoningMode = normalizeCloudMode(
         localStorage.getItem("cloudReasoningMode") || ECHO_DRAFT_CLOUD_MODE
       );
@@ -123,8 +109,6 @@ export class CloudTranscriber {
                 window.electronAPI.cloudReason(
                   processedText,
                   {
-                    agentName,
-                    customDictionary: getCustomDictionaryArray(),
                     language: localStorage.getItem("preferredLanguage") || "auto",
                   },
                   requestId
@@ -185,14 +169,14 @@ export class CloudTranscriber {
                 ? await this.reasoningCleanupService.processWithReasoningModelResult(
                     rawText,
                     reasoningModel,
-                    agentName,
+                    null,
                     runtime
                   )
                 : {
                     text: await this.reasoningCleanupService.processWithReasoningModel(
                       rawText,
                       reasoningModel,
-                      agentName,
+                      null,
                       runtime
                     ),
                     retryCount: 0,

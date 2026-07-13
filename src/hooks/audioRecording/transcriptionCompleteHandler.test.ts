@@ -26,6 +26,7 @@ const createDeliveryHarness = ({
   const playCompletionCue = vi.fn();
   const playErrorCue = vi.fn();
   const playWarningCue = vi.fn();
+  const toast = vi.fn();
   const patchTranscriptionMeta = vi.fn(async () => ({ success: true }));
   const warmupStreamingConnection = vi.fn();
   const controller = new AbortController();
@@ -53,7 +54,7 @@ const createDeliveryHarness = ({
     sessionsByIdRef: { current: new Map([[sessionId, { sessionId, outputMode }]]) },
     setProgress: vi.fn(),
     setTranscript: vi.fn(),
-    toast: vi.fn(),
+    toast,
     updateStage,
     upsertJob: vi.fn(),
     deliveryCommitCountRef,
@@ -64,7 +65,7 @@ const createDeliveryHarness = ({
     localStorage: { getItem: () => null },
   });
 
-  const run = () =>
+  const run = (overrides: Record<string, unknown> = {}) =>
     handler(
       {
         success: true,
@@ -73,6 +74,7 @@ const createDeliveryHarness = ({
         source: "openai",
         timings: {},
         context: { sessionId, jobId: 9, outputMode },
+        ...overrides,
       },
       { signal: controller.signal }
     );
@@ -88,6 +90,7 @@ const createDeliveryHarness = ({
     run,
     safePaste,
     saveTranscription,
+    toast,
     updateStage,
     warmupStreamingConnection,
     writeClipboard,
@@ -216,7 +219,11 @@ describe("createTranscriptionCompleteHandler", () => {
           {
             sessionId: "s-1",
             outputMode: "insert",
-            insertionTarget: { hwnd: 99 },
+            insertionTarget: {
+              capability: "opaque-target",
+              sessionId: "s-1",
+              capturedAt: 1,
+            },
             triggeredAt: 1,
           },
         ],
@@ -284,10 +291,19 @@ describe("createTranscriptionCompleteHandler", () => {
 
     expect(audioManagerRef.current.safePaste).toHaveBeenCalledWith(
       "insert me",
-      expect.objectContaining({ fromStreaming: true, insertionTarget: { hwnd: 99 } })
+      expect.objectContaining({
+        fromStreaming: true,
+        insertionTarget: {
+          capability: "opaque-target",
+          sessionId: "s-1",
+          capturedAt: 1,
+        },
+        sessionId: "s-1",
+      })
     );
     expect(audioManagerRef.current.saveTranscription).toHaveBeenCalled();
     const savePayload = (audioManagerRef.current.saveTranscription as any).mock.calls[0][0];
+    expect(savePayload.meta).not.toHaveProperty("insertionTarget");
     expect(savePayload.meta).toMatchObject({
       sessionId: "s-1",
       outputMode: "insert",
@@ -319,6 +335,7 @@ describe("createTranscriptionCompleteHandler", () => {
     const playErrorCue = vi.fn();
     const playWarningCue = vi.fn();
     const updateStage = vi.fn();
+    const setProgress = vi.fn();
     const handler = createTranscriptionCompleteHandler({
       activeSessionRef: { current: null },
       audioManagerRef: {
@@ -339,7 +356,7 @@ describe("createTranscriptionCompleteHandler", () => {
       sessionsByIdRef: {
         current: new Map([["s-fail", { sessionId: "s-fail", outputMode: "insert" }]]),
       },
-      setProgress: vi.fn(),
+      setProgress,
       setTranscript: vi.fn(),
       toast,
       updateStage,
@@ -365,7 +382,7 @@ describe("createTranscriptionCompleteHandler", () => {
     );
     expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
     expect((saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
-      status: "success",
+      status: "delivery_issue",
       pasteSucceeded: false,
       clipboardSucceeded: true,
       delivery: { status: "clipboard_fallback", succeeded: true },
@@ -377,6 +394,9 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(playCompletionCue).not.toHaveBeenCalled();
     expect(playErrorCue).not.toHaveBeenCalled();
     expect(playWarningCue).toHaveBeenCalledTimes(1);
+    expect(setProgress).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("Saved in") })
+    );
   });
 
   it("records clipboard copy failure without a success toast", async () => {
@@ -578,5 +598,32 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.playCompletionCue).toHaveBeenCalledOnce();
     expect(harness.warmupStreamingConnection).toHaveBeenCalledOnce();
     expect(harness.deliveryCommitCountRef.current).toBe(0);
+  });
+
+  it("finishes successful delivery with a cleanup-fallback warning and warning cue", async () => {
+    const harness = createDeliveryHarness({ outputMode: "clipboard" });
+
+    await harness.run({
+      cleanup: {
+        requested: true,
+        status: "fallback",
+        fallbackReason: "fidelity_rejected",
+      },
+    });
+
+    expect(harness.writeClipboard).toHaveBeenCalledWith("Committed delivery text");
+    expect(harness.updateStage).toHaveBeenLastCalledWith(
+      "warning",
+      expect.objectContaining({ message: "Original transcript used; cleanup was not applied." })
+    );
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Original transcript preserved",
+        description: expect.stringContaining("kept every original word"),
+      })
+    );
+    expect(harness.playWarningCue).toHaveBeenCalledOnce();
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+    expect(harness.playErrorCue).not.toHaveBeenCalled();
   });
 });

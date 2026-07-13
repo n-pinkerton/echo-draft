@@ -33,6 +33,87 @@ describe("AudioManager.stopStreamingRecording", () => {
     vi.restoreAllMocks();
   });
 
+  it("cancels a never-settling startup through the public stop path", async () => {
+    vi.useFakeTimers();
+    const trackStop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: {
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [{ stop: trackStop }],
+          getAudioTracks: () => [],
+        })),
+      },
+      configurable: true,
+    });
+    const assemblyAiStreamingStart = vi.fn();
+    const assemblyAiStreamingStop = vi.fn(async () => ({ success: false }));
+    (window as any).electronAPI = { assemblyAiStreamingStart, assemblyAiStreamingStop };
+    const manager = new AudioManager() as any;
+    manager.getAudioConstraints = vi.fn(async () => ({ audio: true }));
+    manager.withSessionRefresh = vi.fn(
+      (_operation: any, { signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        })
+    );
+
+    const startup = manager.startStreamingRecording();
+    await vi.waitFor(() => expect(manager.streamingStartInProgress).toBe(true));
+    await expect(manager.stopStreamingRecording()).resolves.toBe(true);
+    await expect(startup).resolves.toBe(false);
+
+    expect(trackStop).toHaveBeenCalledOnce();
+    expect(assemblyAiStreamingStart).not.toHaveBeenCalled();
+    expect(assemblyAiStreamingStop).toHaveBeenCalledOnce();
+    expect(manager.streamingStartInProgress).toBe(false);
+    expect(manager.streamingStartAbortController).toBeNull();
+    expect(manager.isRecording).toBe(false);
+  });
+
+  it("invalidates startup before a late auth refresh can connect", async () => {
+    vi.useFakeTimers();
+    let finishRefresh!: () => void;
+    const trackStop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: {
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [{ stop: trackStop }],
+          getAudioTracks: () => [],
+        })),
+      },
+      configurable: true,
+    });
+    const assemblyAiStreamingStart = vi.fn(async () => ({ success: true }));
+    const assemblyAiStreamingStop = vi.fn(async () => ({ success: false }));
+    (window as any).electronAPI = { assemblyAiStreamingStart, assemblyAiStreamingStop };
+    const manager = new AudioManager() as any;
+    manager.getAudioConstraints = vi.fn(async () => ({ audio: true }));
+    manager.withSessionRefresh = vi.fn(
+      (operation: () => Promise<any>) =>
+        new Promise((resolve) => {
+          finishRefresh = () => resolve(operation());
+        })
+    );
+
+    const startup = manager.startStreamingRecording();
+    await vi.waitFor(() => expect(finishRefresh).toBeTypeOf("function"));
+    await expect(manager.stopStreamingRecording()).resolves.toBe(true);
+    await expect(startup).resolves.toBe(false);
+
+    // Resolve the ignored refresh only after the main-process cancellation
+    // retention window would have expired.
+    await vi.advanceTimersByTimeAsync(31_000);
+    finishRefresh();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(trackStop).toHaveBeenCalledOnce();
+    expect(assemblyAiStreamingStart).not.toHaveBeenCalled();
+    expect(assemblyAiStreamingStop).toHaveBeenCalledOnce();
+    expect(manager.isRecording).toBe(false);
+    expect(manager.isStreaming).toBe(false);
+  });
+
   it("forwards worklet flush audio before terminating", async () => {
     vi.useFakeTimers();
 

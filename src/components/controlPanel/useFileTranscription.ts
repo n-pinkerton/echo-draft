@@ -78,7 +78,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
       return;
     }
 
-    const fileName = selection.fileName || "audio";
+    const displayName = selection.displayName || "Selected audio";
     const mimeType = selection.mimeType || "application/octet-stream";
     const bytes = new Uint8Array(selection.data.byteLength);
     bytes.set(selection.data);
@@ -92,7 +92,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
       triggeredAt: startedAt,
       cleanupEnabled: fileCleanupEnabled,
       file: {
-        fileName,
+        displayName,
         extension: selection.extension ?? null,
         mimeType,
         sizeBytes: selection.sizeBytes ?? null,
@@ -103,7 +103,6 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
       "File transcription started",
       {
         sessionId,
-        fileName,
         mimeType,
         sizeBytes: selection.sizeBytes ?? null,
         cleanupEnabled: fileCleanupEnabled,
@@ -111,7 +110,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
       "file"
     );
 
-    setFileTranscribeFileName(fileName);
+    setFileTranscribeFileName(displayName);
     setIsFileTranscribing(true);
 
     const manager = new AudioManager();

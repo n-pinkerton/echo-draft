@@ -243,8 +243,11 @@ export const usePermissions = (
     // On macOS, actually test the accessibility permission
     if (platform === "darwin") {
       try {
-        await window.electronAPI.pasteText("EchoDraft accessibility test");
-        setAccessibilityPermissionGranted(true);
+        const allowed = await window.electronAPI.checkAccessibilityPermission();
+        setAccessibilityPermissionGranted(allowed);
+        if (!allowed) {
+          throw new Error("Accessibility permission is not granted");
+        }
       } catch (err) {
         console.error("Accessibility permission test failed:", err);
         if (showAlertDialog) {

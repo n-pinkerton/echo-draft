@@ -3,6 +3,7 @@ import { Button } from "../button";
 import { Textarea } from "../textarea";
 import { Play, Copy, AlertTriangle } from "lucide-react";
 import ReasoningService from "../../../services/ReasoningService";
+import { ReasoningCleanupService } from "../../../helpers/audio/reasoning/reasoningCleanupService";
 import { getModelProvider } from "../../../models/ModelRegistry";
 import logger from "../../../utils/logger";
 
@@ -25,17 +26,21 @@ const PROVIDER_CONFIG: Record<string, ProviderConfig> = {
 };
 
 interface PromptStudioTestTabProps {
-  agentName: string;
-  editedPrompt: string;
+  managedByCloud: boolean;
   onCopyText: (text: string) => void;
 }
 
-export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: PromptStudioTestTabProps) {
+export function PromptStudioTestTab({ managedByCloud, onCopyText }: PromptStudioTestTabProps) {
   const [testText, setTestText] = useState(
     "um so like I was thinking we should probably you know schedule a meeting for next week to discuss the the project timeline"
   );
   const [testResult, setTestResult] = useState("");
+  const [testResultNote, setTestResultNote] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const cleanupService = useMemo(
+    () => new ReasoningCleanupService({ logger, reasoningService: ReasoningService }),
+    []
+  );
 
   const useReasoningModel = localStorage.getItem("useReasoningModel") === "true";
   const reasoningModel = localStorage.getItem("reasoningModel") || "";
@@ -49,13 +54,12 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
     );
   }, [reasoningProvider]);
 
-  const mentionsAgentName = testText.toLowerCase().includes(agentName.toLowerCase());
-
   const testPrompt = async () => {
     if (!testText.trim()) return;
 
     setIsLoading(true);
     setTestResult("");
+    setTestResultNote("");
 
     try {
       logger.debug(
@@ -65,10 +69,16 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
           reasoningModel,
           reasoningProvider,
           testTextLength: testText.length,
-          agentName,
         },
         "prompt-studio"
       );
+
+      if (managedByCloud) {
+        setTestResult(
+          "Managed-cloud policy tests are unavailable here. Run a normal dictation to exercise the signed-in EchoDraft Cloud cleanup path."
+        );
+        return;
+      }
 
       if (!useReasoningModel) {
         setTestResult("AI text enhancement is disabled. Enable it in AI Models to test prompts.");
@@ -88,18 +98,22 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
         }
       }
 
-      const currentCustomPrompt = localStorage.getItem("customUnifiedPrompt");
-      localStorage.setItem("customUnifiedPrompt", JSON.stringify(editedPrompt));
-
-      try {
-        const result = await ReasoningService.processText(testText, reasoningModel, agentName, {});
-        setTestResult(result);
-      } finally {
-        if (currentCustomPrompt) {
-          localStorage.setItem("customUnifiedPrompt", currentCustomPrompt);
-        } else {
-          localStorage.removeItem("customUnifiedPrompt");
-        }
+      const result = await cleanupService.processTranscriptionWithOutcome(
+        testText,
+        "prompt-studio",
+        true
+      );
+      setTestResult(result.text);
+      if (result.cleanup?.status === "fallback") {
+        setTestResultNote(
+          result.cleanup?.fallbackReason === "fidelity_rejected"
+            ? "Preservation checks rejected the rewrite and kept the original text."
+            : "Cleanup could not complete, so the original text was kept."
+        );
+      } else if (result.cleanup?.status === "unchanged") {
+        setTestResultNote("The production cleanup path found no safe wording change to apply.");
+      } else {
+        setTestResultNote("Processed with the same preservation and fidelity checks as dictation.");
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -126,12 +140,24 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
         </div>
       )}
 
+      {managedByCloud && (
+        <div className="px-5 py-4">
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+            <p className="text-[12px] text-muted-foreground leading-relaxed">
+              EchoDraft Cloud uses a managed service policy. This local tester is unavailable in
+              managed mode because it cannot faithfully reproduce that production route. Run a
+              normal dictation to test managed cleanup.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="px-5 py-4">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <p className="text-[11px] text-muted-foreground/60 uppercase tracking-wider">Model</p>
             <p className="text-[12px] font-medium text-foreground font-mono">
-              {reasoningModel || "None"}
+              {managedByCloud ? "EchoDraft Cloud" : reasoningModel || "None"}
             </p>
           </div>
           <div className="h-3 w-px bg-border/40" />
@@ -139,52 +165,56 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
             <p className="text-[11px] text-muted-foreground/60 uppercase tracking-wider">
               Provider
             </p>
-            <p className="text-[12px] font-medium text-foreground">{providerConfig.label}</p>
+            <p className="text-[12px] font-medium text-foreground">
+              {managedByCloud ? "Managed service" : providerConfig.label}
+            </p>
           </div>
         </div>
       </div>
 
       <div className="px-5 py-4">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-[12px] font-medium text-foreground">Input</p>
+          <label
+            htmlFor="cleanup-policy-test-input"
+            className="text-[12px] font-medium text-foreground"
+          >
+            Input
+          </label>
           {testText && (
-            <span
-              className={`text-[10px] font-medium uppercase tracking-wider px-1.5 py-px rounded ${
-                mentionsAgentName
-                  ? "bg-primary/10 text-primary dark:bg-primary/15"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {mentionsAgentName ? "Name mentioned" : "Cleanup"}
+            <span className="text-[10px] font-medium uppercase tracking-wider px-1.5 py-px rounded bg-muted text-muted-foreground">
+              Cleanup
             </span>
           )}
         </div>
         <Textarea
+          id="cleanup-policy-test-input"
           value={testText}
           onChange={(e) => setTestText(e.target.value)}
           rows={3}
           className="text-[12px]"
           placeholder="Enter text to test..."
+          aria-describedby="cleanup-policy-test-help"
         />
-        <p className="text-[10px] text-muted-foreground/40 mt-1.5">
-          Try questions or requests to confirm they are preserved instead of executed
+        <p id="cleanup-policy-test-help" className="text-[10px] text-muted-foreground/60 mt-1.5">
+          Runs the production preservation and fidelity checks. Try a question or request to
+          confirm it is preserved instead of executed.
         </p>
       </div>
 
       <div className="px-5 py-4">
         <Button
           onClick={testPrompt}
-          disabled={!testText.trim() || isLoading || !useReasoningModel}
+          disabled={!testText.trim() || isLoading || !useReasoningModel || managedByCloud}
           size="sm"
           className="w-full"
         >
           <Play className="w-3.5 h-3.5 mr-2" />
-          {isLoading ? "Processing..." : "Run Test"}
+          {managedByCloud ? "Unavailable in Managed Mode" : isLoading ? "Processing..." : "Run Test"}
         </Button>
       </div>
 
       {testResult && (
-        <div className="px-5 py-4">
+        <div className="px-5 py-4" role="status" aria-live="polite">
           <div className="flex items-center justify-between mb-2">
             <p className="text-[12px] font-medium text-foreground">Output</p>
             <Button
@@ -192,6 +222,7 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
               variant="ghost"
               size="sm"
               className="h-6 px-1.5"
+              aria-label="Copy test output"
             >
               <Copy className="w-3 h-3 text-muted-foreground" />
             </Button>
@@ -201,9 +232,11 @@ export function PromptStudioTestTab({ agentName, editedPrompt, onCopyText }: Pro
               {testResult}
             </pre>
           </div>
+          {testResultNote && (
+            <p className="mt-2 text-[10px] text-muted-foreground">{testResultNote}</p>
+          )}
         </div>
       )}
     </div>
   );
 }
-

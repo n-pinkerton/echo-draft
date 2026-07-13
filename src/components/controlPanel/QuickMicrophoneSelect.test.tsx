@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import QuickMicrophoneSelect from "./QuickMicrophoneSelect";
 
 const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
 const mediaDevices = {
   enumerateDevices: vi.fn(),
   getUserMedia: vi.fn(),
@@ -26,6 +27,11 @@ describe("QuickMicrophoneSelect", () => {
       Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
     } else {
       Reflect.deleteProperty(navigator, "mediaDevices");
+    }
+    if (originalPlatform) {
+      Object.defineProperty(navigator, "platform", originalPlatform);
+    } else {
+      Reflect.deleteProperty(navigator, "platform");
     }
   });
 
@@ -54,7 +60,7 @@ describe("QuickMicrophoneSelect", () => {
     );
   });
 
-  it("switches between a specific device and the Windows default", async () => {
+  it("switches between a specific device and the system default", async () => {
     mediaDevices.enumerateDevices.mockResolvedValue([
       { kind: "audioinput", deviceId: "usb-mic", label: "USB Condenser Microphone" },
     ]);
@@ -116,7 +122,7 @@ describe("QuickMicrophoneSelect", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Your saved microphone will be tried again"
     );
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Windows default" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch to system default" }));
     expect(selectDevice).toHaveBeenCalledWith("");
     fireEvent.click(screen.getByRole("button", { name: "Mic settings" }));
     expect(openSettings).toHaveBeenCalledOnce();
@@ -228,6 +234,30 @@ describe("QuickMicrophoneSelect", () => {
     ).toBeInTheDocument();
     expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["Win32", "Settings > Privacy & security > Microphone"],
+    ["MacIntel", "System Settings > Privacy & Security > Microphone"],
+    ["Linux x86_64", "Your system"],
+  ])("shows platform-aware permission guidance on %s", async (platform, guidance) => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+    mediaDevices.enumerateDevices.mockResolvedValue([
+      { kind: "audioinput", deviceId: "hidden-mic", label: "" },
+    ]);
+    installMediaDevices();
+
+    render(
+      <QuickMicrophoneSelect
+        preferBuiltInMic={false}
+        selectedMicDeviceId=""
+        onPreferBuiltInChange={vi.fn()}
+        onDeviceSelect={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByRole("status")).toHaveTextContent(guidance);
+    expect(screen.getByRole("option", { name: "System default microphone" })).toBeInTheDocument();
   });
 
   it("keeps the newest device list when overlapping refreshes finish out of order", async () => {

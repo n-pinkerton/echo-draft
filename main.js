@@ -23,10 +23,9 @@ const {
   DEFAULT_AUTH_BRIDGE_HOST,
   DEFAULT_AUTH_BRIDGE_PATH,
 } = require("./src/helpers/app/authBridgeServer");
-const {
-  handleOAuthDeepLink,
-  navigateControlPanelWithVerifier,
-} = require("./src/helpers/app/oauthDeepLink");
+const { acceptOAuthCallback, handleOAuthDeepLink } = require("./src/helpers/app/oauthDeepLink");
+const { createOAuthStateManager } = require("./src/helpers/app/oauthState");
+const DevServerManager = require("./src/helpers/devServerManager");
 const { bootstrapManagers } = require("./src/helpers/app/managerBootstrap");
 const { installNeonAuthOriginFix } = require("./src/helpers/app/neonAuthOriginFix");
 const { isLiveWindow } = require("./src/helpers/app/windowUtils");
@@ -40,6 +39,7 @@ const {
 const {
   registerWindowsHotkeyRecovery,
 } = require("./src/helpers/app/platformHotkeys/windowsHotkeyRecovery");
+const { requireTrustedRenderer } = require("./src/helpers/ipc/trustedRenderer");
 
 const APP_CHANNEL = resolveAppChannel();
 process.env.OPENWHISPR_CHANNEL = APP_CHANNEL;
@@ -108,24 +108,31 @@ let authBridgeServer = null;
 let windowsHotkeyController = null;
 let disposeWindowsHotkeyRecovery = null;
 let controlPanelShortcutRegistration = null;
+const oauthStateManager = createOAuthStateManager();
 
 const AUTH_BRIDGE_HOST = DEFAULT_AUTH_BRIDGE_HOST;
 const AUTH_BRIDGE_PORT = parseAuthBridgePort();
 const AUTH_BRIDGE_PATH = DEFAULT_AUTH_BRIDGE_PATH;
 
+ipcMain.handle("begin-oauth-session", (event) => {
+  requireTrustedRenderer(event, windowManager, ["control-panel"]);
+  return oauthStateManager.issue({ rendererId: event.sender.id });
+});
+
 app.on("open-url", (event, url) => {
   event.preventDefault();
   if (!url.startsWith(`${OAUTH_PROTOCOL}://`)) return;
 
-  handleOAuthDeepLink({
+  const accepted = handleOAuthDeepLink({
     deepLinkUrl: url,
     windowManager,
     appChannel: APP_CHANNEL,
     oauthProtocol: OAUTH_PROTOCOL,
+    oauthStateManager,
     debugLogger,
   });
 
-  if (windowManager && isLiveWindow(windowManager.controlPanelWindow)) {
+  if (accepted && windowManager && isLiveWindow(windowManager.controlPanelWindow)) {
     windowManager.controlPanelWindow.show();
     windowManager.controlPanelWindow.focus();
   }
@@ -153,16 +160,21 @@ async function startApp() {
   globeKeyManager = managers.globeKeyManager;
   windowsKeyManager = managers.windowsKeyManager;
   if (!authBridgeServer) {
+    const devAppUrl = DevServerManager.getAppUrl(true);
+    const expectedOrigin = devAppUrl ? new URL(devAppUrl).origin : null;
     authBridgeServer = startAuthBridgeServer({
       channel: APP_CHANNEL,
       host: AUTH_BRIDGE_HOST,
       port: AUTH_BRIDGE_PORT,
       path: AUTH_BRIDGE_PATH,
+      expectedOrigin,
       debugLogger,
-      onVerifier: (verifier) =>
-        navigateControlPanelWithVerifier({
+      onVerifier: (verifier, state) =>
+        acceptOAuthCallback({
           windowManager,
           verifier,
+          state,
+          oauthStateManager,
           appChannel: APP_CHANNEL,
           oauthProtocol: OAUTH_PROTOCOL,
           debugLogger,
@@ -176,7 +188,13 @@ async function startApp() {
   windowManager.setActivationModeCache(environmentManager.getActivationMode());
 
   // Update cache + persist when renderer changes activation mode (all platforms)
-  ipcMain.on("activation-mode-changed", (_event, mode) => {
+  ipcMain.on("activation-mode-changed", (event, mode) => {
+    try {
+      requireTrustedRenderer(event, windowManager, ["control-panel"]);
+    } catch {
+      return;
+    }
+    if (mode !== "tap" && mode !== "push") return;
     windowManager.setActivationModeCache(mode);
     environmentManager.saveActivationMode(mode);
   });
@@ -239,7 +257,11 @@ async function startApp() {
   await windowManager.createMainWindow();
   controlPanelShortcutRegistration = registerControlPanelShortcut(
     { globalShortcut },
-    { windowManager, logger: debugLogger }
+    {
+      windowManager,
+      logger: debugLogger,
+      onStatusChange: (status) => windowManager.setControlPanelShortcutStatus(status),
+    }
   );
 
   // Set up tray
@@ -268,14 +290,26 @@ async function startApp() {
     powerMonitor,
     windowManager,
     windowsHotkeyController,
+    controlPanelShortcutRegistration,
     debugLogger,
   });
 }
 
 // Listen for usage limit reached from dictation overlay, forward to control panel
-ipcMain.on("limit-reached", (_event, data) => {
+ipcMain.on("limit-reached", (event, data) => {
+  try {
+    requireTrustedRenderer(event, windowManager, ["dictation"]);
+  } catch {
+    return;
+  }
+  const wordsUsed = Number(data?.wordsUsed);
+  const limit = Number(data?.limit);
+  if (!Number.isFinite(wordsUsed) || !Number.isFinite(limit)) return;
   if (isLiveWindow(windowManager?.controlPanelWindow)) {
-    windowManager.controlPanelWindow.webContents.send("limit-reached", data);
+    windowManager.controlPanelWindow.webContents.send("limit-reached", {
+      wordsUsed: Math.max(0, Math.round(wordsUsed)),
+      limit: Math.max(0, Math.round(limit)),
+    });
   }
 });
 
@@ -311,6 +345,7 @@ if (gotSingleInstanceLock) {
         windowManager,
         appChannel: APP_CHANNEL,
         oauthProtocol: OAUTH_PROTOCOL,
+        oauthStateManager,
         debugLogger,
       });
     }
@@ -400,6 +435,7 @@ if (gotSingleInstanceLock) {
       authBridgeServer.close();
       authBridgeServer = null;
     }
+    oauthStateManager.clear();
     if (hotkeyManager) {
       hotkeyManager.unregisterAll();
     } else {

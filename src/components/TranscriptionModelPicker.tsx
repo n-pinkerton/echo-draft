@@ -19,6 +19,7 @@ import CloudModePanel from "./transcriptionModelPicker/cloud/CloudModePanel";
 import LocalModePanel from "./transcriptionModelPicker/local/LocalModePanel";
 import { useParakeetModels } from "./transcriptionModelPicker/hooks/useParakeetModels";
 import { useWhisperModels } from "./transcriptionModelPicker/hooks/useWhisperModels";
+import { normalizeCustomEndpointOutcome, type CustomEndpointSetter } from "../types/customEndpoint";
 
 interface TranscriptionModelPickerProps {
   selectedCloudProvider: string;
@@ -40,7 +41,7 @@ interface TranscriptionModelPickerProps {
   customTranscriptionApiKey?: string;
   setCustomTranscriptionApiKey?: (key: string) => void;
   cloudTranscriptionBaseUrl?: string;
-  setCloudTranscriptionBaseUrl?: (url: string) => void;
+  setCloudTranscriptionBaseUrl?: CustomEndpointSetter;
   className?: string;
   variant?: "onboarding" | "settings";
 }
@@ -70,11 +71,17 @@ export default function TranscriptionModelPicker({
   variant = "settings",
 }: TranscriptionModelPickerProps) {
   const [internalLocalProvider, setInternalLocalProvider] = useState(selectedLocalProvider);
+  const [customBaseInput, setCustomBaseInput] = useState(cloudTranscriptionBaseUrl);
+  const [customBaseError, setCustomBaseError] = useState<string | null>(null);
 
   // Sync internal state with prop when it changes externally
   useEffect(() => {
     setInternalLocalProvider(selectedLocalProvider);
   }, [selectedLocalProvider]);
+
+  useEffect(() => {
+    setCustomBaseInput(cloudTranscriptionBaseUrl);
+  }, [cloudTranscriptionBaseUrl]);
 
   const whisperModelsEnabled = useLocalWhisper && internalLocalProvider === "whisper";
   const parakeetModelsEnabled = useLocalWhisper && internalLocalProvider === "nvidia";
@@ -184,6 +191,7 @@ export default function TranscriptionModelPicker({
         // Clear model to whisper-1 (standard fallback) to avoid sending
         // provider-specific models to custom endpoints
         onCloudModelSelect("whisper-1");
+        setCustomBaseInput(cloudTranscriptionBaseUrl);
         // Don't change base URL - user will enter their own
         return;
       }
@@ -196,7 +204,13 @@ export default function TranscriptionModelPicker({
         }
       }
     },
-    [cloudProviders, onCloudProviderSelect, onCloudModelSelect, setCloudTranscriptionBaseUrl]
+    [
+      cloudProviders,
+      cloudTranscriptionBaseUrl,
+      onCloudProviderSelect,
+      onCloudModelSelect,
+      setCloudTranscriptionBaseUrl,
+    ]
   );
 
   const handleLocalProviderChange = useCallback(
@@ -228,17 +242,17 @@ export default function TranscriptionModelPicker({
     [onLocalModelSelect, onLocalProviderSelect]
   );
 
-  const handleBaseUrlBlur = useCallback(() => {
+  const handleBaseUrlBlur = useCallback(async () => {
     if (!setCloudTranscriptionBaseUrl || selectedCloudProvider !== "custom") return;
 
-    const trimmed = (cloudTranscriptionBaseUrl || "").trim();
-    if (!trimmed) return;
+    const trimmed = customBaseInput.trim();
+    if (!trimmed) {
+      setCustomBaseError("Enter an endpoint URL before leaving this field.");
+      return;
+    }
 
     const normalized = normalizeBaseUrl(trimmed);
-
-    if (normalized && normalized !== cloudTranscriptionBaseUrl) {
-      setCloudTranscriptionBaseUrl(normalized);
-    }
+    setCustomBaseInput(normalized);
 
     // Auto-detect if this matches a known provider
     if (normalized) {
@@ -246,13 +260,41 @@ export default function TranscriptionModelPicker({
         const providerNormalized = normalizeBaseUrl(provider.baseUrl);
         if (normalized === providerNormalized) {
           onCloudProviderSelect(provider.id);
+          const outcome = normalizeCustomEndpointOutcome(
+            await setCloudTranscriptionBaseUrl(normalized),
+            normalized
+          );
+          if (outcome.status !== "approved") {
+            setCustomBaseError(outcome.message);
+            return;
+          }
+          setCustomBaseError(null);
           onCloudModelSelect("whisper-1");
-          break;
+          return;
         }
       }
     }
+
+    let outcome;
+    try {
+      outcome = normalizeCustomEndpointOutcome(
+        await setCloudTranscriptionBaseUrl(normalized),
+        normalized
+      );
+    } catch {
+      outcome = {
+        status: "error" as const,
+        message: "EchoDraft could not approve this endpoint. Check the URL and try again.",
+      };
+    }
+    if (outcome.status !== "approved") {
+      setCustomBaseError(outcome.message);
+      return;
+    }
+    setCustomBaseError(null);
+    setCustomBaseInput(outcome.endpoint);
   }, [
-    cloudTranscriptionBaseUrl,
+    customBaseInput,
     selectedCloudProvider,
     setCloudTranscriptionBaseUrl,
     onCloudProviderSelect,
@@ -320,8 +362,14 @@ export default function TranscriptionModelPicker({
           onCloudProviderChange={handleCloudProviderChange}
           onCloudModelSelect={onCloudModelSelect}
           cloudModelOptions={cloudModelOptions}
-          cloudTranscriptionBaseUrl={cloudTranscriptionBaseUrl}
-          setCloudTranscriptionBaseUrl={setCloudTranscriptionBaseUrl}
+          cloudTranscriptionBaseUrl={
+            selectedCloudProvider === "custom" ? customBaseInput : cloudTranscriptionBaseUrl
+          }
+          setCloudTranscriptionBaseUrl={(value) => {
+            setCustomBaseInput(value);
+            setCustomBaseError(null);
+          }}
+          customEndpointError={customBaseError}
           onBaseUrlBlur={handleBaseUrlBlur}
           openaiApiKey={openaiApiKey}
           setOpenaiApiKey={setOpenaiApiKey}

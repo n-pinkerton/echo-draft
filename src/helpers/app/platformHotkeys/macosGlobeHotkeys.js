@@ -1,4 +1,5 @@
 const { isLiveWindow } = require("../windowUtils");
+const { requireTrustedRenderer } = require("../../ipc/trustedRenderer");
 
 function registerMacOsGlobeHotkeys({
   ipcMain,
@@ -138,7 +139,12 @@ function registerMacOsGlobeHotkeys({
   globeKeyManager.start();
 
   // Reset native key state when hotkey changes
-  ipcMain.on("hotkey-changed", (_event, _newHotkey) => {
+  ipcMain.on("hotkey-changed", (event, _newHotkey) => {
+    try {
+      requireTrustedRenderer(event, windowManager, ["control-panel"]);
+    } catch {
+      return;
+    }
     globeKeyDownTime = 0;
     globeKeyIsRecording = false;
     globeSessionPayload = null;
@@ -147,7 +153,12 @@ function registerMacOsGlobeHotkeys({
     rightModSessionPayload = null;
   });
 
-  ipcMain.on("clipboard-hotkey-changed", (_event, _newHotkey) => {
+  ipcMain.on("clipboard-hotkey-changed", (event, _newHotkey) => {
+    try {
+      requireTrustedRenderer(event, windowManager, ["control-panel"]);
+    } catch {
+      return;
+    }
     rightModDownTime = 0;
     rightModIsRecording = false;
     rightModSessionPayload = null;
@@ -168,4 +179,3 @@ function registerMacOsGlobeHotkeys({
 module.exports = {
   registerMacOsGlobeHotkeys,
 };
-

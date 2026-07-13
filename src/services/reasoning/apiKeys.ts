@@ -17,24 +17,10 @@ export async function getReasoningApiKey({
   electronAPI?: any;
   localStorage?: Storage;
 }): Promise<string> {
+  void localStorage;
   if (provider === "custom") {
-    let customKey = "";
-    try {
-      customKey = (await electronAPI?.getCustomReasoningKey?.()) || "";
-    } catch (err) {
-      logger.logReasoning("CUSTOM_KEY_IPC_FALLBACK", { error: (err as Error)?.message });
-    }
-    if (!customKey || !customKey.trim()) {
-      customKey = localStorage?.getItem("customReasoningApiKey") || "";
-    }
-    const trimmedKey = customKey.trim();
-
-    logger.logReasoning("CUSTOM_KEY_RETRIEVAL", {
-      provider,
-      hasKey: Boolean(trimmedKey),
-    });
-
-    return trimmedKey;
+    const status = await electronAPI?.getApiKeyStatus?.();
+    return status?.customReasoning ? "configured-in-main" : "";
   }
 
   let apiKey = apiKeyCache.get(provider);
@@ -47,13 +33,9 @@ export async function getReasoningApiKey({
 
   if (!apiKey) {
     try {
-      const keyGetters: Record<string, () => Promise<string>> = {
-        openai: () => electronAPI.getOpenAIKey(),
-        anthropic: () => electronAPI.getAnthropicKey(),
-        gemini: () => electronAPI.getGeminiKey(),
-        groq: () => electronAPI.getGroqKey(),
-      };
-      apiKey = (await keyGetters[provider]()) ?? undefined;
+      const status = await electronAPI?.getApiKeyStatus?.();
+      const configured = Boolean(status?.[provider]);
+      apiKey = configured ? "configured-in-main" : undefined;
 
       logger.logReasoning(`${provider.toUpperCase()}_KEY_FETCHED`, {
         provider,

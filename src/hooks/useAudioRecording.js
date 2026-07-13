@@ -171,20 +171,27 @@ export const useAudioRecording = (toast, options = {}) => {
   );
 
   const stopRecording = useCallback(
-    (payload = {}) => recordingOperationQueueRef.current.run(() => performStopRecording(payload)),
+    (payload = {}) => {
+      audioManagerRef.current?.cancelStreamingStartup?.();
+      return recordingOperationQueueRef.current.run(() => performStopRecording(payload));
+    },
     [performStopRecording]
   );
 
   const toggleRecording = useCallback(
-    (payload = {}) =>
-      recordingOperationQueueRef.current.run(async () => {
+    (payload = {}) => {
+      if (audioManagerRef.current?.cancelStreamingStartup?.()) {
+        return Promise.resolve(false);
+      }
+      return recordingOperationQueueRef.current.run(async () => {
         if (!audioManagerRef.current) return false;
         const currentState = audioManagerRef.current.getState();
         if (!currentState.isRecording) {
           return await performStartRecording(payload);
         }
         return await performStopRecording(payload);
-      }),
+      });
+    },
     [performStartRecording, performStopRecording]
   );
 
@@ -398,6 +405,7 @@ export const useAudioRecording = (toast, options = {}) => {
   }, [progress.stage]);
 
   const cancelRecording = async () => {
+    const startupCancelled = audioManagerRef.current?.cancelStreamingStartup?.() || false;
     if (audioManagerRef.current?.getState().isStreaming) {
       return await stopRecording({ stopReason: "manual", stopSource: "cancel-control" });
     }
@@ -412,10 +420,10 @@ export const useAudioRecording = (toast, options = {}) => {
     updateStage("cancelled", { message: "Recording cancelled" });
     if (audioManagerRef.current) {
       const cancelled = audioManagerRef.current.cancelRecording();
-      if (cancelled) {
+      if (cancelled || startupCancelled) {
         void playCancelCue();
       }
-      return cancelled;
+      return cancelled || startupCancelled;
     }
     return false;
   };

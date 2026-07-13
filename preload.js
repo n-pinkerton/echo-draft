@@ -36,6 +36,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
   showRecordingIndicator: () => ipcRenderer.invoke("show-recording-indicator"),
   showControlPanel: () => ipcRenderer.invoke("show-control-panel"),
+  getControlPanelShortcutStatus: () => ipcRenderer.invoke("get-control-panel-shortcut-status"),
+  onControlPanelShortcutStatusChanged: registerListener(
+    "control-panel-shortcut-status",
+    (callback) => (_event, status) => callback(status)
+  ),
   onToggleDictation: registerListener(
     "toggle-dictation",
     (callback) => (_event, payload) => callback(payload)
@@ -67,6 +72,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         e2eGetHotkeyStatus: () => ipcRenderer.invoke("e2e-get-hotkey-status"),
         e2eGetTrayStatus: () => ipcRenderer.invoke("e2e-get-tray-status"),
         e2eGetMainWindowState: () => ipcRenderer.invoke("e2e-get-main-window-state"),
+        e2eCreateDictationSession: (outputMode = "insert") =>
+          ipcRenderer.invoke("e2e-create-dictation-session", outputMode),
       }
     : {}),
   clearTranscriptions: () => ipcRenderer.invoke("db-clear-transcriptions"),
@@ -108,15 +115,51 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Environment variables
-  getOpenAIKey: () => ipcRenderer.invoke("get-openai-key"),
+  getApiKeyStatus: () => ipcRenderer.invoke("get-api-key-status"),
   saveOpenAIKey: (key) => ipcRenderer.invoke("save-openai-key", key),
-  createProductionEnvFile: (key) => ipcRenderer.invoke("create-production-env-file", key),
+  approveCustomProviderEndpoint: (purpose, endpoint) =>
+    ipcRenderer.invoke("approve-custom-provider-endpoint", purpose, endpoint),
+  providerCleanupRequest: (payload, requestId) =>
+    ipcRenderer.invoke("provider-cleanup-request", payload, requestId),
+  providerModelsRequest: (payload, requestId) =>
+    ipcRenderer.invoke("provider-models-request", payload, requestId),
+  providerTranscriptionRequest: (payload, requestId, onProgress) => {
+    const listener = (_event, progress) => {
+      if (
+        typeof onProgress !== "function" ||
+        progress?.requestId !== requestId ||
+        !Number.isSafeInteger(progress?.generatedChars) ||
+        progress.generatedChars < 0 ||
+        progress.generatedChars > 8 * 1024 * 1024 ||
+        !Number.isSafeInteger(progress?.generatedWords) ||
+        progress.generatedWords < 0 ||
+        progress.generatedWords > 2_000_000
+      ) {
+        return;
+      }
+      try {
+        onProgress({
+          generatedChars: progress.generatedChars,
+          generatedWords: progress.generatedWords,
+          isComplete: progress.isComplete === true,
+        });
+      } catch {
+        // A renderer progress callback cannot affect the underlying request.
+      }
+    };
+    if (typeof onProgress === "function") {
+      ipcRenderer.on("provider-transcription-progress", listener);
+    }
+    return ipcRenderer
+      .invoke("provider-transcription-request", payload, requestId)
+      .finally(() => ipcRenderer.removeListener("provider-transcription-progress", listener));
+  },
 
   // Clipboard functions
-  readClipboard: () => ipcRenderer.invoke("read-clipboard"),
   writeClipboard: (text) => ipcRenderer.invoke("write-clipboard", text),
-  captureInsertionTarget: () => ipcRenderer.invoke("capture-insertion-target"),
+  captureInsertionTarget: (sessionId) => ipcRenderer.invoke("capture-insertion-target", sessionId),
   checkPasteTools: () => ipcRenderer.invoke("check-paste-tools"),
+  checkAccessibilityPermission: () => ipcRenderer.invoke("check-accessibility-permission"),
 
   // Local Whisper functions (whisper.cpp)
   transcribeLocalWhisper: (audioBlob, options, requestId) =>
@@ -184,8 +227,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   getUpdateStatus: () => ipcRenderer.invoke("get-update-status"),
   getUpdateInfo: () => ipcRenderer.invoke("get-update-info"),
+  openVerifiedReleases: () => ipcRenderer.invoke("open-verified-releases"),
 
   // Update event listeners
+  onCheckingForUpdate: registerListener("checking-for-update"),
   onUpdateAvailable: registerListener("update-available"),
   onUpdateNotAvailable: registerListener("update-not-available"),
   onUpdateDownloaded: registerListener("update-downloaded"),
@@ -197,6 +242,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // External link opener
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  beginOAuthSession: () => ipcRenderer.invoke("begin-oauth-session"),
+  authBeginSocialSignIn: (provider, state) =>
+    ipcRenderer.invoke("auth-begin-social-sign-in", { provider, state }),
 
   // Model management functions
   modelGetAll: () => ipcRenderer.invoke("model-get-all"),
@@ -209,27 +257,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onModelDownloadProgress: registerListener("model-download-progress"),
 
   // Anthropic API
-  getAnthropicKey: () => ipcRenderer.invoke("get-anthropic-key"),
   saveAnthropicKey: (key) => ipcRenderer.invoke("save-anthropic-key", key),
 
   // Gemini API
-  getGeminiKey: () => ipcRenderer.invoke("get-gemini-key"),
   saveGeminiKey: (key) => ipcRenderer.invoke("save-gemini-key", key),
 
   // Groq API
-  getGroqKey: () => ipcRenderer.invoke("get-groq-key"),
   saveGroqKey: (key) => ipcRenderer.invoke("save-groq-key", key),
 
   // Mistral API
-  getMistralKey: () => ipcRenderer.invoke("get-mistral-key"),
   saveMistralKey: (key) => ipcRenderer.invoke("save-mistral-key", key),
-  proxyMistralTranscription: (data, requestId) =>
-    ipcRenderer.invoke("proxy-mistral-transcription", data, requestId),
-
   // Custom endpoint API keys
-  getCustomTranscriptionKey: () => ipcRenderer.invoke("get-custom-transcription-key"),
   saveCustomTranscriptionKey: (key) => ipcRenderer.invoke("save-custom-transcription-key", key),
-  getCustomReasoningKey: () => ipcRenderer.invoke("get-custom-reasoning-key"),
   saveCustomReasoningKey: (key) => ipcRenderer.invoke("save-custom-reasoning-key", key),
 
   // Dictation key persistence (file-based for reliable startup)

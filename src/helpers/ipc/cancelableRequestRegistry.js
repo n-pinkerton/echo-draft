@@ -1,3 +1,5 @@
+const { requireTrustedRenderer } = require("./trustedRenderer");
+
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{15,79}$/;
 const CANCEL_TOMBSTONE_TTL_MS = 30_000;
 const MAX_ACTIVE_REQUESTS_PER_SENDER = 16;
@@ -178,9 +180,10 @@ class CancelableRequestRegistry {
   }
 }
 
-function registerCancelableRequestHandler({ ipcMain }, { registry }) {
+function registerCancelableRequestHandler({ ipcMain }, { registry, windowManager }) {
   ipcMain.handle("cancel-ipc-request", (event, requestId) => {
     try {
+      requireTrustedRenderer(event, windowManager);
       return { success: registry.cancel(event, requestId) };
     } catch (error) {
       return { success: false, error: error.message, code: error.code };

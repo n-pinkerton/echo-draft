@@ -2,8 +2,6 @@ import { createAuthClient } from "@neondatabase/auth";
 import { BetterAuthReactAdapter } from "@neondatabase/auth/react";
 import { OPENWHISPR_API_URL } from "../config/constants";
 import { LAST_SIGN_IN_STORAGE_KEY, LEGACY_LAST_SIGN_IN_STORAGE_KEY } from "../utils/branding";
-import { openExternalLink } from "../utils/externalLinks";
-import logger from "../utils/logger";
 import { createAbortError, raceWithAbort, throwIfAborted } from "../utils/retry";
 
 export const NEON_AUTH_URL = import.meta.env.VITE_NEON_AUTH_URL || "";
@@ -16,7 +14,6 @@ export type SocialProvider = "google";
 const GRACE_PERIOD_MS = 60_000;
 const GRACE_RETRY_COUNT = 6;
 const INITIAL_GRACE_RETRY_DELAY_MS = 500;
-
 let lastSignInTime: number | null = null;
 
 function getLocalStorageSafe(): Storage | null {
@@ -194,16 +191,6 @@ export async function withSessionRefresh<T>(
   }
 }
 
-function getElectronOAuthCallbackURL(): string {
-  const configuredUrl = (import.meta.env.VITE_OPENWHISPR_OAUTH_CALLBACK_URL || "").trim();
-  if (configuredUrl) return configuredUrl;
-
-  if (window.location.protocol !== "file:") return `${window.location.origin}/?panel=true`;
-
-  const port = import.meta.env.VITE_DEV_SERVER_PORT || "5183";
-  return `http://localhost:${port}/?panel=true`;
-}
-
 export async function signInWithSocial(provider: SocialProvider): Promise<{ error?: Error }> {
   if (!authClient) {
     return { error: new Error("Auth not configured") };
@@ -213,33 +200,17 @@ export async function signInWithSocial(provider: SocialProvider): Promise<{ erro
     const isElectron = Boolean((window as any).electronAPI);
 
     if (isElectron) {
-      const callbackURL = getElectronOAuthCallbackURL();
-
-      const response = await fetch(`${NEON_AUTH_URL}/sign-in/social`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ provider, callbackURL, disableRedirect: true }),
-      });
-
-      const text = await response.text();
-
-      if (!response.ok) {
-        logger.error(`Social sign-in failed: ${response.status}`, text.slice(0, 200), "auth");
-        return { error: new Error("Failed to initiate sign-in") };
+      const oauthSession = await window.electronAPI.beginOAuthSession();
+      if (!/^[A-Za-z0-9_-]{43}$/.test(oauthSession?.state || "")) {
+        return { error: new Error("Failed to create a secure sign-in session") };
       }
-
-      let data: { url?: string };
-      try {
-        data = JSON.parse(text);
-      } catch {
-        logger.error("Non-JSON response from auth server", text.slice(0, 200), "auth");
-        return { error: new Error("Unexpected response from auth server") };
+      if (!window.electronAPI.authBeginSocialSignIn) {
+        return { error: new Error("Secure sign-in transport is unavailable") };
       }
-
-      if (!data.url) return { error: new Error("Failed to get OAuth URL") };
-
-      openExternalLink(data.url);
+      const result = await window.electronAPI.authBeginSocialSignIn(provider, oauthSession.state);
+      if (!result?.success) {
+        return { error: new Error(result?.error || "Failed to initiate sign-in") };
+      }
       return {};
     }
 

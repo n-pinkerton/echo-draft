@@ -1,7 +1,7 @@
 const childProcess = require("child_process");
 const debugLogger = require("../debugLogger");
 
-const PIN_CONFIRMED = Symbol("echoDraftControlPanelPinned");
+let windowsComUnavailable = false;
 
 const getWindowHandle = (browserWindow) => {
   const nativeHandle = browserWindow?.getNativeWindowHandle?.();
@@ -13,17 +13,42 @@ const getWindowHandle = (browserWindow) => {
   return value > 0n ? value.toString() : null;
 };
 
-const buildPinScript = (handle) => `
+const buildCurrentDesktopCheckScript = (handle) => `
 $ErrorActionPreference = 'Stop'
-Import-Module VirtualDesktop -ErrorAction Stop -WarningAction SilentlyContinue
-$hwnd = [IntPtr][Int64]${handle}
-$pinned = [bool](Test-WindowPinned -Hwnd $hwnd -ErrorAction SilentlyContinue)
-if (-not $pinned) {
-  Pin-Window -Hwnd $hwnd -ErrorAction Stop
-  $pinned = [bool](Test-WindowPinned -Hwnd $hwnd -ErrorAction SilentlyContinue)
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class EchoDraftVirtualDesktop {
+  [ComImport]
+  [Guid("A5CD92FF-29BE-454C-8D04-D82879FB3F1B")]
+  [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface IVirtualDesktopManager {
+    [PreserveSig] int IsWindowOnCurrentVirtualDesktop(IntPtr topLevelWindow, out int onCurrentDesktop);
+    [PreserveSig] int GetWindowDesktopId(IntPtr topLevelWindow, out Guid desktopId);
+    [PreserveSig] int MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
+  }
+
+  public static bool IsOnCurrentDesktop(long targetValue) {
+    Type managerType = Type.GetTypeFromCLSID(
+      new Guid("AA509086-5CA9-4C25-8F95-589D3C07B48A"),
+      true
+    );
+    object instance = Activator.CreateInstance(managerType);
+    try {
+      IVirtualDesktopManager manager = (IVirtualDesktopManager)instance;
+      IntPtr target = new IntPtr(targetValue);
+      int isCurrent;
+      Marshal.ThrowExceptionForHR(manager.IsWindowOnCurrentVirtualDesktop(target, out isCurrent));
+      return isCurrent != 0;
+    } finally {
+      if (instance != null && Marshal.IsComObject(instance)) Marshal.FinalReleaseComObject(instance);
+    }
+  }
 }
-if (-not $pinned) { throw 'Virtual desktop pin could not be confirmed.' }
-Write-Output 'PINNED'
+'@
+$isCurrent = [EchoDraftVirtualDesktop]::IsOnCurrentDesktop([Int64]${handle})
+if ($isCurrent) { Write-Output 'CURRENT' } else { Write-Output 'OTHER' }
 `;
 
 const runPowerShell = (script, execFile = childProcess.execFile) =>
@@ -31,7 +56,7 @@ const runPowerShell = (script, execFile = childProcess.execFile) =>
     execFile(
       "powershell.exe",
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-      { windowsHide: true, timeout: 5000, maxBuffer: 64 * 1024 },
+      { windowsHide: true, timeout: 2000, maxBuffer: 64 * 1024 },
       (error, stdout, stderr) => {
         if (error) {
           error.stderr = stderr;
@@ -43,42 +68,70 @@ const runPowerShell = (script, execFile = childProcess.execFile) =>
     );
   });
 
-async function pinWindowToAllVirtualDesktops(
+async function moveWindowToCurrentVirtualDesktop(
   browserWindow,
   { platform = process.platform, execFile = childProcess.execFile, logger = debugLogger } = {}
 ) {
   if (!browserWindow || browserWindow.isDestroyed?.()) {
-    return { success: false, error: "Control panel window is unavailable" };
+    return { success: false, error: "Window is unavailable" };
   }
-  if (browserWindow[PIN_CONFIRMED]) return { success: true, cached: true };
 
   if (platform !== "win32") {
     browserWindow.setVisibleOnAllWorkspaces?.(true);
-    browserWindow[PIN_CONFIRMED] = true;
-    return { success: true };
+    return { success: true, mode: "all-workspaces" };
+  }
+
+  if (windowsComUnavailable) {
+    return { success: false, unsupported: true, error: "Windows virtual desktops are unavailable" };
   }
 
   const handle = getWindowHandle(browserWindow);
-  if (!handle) return { success: false, error: "Control panel window handle is unavailable" };
+  if (!handle) return { success: false, error: "Window handle is unavailable" };
 
   try {
-    const output = await runPowerShell(buildPinScript(handle), execFile);
-    if (!output.includes("PINNED")) {
-      throw new Error("Virtual desktop pin was not confirmed");
+    const output = await runPowerShell(buildCurrentDesktopCheckScript(handle), execFile);
+    if (output.includes("CURRENT")) {
+      return { success: true, mode: "already-current" };
     }
-    browserWindow[PIN_CONFIRMED] = true;
-    logger?.info?.("Control panel pinned to all Windows virtual desktops", { handle });
-    return { success: true };
+    if (output.includes("OTHER")) {
+      logger?.info?.("Window belongs to another Windows virtual desktop", { handle });
+      return {
+        success: false,
+        needsRecreate: true,
+        mode: "different-desktop",
+        error: "Window belongs to another virtual desktop",
+      };
+    }
+    throw new Error("Virtual desktop status was not confirmed");
   } catch (error) {
-    logger?.warn?.("Could not pin the control panel to all Windows virtual desktops", {
+    const detail = `${error?.message || String(error)} ${error?.stderr || ""}`;
+    if (/80040154|class not registered|REGDB_E_CLASSNOTREG/i.test(detail)) {
+      windowsComUnavailable = true;
+    }
+    logger?.warn?.("Could not move a window to the active Windows virtual desktop", {
       error: error?.message || String(error),
+      unsupported: windowsComUnavailable,
     });
-    return { success: false, error: error?.message || String(error) };
+    return {
+      success: false,
+      unsupported: windowsComUnavailable,
+      error: error?.message || String(error),
+    };
   }
 }
 
+const resetWindowsVirtualDesktopSupportForTests = () => {
+  windowsComUnavailable = false;
+};
+
+const shouldRecreateExistingWindow = (result, platform = process.platform) =>
+  platform === "win32" && result?.success !== true;
+
 module.exports = {
-  buildPinScript,
+  buildCurrentDesktopCheckScript,
   getWindowHandle,
-  pinWindowToAllVirtualDesktops,
+  moveWindowToCurrentVirtualDesktop,
+  pinWindowToAllVirtualDesktops: moveWindowToCurrentVirtualDesktop,
+  resetWindowsVirtualDesktopSupportForTests,
+  shouldRecreateExistingWindow,
 };

@@ -6,6 +6,7 @@ export type ValidationErrorCode =
   | "LEFT_RIGHT_MIX"
   | "LEFT_MODIFIER_ONLY"
   | "DUPLICATE"
+  | "APP_RESERVED"
   | "RESERVED"
   | "INVALID_GLOBE";
 
@@ -14,4 +15,3 @@ export interface ValidationResult {
   error?: string;
   errorCode?: ValidationErrorCode;
 }
-

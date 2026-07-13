@@ -4,12 +4,20 @@ import { API_ENDPOINTS } from "../../config/constants";
 import { ECHO_DRAFT_CLOUD_MODE, normalizeCloudMode } from "../../utils/branding";
 import logger from "../../utils/logger";
 import type { LocalTranscriptionProvider } from "../../types/electron";
+import type { CustomEndpointApprovalOutcome } from "../../types/customEndpoint";
 import { useLocalStorage } from "../useLocalStorage";
 import type { TranscriptionSettings } from "./settingsTypes";
 import { syncDictionaryOnStartup } from "./dictionarySync";
+import { sanitizeLexicalDictionaryEntries } from "../../utils/dictionaryLexicon.cjs";
 
 const deserializeLocalProvider = (value: string): LocalTranscriptionProvider =>
   value === "nvidia" ? "nvidia" : "whisper";
+const sanitizeCustomDictionary = (words: unknown): string[] =>
+  sanitizeLexicalDictionaryEntries(Array.isArray(words) ? words : [], {
+    maxEntries: 10_000,
+    maxEntryLength: 80,
+    maxWords: 1,
+  });
 
 export function useTranscriptionSettings() {
   const [useLocalWhisper, setUseLocalWhisper] = useLocalStorage("useLocalWhisper", false, {
@@ -61,7 +69,7 @@ export function useTranscriptionSettings() {
     deserialize: String,
   });
 
-  const [cloudTranscriptionProvider, setCloudTranscriptionProvider] = useLocalStorage(
+  const [cloudTranscriptionProvider, setCloudTranscriptionProviderStored] = useLocalStorage(
     "cloudTranscriptionProvider",
     "openai",
     {
@@ -69,6 +77,18 @@ export function useTranscriptionSettings() {
       deserialize: String,
     }
   );
+  const cloudTranscriptionProviderRef = useRef(cloudTranscriptionProvider);
+  const setCloudTranscriptionProvider = useCallback(
+    (value: string) => {
+      cloudTranscriptionProviderRef.current = value;
+      setCloudTranscriptionProviderStored(value);
+    },
+    [setCloudTranscriptionProviderStored]
+  );
+
+  useEffect(() => {
+    cloudTranscriptionProviderRef.current = cloudTranscriptionProvider;
+  }, [cloudTranscriptionProvider]);
 
   const [cloudTranscriptionModel, setCloudTranscriptionModel] = useLocalStorage(
     "cloudTranscriptionModel",
@@ -79,13 +99,76 @@ export function useTranscriptionSettings() {
     }
   );
 
-  const [cloudTranscriptionBaseUrl, setCloudTranscriptionBaseUrl] = useLocalStorage(
+  const [cloudTranscriptionBaseUrl, setCloudTranscriptionBaseUrlStored] = useLocalStorage(
     "cloudTranscriptionBaseUrl",
     API_ENDPOINTS.TRANSCRIPTION_BASE,
     {
       serialize: String,
       deserialize: String,
     }
+  );
+  const endpointApprovalSequence = useRef(0);
+
+  const setCloudTranscriptionBaseUrl = useCallback(
+    async (value: string): Promise<CustomEndpointApprovalOutcome> => {
+      const sequence = ++endpointApprovalSequence.current;
+      if (cloudTranscriptionProviderRef.current !== "custom") {
+        setCloudTranscriptionBaseUrlStored(value);
+        return { status: "approved", endpoint: value };
+      }
+
+      const approve = window.electronAPI?.approveCustomProviderEndpoint;
+      if (!approve) {
+        logger.warn("Secure custom transcription endpoint approval is unavailable", {}, "settings");
+        return {
+          status: "error",
+          message:
+            "Secure custom endpoint approval is unavailable. Restart or reinstall EchoDraft.",
+        };
+      }
+      try {
+        const result = await approve("transcription", value);
+        if (sequence !== endpointApprovalSequence.current) {
+          return {
+            status: "superseded",
+            message: "A newer endpoint change replaced this request.",
+          };
+        }
+        if (result?.cancelled) {
+          return {
+            status: "cancelled",
+            message: "Endpoint approval was cancelled. Your previous endpoint is unchanged.",
+          };
+        }
+        if (!result?.success || !result.endpoint) {
+          return {
+            status: "error",
+            message: "EchoDraft could not approve this endpoint. Check the URL and try again.",
+          };
+        }
+        setCloudTranscriptionBaseUrlStored(result.endpoint);
+        return { status: "approved", endpoint: result.endpoint };
+      } catch (error) {
+        if (sequence === endpointApprovalSequence.current) {
+          logger.warn(
+            "Custom transcription endpoint was not approved",
+            { error: (error as Error).message },
+            "settings"
+          );
+        }
+        const detail = error instanceof Error ? error.message : String(error);
+        const invalid = /invalid custom endpoint|must use https|invalid url|failed to parse/i.test(
+          detail
+        );
+        return {
+          status: invalid ? "invalid" : "error",
+          message: invalid
+            ? "Enter a valid HTTPS endpoint (HTTP is allowed only for localhost)."
+            : "EchoDraft could not approve this endpoint. Check the URL and try again.",
+        };
+      }
+    },
+    [setCloudTranscriptionBaseUrlStored]
   );
 
   // Cloud transcription mode: "echodraft" (server-side) or "byok" (bring your own key)
@@ -107,7 +190,7 @@ export function useTranscriptionSettings() {
       deserialize: (value) => {
         try {
           const parsed = JSON.parse(value);
-          return Array.isArray(parsed) ? parsed : [];
+          return sanitizeCustomDictionary(parsed);
         } catch {
           return [];
         }
@@ -127,8 +210,9 @@ export function useTranscriptionSettings() {
 
   const setCustomDictionary = useCallback(
     (words: string[]) => {
-      setCustomDictionaryRaw(words);
-      window.electronAPI?.setDictionary(words).catch((err) => {
+      const safeWords = sanitizeCustomDictionary(words);
+      setCustomDictionaryRaw(safeWords);
+      window.electronAPI?.setDictionary(safeWords).catch((err) => {
         logger.warn(
           "Failed to sync dictionary to SQLite",
           { error: (err as Error).message },
@@ -147,7 +231,7 @@ export function useTranscriptionSettings() {
     syncDictionaryOnStartup({
       electronAPI: typeof window !== "undefined" ? window.electronAPI : null,
       localWords: customDictionary,
-      setLocalWords: setCustomDictionaryRaw,
+      setLocalWords: (words) => setCustomDictionaryRaw(sanitizeCustomDictionary(words)),
       log: logger,
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps

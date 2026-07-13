@@ -13,7 +13,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [toasts, setToasts] = React.useState<ToastState[]>([]);
   const timersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const toastViewportSize = React.useMemo(
-    () => (toasts.length > 0 && toasts.every((toast) => toast.size === "compact") ? "compact" : "default"),
+    () =>
+      toasts.length > 0 && toasts.every((toast) => toast.size === "compact")
+        ? "compact"
+        : "default",
     [toasts]
   );
 
@@ -97,9 +100,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   return (
-    <ToastContext.Provider
-      value={{ toast, dismiss, toastCount: toasts.length, toastViewportSize }}
-    >
+    <ToastContext.Provider value={{ toast, dismiss, toastCount: toasts.length, toastViewportSize }}>
       {children}
       <ToastViewport
         toasts={toasts}
@@ -230,6 +231,9 @@ const Toast: React.FC<
 
   return (
     <div
+      role={variant === "destructive" ? "alert" : "status"}
+      aria-live={variant === "destructive" ? "assertive" : "polite"}
+      aria-atomic="true"
       className={cn(
         "pointer-events-auto relative flex items-start overflow-hidden",
         isCompact
@@ -245,13 +249,21 @@ const Toast: React.FC<
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <Icon className={cn("shrink-0", isCompact ? "size-3.5 mt-0.5" : "size-4 mt-0.5", config.iconClass)} />
+      <Icon
+        className={cn(
+          "shrink-0",
+          isCompact ? "size-3.5 mt-0.5" : "size-4 mt-0.5",
+          config.iconClass
+        )}
+      />
 
       <div className="flex-1 min-w-0">
         {title && (
           <div
             className={cn(
-              isCompact ? "text-[11px] font-medium leading-none truncate" : "text-[13px] font-medium leading-tight",
+              isCompact
+                ? "text-[11px] font-medium leading-none truncate"
+                : "text-[13px] font-medium leading-tight",
               config.titleClass
             )}
           >
@@ -261,7 +273,9 @@ const Toast: React.FC<
         {description && (
           <div
             className={cn(
-              isCompact ? "text-[10px] leading-tight mt-0.5 truncate" : "text-[12px] leading-snug mt-0.5",
+              isCompact
+                ? "text-[10px] leading-tight mt-0.5 truncate"
+                : "text-[12px] leading-snug mt-0.5",
               config.descClass
             )}
           >
@@ -276,7 +290,9 @@ const Toast: React.FC<
         <button
           onClick={onClose}
           className={cn(
-            isCompact ? "absolute right-1 top-1 p-0.5 rounded-full" : "absolute right-1.5 top-1.5 p-1 rounded-[4px]",
+            isCompact
+              ? "absolute right-1 top-1 p-0.5 rounded-full"
+              : "absolute right-1.5 top-1.5 p-1 rounded-[4px]",
             "opacity-50 hover:opacity-100",
             "hover:bg-foreground/5 dark:hover:bg-white/10",
             "transition-all duration-150",
@@ -291,7 +307,10 @@ const Toast: React.FC<
 
       {duration > 0 && !isExiting && (
         <div
-          className={cn("absolute bottom-0 left-0 right-0 overflow-hidden", isCompact ? "h-px" : "h-[2px]")}
+          className={cn(
+            "absolute bottom-0 left-0 right-0 overflow-hidden",
+            isCompact ? "h-px" : "h-[2px]"
+          )}
         >
           <div
             className={cn("h-full", config.progressClass)}

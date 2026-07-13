@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, Mic, Square } from "lucide-react";
 
+import { getMicrophonePermissionDeniedMessage } from "../../utils/microphonePermissionGuidance";
 import { Button } from "./button";
 
 const TEST_DURATION_MS = 15_000;
+const SUSTAINED_WINDOW_MS = 400;
+const MIN_SUSTAINED_SAMPLES = 6;
+const MIN_VOICED_OCCUPANCY = 0.6;
+const VOICED_LEVEL = 0.04;
 
 type TestState = "idle" | "requesting" | "active" | "complete" | "disconnected" | "error";
 
@@ -13,11 +18,11 @@ interface MicrophoneLevelTestProps {
   fallbackMessage?: string | null;
 }
 
-const getSignalLabel = (level: number) => {
+const getSignalLabel = (level: number, complete = false) => {
   if (level >= 0.7) return "Loud signal";
   if (level >= 0.2) return "Good signal";
   if (level >= 0.04) return "Quiet signal";
-  return "No signal yet—speak into the microphone";
+  return complete ? "No signal detected" : "No signal yet—speak into the microphone";
 };
 
 export default function MicrophoneLevelTest({
@@ -37,7 +42,8 @@ export default function MicrophoneLevelTest({
   const frameRef = useRef<number | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionRef = useRef(0);
-  const peakLevelRef = useRef(0);
+  const sustainedLevelRef = useRef(0);
+  const recentLevelsRef = useRef<Array<{ at: number; level: number }>>([]);
 
   const releaseResources = useCallback(() => {
     if (frameRef.current !== null) {
@@ -68,7 +74,7 @@ export default function MicrophoneLevelTest({
   const stopTest = useCallback(
     (nextState: TestState = "complete") => {
       if (nextState === "complete") {
-        setResultLevel(peakLevelRef.current);
+        setResultLevel(sustainedLevelRef.current);
       }
       sessionRef.current += 1;
       releaseResources();
@@ -90,7 +96,8 @@ export default function MicrophoneLevelTest({
     }
     setLevel(0);
     setResultLevel(0);
-    peakLevelRef.current = 0;
+    sustainedLevelRef.current = 0;
+    recentLevelsRef.current = [];
     setActiveLabel(deviceLabel);
     setError(null);
     // A device-selection change invalidates an active test.
@@ -103,7 +110,8 @@ export default function MicrophoneLevelTest({
     setError(null);
     setLevel(0);
     setResultLevel(0);
-    peakLevelRef.current = 0;
+    sustainedLevelRef.current = 0;
+    recentLevelsRef.current = [];
     setTestState("requesting");
 
     try {
@@ -157,7 +165,7 @@ export default function MicrophoneLevelTest({
       track.addEventListener?.("ended", handleEnded, { once: true });
 
       const samples = new Float32Array(analyser.fftSize);
-      const readLevel = () => {
+      const readLevel = (timestamp: number) => {
         if (sessionId !== sessionRef.current || !analyserRef.current) return;
         analyser.getFloatTimeDomainData(samples);
         let sumSquares = 0;
@@ -166,7 +174,29 @@ export default function MicrophoneLevelTest({
         }
         const rms = Math.sqrt(sumSquares / samples.length);
         const nextLevel = Math.min(1, rms * 4.5);
-        peakLevelRef.current = Math.max(peakLevelRef.current, nextLevel);
+        const candidateSamples = [...recentLevelsRef.current, { at: timestamp, level: nextLevel }];
+        // Evaluate before pruning so ordinary animation-frame intervals can
+        // span the full sustained threshold instead of staying one frame short.
+        const windowSamples = candidateSamples;
+        const coveredMs =
+          windowSamples.length > 1
+            ? windowSamples[windowSamples.length - 1].at - windowSamples[0].at
+            : 0;
+        const voicedSamples = windowSamples.filter((sample) => sample.level >= VOICED_LEVEL);
+        const voicedOccupancy =
+          windowSamples.length > 0 ? voicedSamples.length / windowSamples.length : 0;
+        if (
+          coveredMs >= SUSTAINED_WINDOW_MS &&
+          windowSamples.length >= MIN_SUSTAINED_SAMPLES &&
+          voicedOccupancy >= MIN_VOICED_OCCUPANCY
+        ) {
+          const sustainedLevel =
+            voicedSamples.reduce((total, sample) => total + sample.level, 0) / voicedSamples.length;
+          sustainedLevelRef.current = Math.max(sustainedLevelRef.current, sustainedLevel);
+        }
+        recentLevelsRef.current = candidateSamples.filter(
+          (sample) => sample.at >= timestamp - SUSTAINED_WINDOW_MS
+        );
         setLevel(nextLevel);
         frameRef.current = requestAnimationFrame(readLevel);
       };
@@ -178,7 +208,7 @@ export default function MicrophoneLevelTest({
       const name = caughtError instanceof DOMException ? caughtError.name : "";
       const message =
         name === "NotAllowedError"
-          ? "Microphone access was denied. Allow access in Windows privacy settings and try again."
+          ? getMicrophonePermissionDeniedMessage()
           : name === "NotFoundError" || name === "OverconstrainedError"
             ? "The selected microphone is unavailable. Reconnect it or choose System Default."
             : caughtError instanceof Error
@@ -191,7 +221,7 @@ export default function MicrophoneLevelTest({
 
   const isRunning = testState === "active" || testState === "requesting";
   const displayedLevel = testState === "complete" ? resultLevel : level;
-  const signalLabel = getSignalLabel(displayedLevel);
+  const signalLabel = getSignalLabel(displayedLevel, testState === "complete");
 
   return (
     <div
@@ -257,11 +287,16 @@ export default function MicrophoneLevelTest({
             </span>
           </div>
           <div
-            role="progressbar"
-            aria-label="Live microphone input level"
+            role={testState === "complete" ? "meter" : "progressbar"}
+            aria-label={
+              testState === "complete"
+                ? "Completed microphone test result"
+                : "Live microphone input level"
+            }
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.round(displayedLevel * 100)}
+            aria-valuetext={testState === "complete" ? signalLabel : undefined}
             className="h-2 overflow-hidden rounded-full bg-border/70"
           >
             <div

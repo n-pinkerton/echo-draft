@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_ENDPOINTS, buildApiUrl, normalizeBaseUrl } from "../../config/constants";
 import { getProviderIcon, isMonochromeProvider } from "../../utils/providerIcons";
 import { isSecureEndpoint } from "../../utils/urlUtils";
+import {
+  normalizeCustomEndpointOutcome,
+  type CustomEndpointSetter,
+} from "../../types/customEndpoint";
 
 export type CloudModelOption = {
   value: string;
@@ -64,12 +68,12 @@ export const mapModelsPayloadToOptions = (payload: unknown): CloudModelOption[] 
 
 export const fetchCustomEndpointModels = async ({
   baseUrl,
-  apiKey,
-  fetchFn = fetch,
+  requestFn,
 }: {
   baseUrl: string;
-  apiKey?: string;
-  fetchFn?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  requestFn?: (
+    endpoint: string
+  ) => Promise<{ status: number; headers?: Record<string, string>; body: string }>;
 }): Promise<CloudModelOption[]> => {
   const normalizedBase = normalizeBaseUrl(baseUrl || "");
   if (!normalizedBase) return [];
@@ -82,23 +86,31 @@ export const fetchCustomEndpointModels = async ({
     throw new Error("HTTPS required (HTTP allowed for local network only).");
   }
 
-  const headers: Record<string, string> = {};
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
-
   const modelsUrl = buildApiUrl(normalizedBase, "/models");
-  const response = await fetchFn(modelsUrl, { method: "GET", headers });
+  const invoke =
+    requestFn ||
+    (async (endpoint: string) => {
+      const request = window.electronAPI?.providerModelsRequest;
+      if (!request) throw new Error("Secure custom model discovery is unavailable.");
+      const randomPart = Math.random().toString(36).slice(2, 12);
+      const requestId = `models-${Date.now()}-${randomPart}`;
+      return await request({ purpose: "reasoning", endpoint }, requestId);
+    });
+  const response = await invoke(modelsUrl);
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    const summary = errorText
-      ? `${response.status} ${errorText.slice(0, 200)}`
-      : `${response.status} ${response.statusText}`;
+  if (response.status < 200 || response.status >= 300) {
+    const summary = response.body
+      ? `${response.status} ${response.body.slice(0, 200)}`
+      : `${response.status} Provider request failed`;
     throw new Error(summary.trim());
   }
 
-  const payload = await response.json().catch(() => ({}));
+  let payload: unknown = {};
+  try {
+    payload = JSON.parse(response.body);
+  } catch {
+    throw new Error("The custom endpoint returned invalid JSON.");
+  }
   return mapModelsPayloadToOptions(payload);
 };
 
@@ -112,7 +124,7 @@ export const useCustomEndpointModels = ({
 }: {
   enabled: boolean;
   cloudReasoningBaseUrl: string;
-  setCloudReasoningBaseUrl: (value: string) => void;
+  setCloudReasoningBaseUrl: CustomEndpointSetter;
   customReasoningApiKey: string;
   reasoningModel: string;
   setReasoningModel: (model: string) => void;
@@ -178,12 +190,11 @@ export const useCustomEndpointModels = ({
         setCustomModelOptions([]);
       }
 
-      const apiKey = customReasoningApiKey?.trim() || undefined;
+      const hasApiKey = Boolean(customReasoningApiKey?.trim());
 
       try {
         const mappedModels = await fetchCustomEndpointModels({
           baseUrl: normalizedBase,
-          apiKey,
         });
 
         if (isMountedRef.current && latestReasoningBaseRef.current === normalizedBase) {
@@ -202,7 +213,7 @@ export const useCustomEndpointModels = ({
         if (isMountedRef.current && latestReasoningBaseRef.current === normalizedBase) {
           const message = (error as Error).message || "Unable to load models from endpoint.";
           const unauthorized = /\b(401|403)\b/.test(message);
-          if (unauthorized && !apiKey) {
+          if (unauthorized && !hasApiKey) {
             setCustomModelsError(
               "Endpoint rejected the request (401/403). Add an API key or adjust server auth settings."
             );
@@ -232,13 +243,40 @@ export const useCustomEndpointModels = ({
     return customModelOptions;
   }, [isCustomBaseDirty, customModelOptions]);
 
-  const handleApplyCustomBase = useCallback(() => {
+  const handleCustomBaseInputChange = useCallback((value: string) => {
+    setCustomBaseInput(value);
+    setCustomModelsError(null);
+  }, []);
+
+  const handleApplyCustomBase = useCallback(async () => {
     const trimmedBase = customBaseInput.trim();
-    const normalized = trimmedBase ? normalizeBaseUrl(trimmedBase) : trimmedBase;
+    if (!trimmedBase) {
+      setCustomModelsError("Enter an endpoint URL before applying it.");
+      return;
+    }
+    const normalized = normalizeBaseUrl(trimmedBase);
     setCustomBaseInput(normalized);
-    setCloudReasoningBaseUrl(normalized);
+    let outcome;
+    try {
+      outcome = normalizeCustomEndpointOutcome(
+        await setCloudReasoningBaseUrl(normalized),
+        normalized
+      );
+    } catch {
+      outcome = {
+        status: "error" as const,
+        message: "EchoDraft could not approve this endpoint. Check the URL and try again.",
+      };
+    }
+    if (outcome.status !== "approved") {
+      setCustomModelsError(outcome.message);
+      return;
+    }
+    const savedBase = outcome.endpoint;
+    setCustomBaseInput(savedBase);
+    setCustomModelsError(null);
     lastLoadedBaseRef.current = null;
-    loadRemoteModels(normalized, true);
+    await loadRemoteModels(savedBase, true);
   }, [customBaseInput, setCloudReasoningBaseUrl, loadRemoteModels]);
 
   const handleBaseUrlBlur = useCallback(() => {
@@ -251,12 +289,22 @@ export const useCustomEndpointModels = ({
     }
   }, [customBaseInput, cloudReasoningBaseUrl, handleApplyCustomBase]);
 
-  const handleResetCustomBase = useCallback(() => {
+  const handleResetCustomBase = useCallback(async () => {
     const defaultBase = API_ENDPOINTS.OPENAI_BASE;
     setCustomBaseInput(defaultBase);
-    setCloudReasoningBaseUrl(defaultBase);
+    const outcome = normalizeCustomEndpointOutcome(
+      await setCloudReasoningBaseUrl(defaultBase),
+      defaultBase
+    );
+    if (outcome.status !== "approved") {
+      setCustomModelsError(outcome.message);
+      return;
+    }
+    const savedBase = outcome.endpoint;
+    setCustomBaseInput(savedBase);
+    setCustomModelsError(null);
     lastLoadedBaseRef.current = null;
-    loadRemoteModels(defaultBase, true);
+    await loadRemoteModels(savedBase, true);
   }, [setCloudReasoningBaseUrl, loadRemoteModels]);
 
   const handleRefreshCustomModels = useCallback(() => {
@@ -290,6 +338,7 @@ export const useCustomEndpointModels = ({
   return {
     customBaseInput,
     setCustomBaseInput,
+    handleCustomBaseInputChange,
     customModelOptions,
     displayedCustomModels,
     customModelsLoading,

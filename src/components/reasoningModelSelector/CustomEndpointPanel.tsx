@@ -19,7 +19,7 @@ export function CustomEndpointPanel({
 }) {
   const {
     customBaseInput,
-    setCustomBaseInput,
+    handleCustomBaseInputChange,
     customModelOptions,
     displayedCustomModels,
     customModelsLoading,
@@ -48,13 +48,18 @@ export function CustomEndpointPanel({
   return (
     <>
       <div className="space-y-2">
-        <h4 className="font-medium text-foreground">Endpoint URL</h4>
+        <label htmlFor="custom-reasoning-endpoint" className="block font-medium text-foreground">
+          Endpoint URL
+        </label>
         <Input
+          id="custom-reasoning-endpoint"
           value={customBaseInput}
-          onChange={(event) => setCustomBaseInput(event.target.value)}
+          onChange={(event) => handleCustomBaseInputChange(event.target.value)}
           onBlur={handleBaseUrlBlur}
           placeholder="https://api.openai.com/v1"
           className="text-sm"
+          aria-describedby={customModelsError ? "custom-reasoning-endpoint-error" : undefined}
+          aria-invalid={customModelsError ? "true" : undefined}
         />
         <p className="text-xs text-muted-foreground">
           Examples: <code className="text-primary">http://localhost:11434/v1</code> (Ollama),{" "}
@@ -111,12 +116,21 @@ export function CustomEndpointPanel({
           <p className="text-xs text-warning">Enter an endpoint URL above to load models.</p>
         )}
 
+        {customModelsError && (
+          <p
+            id="custom-reasoning-endpoint-error"
+            className="text-xs text-destructive"
+            role="alert"
+          >
+            {customModelsError}
+          </p>
+        )}
+
         {hasCustomBase && (
           <>
             {customModelsLoading && (
               <p className="text-xs text-primary">Fetching model list from endpoint...</p>
             )}
-            {customModelsError && <p className="text-xs text-destructive">{customModelsError}</p>}
             {!customModelsLoading && !customModelsError && customModelOptions.length === 0 && (
               <p className="text-xs text-warning">No models returned. Check your endpoint URL.</p>
             )}
@@ -132,4 +146,3 @@ export function CustomEndpointPanel({
     </>
   );
 }
-

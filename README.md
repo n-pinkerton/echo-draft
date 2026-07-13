@@ -30,7 +30,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 💳 **Subscription Management**: Free tier (2,000 words/week), Pro tier (unlimited), 7-day free trial
 - 🎤 **Global Hotkey**: Customizable hotkey to start/stop dictation from anywhere (default: backtick `)
 - 🤖 **Multi-Provider AI Cleanup**: Choose between OpenAI, Anthropic Claude, Google Gemini, or local models
-- 🎯 **Agent Naming**: Personalize the cleanup assistant shown in trusted AI prompts
+- 🛡️ **Protected Cleanup Policy**: Fixed cleanup-only prompts preserve dictated intent and never execute dictated requests
 - 🧠 **Multi-Provider AI**:
   - **OpenAI cleanup**: GPT-5.6 Terra (balanced default), GPT-5.6 Luna (fast), and GPT-5.6 Sol (highest quality)
   - **Anthropic**: Claude Opus 4.5, Claude Sonnet 4.5
@@ -336,9 +336,9 @@ npm run build:linux  # Linux
 - **Linux Packages**: `deb`/`rpm` post-uninstall scripts also remove cached models.
 - **macOS**: If you uninstall manually, remove `~/Library/Caches` or `~/.cache/echodraft/whisper-models` if desired.
 
-### Agent Naming & AI Cleanup
+### AI Cleanup
 
-The optional agent name personalizes the trusted cleanup prompt. Cleanup is an editing transform only: dictated questions and requests remain text and are never answered or executed.
+EchoDraft uses a fixed, model-specific cleanup policy built in the trusted main process. Cleanup is an editing transform only: dictated questions and requests remain text and are never answered or executed.
 
 **🛡️ Cleanup contract**:
 
@@ -366,15 +366,15 @@ The optional agent name personalizes the trusted cleanup prompt. Cleanup is an e
 - "Meeting notes: John mentioned the quarterly report"
 - "Dear Sarah, thank you for your help"
 
-All dictated text is treated as untrusted content to edit. EchoDraft does not use a dictated agent name or instruction as permission to perform a task.
+All dictated text is treated as untrusted content to edit. A dictated instruction is never permission to perform a task.
 
 ### Custom Dictionary
 
-Improve transcription accuracy for specific words, names, or technical terms:
+Improve transcription accuracy for specific names and technical terms on supported engines:
 
 1. **Access Settings**: Open Control Panel → Settings → Custom Dictionary
-2. **Add Words**: Enter words, names, or phrases that are frequently misrecognized
-3. **How It Works**: Words are provided as context hints to the speech recognition model
+2. **Add Terms**: Enter one word, name, identifier, or technical token per entry
+3. **How It Works**: Supported engines receive terms through a structured lexical-hint field. EchoDraft never sends dictionary entries as a free-text cloud prompt; unsupported providers transcribe without dictionary hints.
 
 **Examples of words to add**:
 
@@ -430,7 +430,6 @@ echodraft/
 │   ├── services/
 │   │   └── ReasoningService.ts  # Multi-provider AI processing (OpenAI/Anthropic/Gemini)
 │   ├── utils/
-│   │   └── agentName.ts         # Agent name management utility
 │   └── components.json          # shadcn/ui configuration
 └── assets/                      # App icons and resources
 ```
@@ -549,6 +548,8 @@ On Windows, `npm run build:win` produces two `.exe` files in `dist/`:
 - `EchoDraft <version>.exe` - **portable** build (no installer; runs in-place)
 
 > Tip: If you're trying to “reinstall/upgrade”, run the **Setup** installer (NSIS). The portable `.exe` won't update an existing installed app.
+
+> Security: unsigned Windows builds intentionally disable the in-app automatic updater. Install a locally verified Setup artifact manually; automatic checks, downloads, and installs are enabled only when the build has code signing configured with a pinned publisher.
 
 ### Building the Windows Installer from WSL
 
@@ -792,7 +793,7 @@ A: EchoDraft supports 58 languages including English, Spanish, French, German, C
 
 ## Project Status
 
-EchoDraft is actively maintained and ready for production use. Current version: 1.4.8
+EchoDraft is actively maintained and ready for production use. Current version: 1.4.9
 
 - ✅ Core functionality complete
 - ✅ Cross-platform support (macOS, Windows, Linux)

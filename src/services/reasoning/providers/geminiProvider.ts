@@ -43,13 +43,13 @@ export async function processWithGeminiProvider({
   const userPrompt = getUserPrompt(text, model);
 
   const requestBody = {
+    systemInstruction: {
+      parts: [{ text: systemPrompt }],
+    },
     contents: [
       {
-        parts: [
-          {
-            text: `${systemPrompt}\n\n${userPrompt}`,
-          },
-        ],
+        role: "user",
+        parts: [{ text: userPrompt }],
       },
     ],
     generationConfig: {

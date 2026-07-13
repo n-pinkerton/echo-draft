@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Clipboard,
   Keyboard,
@@ -9,7 +10,7 @@ import {
 
 import { getReasoningModelLabel } from "../../models/ModelRegistry";
 import { formatHotkeyLabel } from "../../utils/hotkeys";
-import { CONTROL_PANEL_ACCELERATOR } from "../../shared/controlPanelShortcut";
+import controlPanelShortcut from "../../shared/controlPanelShortcut.json";
 import { Button } from "../ui/button";
 import QuickMicrophoneSelect from "./QuickMicrophoneSelect";
 
@@ -70,6 +71,29 @@ export default function DictationQuickStart(props: Props) {
     onOpenMicrophoneSettings,
     onOpenCleanupSettings,
   } = props;
+  const [controlShortcutStatus, setControlShortcutStatus] = useState<{
+    accelerator: string;
+    registered: boolean;
+    reason?: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const api = window.electronAPI;
+    void api
+      ?.getControlPanelShortcutStatus?.()
+      .then((status) => {
+        if (active && status) setControlShortcutStatus(status);
+      })
+      .catch(() => {});
+    const dispose = api?.onControlPanelShortcutStatusChanged?.((status) => {
+      if (active) setControlShortcutStatus(status);
+    });
+    return () => {
+      active = false;
+      dispose?.();
+    };
+  }, []);
   const cleanupFallback = cleanupEnabled && latestCleanup?.status === "fallback";
   const cleanupNeedsSetup = cleanupEnabled && !cleanupManagedByCloud && !cleanupModel;
   const cleanupWarning = cleanupFallback || cleanupNeedsSetup;
@@ -133,9 +157,15 @@ export default function DictationQuickStart(props: Props) {
         <Shortcut icon={Keyboard} hotkey={insertHotkey} label="Insert in active app" />
         <Shortcut icon={Clipboard} hotkey={clipboardHotkey} label="Copy to clipboard" />
         <Shortcut
-          icon={Settings2}
-          hotkey={CONTROL_PANEL_ACCELERATOR}
-          label="Open control panel on any desktop"
+          icon={controlShortcutStatus?.registered === false ? TriangleAlert : Settings2}
+          hotkey={controlShortcutStatus?.accelerator || controlPanelShortcut.accelerator}
+          label={
+            controlShortcutStatus?.registered === false
+              ? "Shortcut unavailable · use tray"
+              : controlShortcutStatus?.registered
+                ? "Open control panel from any desktop"
+                : "Open control panel"
+          }
         />
         <button
           type="button"

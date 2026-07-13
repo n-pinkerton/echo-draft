@@ -13,6 +13,30 @@ const {
   startTextTarget,
 } = require("../windowsTargets");
 
+function isClipboardFallbackTrayStatus(status) {
+  return (
+    status?.stage === "warning" &&
+    status?.stageLabel === "Delivered with warning" &&
+    typeof status?.message === "string" &&
+    status.message.toLowerCase().includes("kept in clipboard") &&
+    typeof status?.statusLabel === "string" &&
+    status.statusLabel.toLowerCase().includes("delivered with warning")
+  );
+}
+
+async function createAuthenticatedInsertionCapture(dictation) {
+  return await dictation.eval(`
+    (async function () {
+      if (!window.electronAPI.e2eCreateDictationSession) {
+        return { success: false, reason: "e2e session API unavailable" };
+      }
+      const session = await window.electronAPI.e2eCreateDictationSession("insert");
+      const capture = await window.electronAPI.captureInsertionTarget(session.sessionId);
+      return { success: Boolean(capture?.success), session, capture };
+    })()
+  `);
+}
+
 async function checkInsertionAndClipboard(dictation, record, runId, options = {}) {
   // A) Dual output modes + insertion
   const notepad = await startTextTarget();
@@ -46,23 +70,28 @@ async function checkInsertionAndClipboard(dictation, record, runId, options = {}
       `${fgBeforeShow.processName} -> ${fgAfterShow.processName}`
     );
 
-    const capture = await dictation.eval(`window.electronAPI.captureInsertionTarget()`);
+    const captureBundle = await createAuthenticatedInsertionCapture(dictation);
+    const capture = captureBundle?.capture;
     const expectedHwnd = Number(notepad.hwnd);
-    const capturedHwnd = Number(capture?.target?.hwnd || 0);
-    const captureOk = Boolean(capture?.success) && capturedHwnd === expectedHwnd;
+    const captureOk =
+      Boolean(captureBundle?.success) &&
+      typeof capture?.target?.capability === "string" &&
+      capture.target.capability.length >= 32 &&
+      capture.target.sessionId === captureBundle?.session?.sessionId &&
+      !("hwnd" in capture.target) &&
+      !("pid" in capture.target);
     record(
-      `Capture insertion target (${notepad.kind === "notepad" ? "Notepad" : "GatePad"} foreground)`,
+      `Capture opaque insertion target (${notepad.kind === "notepad" ? "Notepad" : "GatePad"} foreground)`,
       captureOk,
       JSON.stringify({
         success: capture?.success,
-        expectedHwnd,
-        capturedHwnd,
-        processName: capture?.target?.processName || "",
+        sessionBound: capture?.target?.sessionId === captureBundle?.session?.sessionId,
+        opaque: Boolean(capture?.target?.capability) && !("hwnd" in (capture?.target || {})),
       })
     );
     assert(
       captureOk,
-      `captureInsertionTarget did not match expected foreground window (expected ${expectedHwnd}, got ${capturedHwnd}). Re-run without typing.`
+      "captureInsertionTarget did not return an opaque capability bound to a fresh E2E session."
     );
 
     // A1) Insert-mode: should insert into target when focus is stable
@@ -86,7 +115,7 @@ async function checkInsertionAndClipboard(dictation, record, runId, options = {}
       (async function () {
         await window.__echoDraftE2E.simulateTranscriptionComplete(
           { text: ${JSON.stringify(insertForegroundText)}, source: "e2e" },
-          { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-foreground-${runId}`)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
+          { outputMode: "insert", sessionId: ${JSON.stringify(captureBundle.session.sessionId)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
         );
         return true;
       })()
@@ -108,6 +137,18 @@ async function checkInsertionAndClipboard(dictation, record, runId, options = {}
 
     // F) "Remember insertion target": switch focus away before insert, then ensure paste
     // returns to the captured target (best-effort on Windows).
+    const lockTargetFocus = await ensureForegroundWindow(
+      notepad.hwnd,
+      "target-lock-capture",
+      4,
+      notepad.editHwnd
+    );
+    assert(lockTargetFocus?.success, "Could not focus the target before target-lock capture.");
+    const lockedCaptureBundle = await createAuthenticatedInsertionCapture(dictation);
+    assert(
+      lockedCaptureBundle?.success && lockedCaptureBundle?.capture?.target?.capability,
+      "Could not capture a fresh target-lock capability."
+    );
     const decoy = await startGateTextWindow();
     try {
       const decoyFocus = await ensureForegroundWindow(decoy.hwnd, "decoy", 4);
@@ -124,7 +165,7 @@ async function checkInsertionAndClipboard(dictation, record, runId, options = {}
         (async function () {
           await window.__echoDraftE2E.simulateTranscriptionComplete(
             { text: ${JSON.stringify(insertLockedText)}, source: "e2e" },
-            { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-locked-${runId}`)}, insertionTarget: ${JSON.stringify(capture?.target || null)} }
+            { outputMode: "insert", sessionId: ${JSON.stringify(lockedCaptureBundle.session.sessionId)}, insertionTarget: ${JSON.stringify(lockedCaptureBundle.capture.target)} }
           );
           return true;
         })()
@@ -196,11 +237,14 @@ async function checkInsertionAndClipboard(dictation, record, runId, options = {}
     // A/F) Safe fallback if activation fails: insertion does not happen, but clipboard contains text.
     const insertFailText = `E2E InsertFail ${runId}`;
     const beforeFailText = await readEditText(notepad.editHwnd);
+    const invalidSession = await dictation.eval(
+      `window.electronAPI.e2eCreateDictationSession("insert")`
+    );
     await dictation.eval(`
       (async function () {
         await window.__echoDraftE2E.simulateTranscriptionComplete(
           { text: ${JSON.stringify(insertFailText)}, source: "e2e" },
-          { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-fail-${runId}`)}, insertionTarget: { hwnd: 1, pid: 0, processName: "invalid", title: "invalid" } }
+          { outputMode: "insert", sessionId: ${JSON.stringify(invalidSession.sessionId)}, insertionTarget: { capability: "invalid-e2e-capability", sessionId: ${JSON.stringify(invalidSession.sessionId)}, capturedAt: 0 } }
         );
         return true;
       })()
@@ -221,11 +265,7 @@ async function checkInsertionAndClipboard(dictation, record, runId, options = {}
     const trayAfterInsertFail = await dictation.eval(`window.electronAPI.e2eGetTrayStatus()`);
     record(
       "Insert failure remains visible in terminal tray status",
-      trayAfterInsertFail?.stage === "done" &&
-        typeof trayAfterInsertFail?.message === "string" &&
-        trayAfterInsertFail.message.toLowerCase().includes("kept in clipboard") &&
-        typeof trayAfterInsertFail?.statusLabel === "string" &&
-        trayAfterInsertFail.statusLabel.toLowerCase().includes("kept in clipboard"),
+      isClipboardFallbackTrayStatus(trayAfterInsertFail),
       JSON.stringify(trayAfterInsertFail)
     );
 
@@ -253,23 +293,26 @@ async function checkInsertionAndClipboard(dictation, record, runId, options = {}
           );
     assert(focusTarget2, "Could not focus the target window for clipboard image test.");
 
-    const capture2 = await dictation.eval(`window.electronAPI.captureInsertionTarget()`);
-    const capture2Hwnd = Number(capture2?.target?.hwnd || 0);
-    const capture2Ok = Boolean(capture2?.success) && capture2Hwnd === expectedHwnd;
+    const capture2Bundle = await createAuthenticatedInsertionCapture(dictation);
+    const capture2 = capture2Bundle?.capture;
+    const capture2Ok =
+      Boolean(capture2Bundle?.success) &&
+      typeof capture2?.target?.capability === "string" &&
+      capture2?.target?.sessionId === capture2Bundle?.session?.sessionId;
     record(
       "Capture insertion target for image test",
       capture2Ok,
-      JSON.stringify({ success: capture2?.success, expectedHwnd, capturedHwnd: capture2Hwnd })
+      JSON.stringify({ success: capture2?.success, sessionBound: capture2Ok })
     );
     assert(
       capture2Ok,
-      `captureInsertionTarget mismatch before clipboard image test (expected ${expectedHwnd}, got ${capture2Hwnd}).`
+      "captureInsertionTarget did not return a fresh capability before the clipboard image test."
     );
     await dictation.eval(`
       (async function () {
         await window.__echoDraftE2E.simulateTranscriptionComplete(
           { text: ${JSON.stringify(`E2E ImagePreserve ${runId}`)}, source: "e2e" },
-          { outputMode: "insert", sessionId: ${JSON.stringify(`sess-img-${runId}`)}, insertionTarget: ${JSON.stringify(capture2?.target || null)} }
+          { outputMode: "insert", sessionId: ${JSON.stringify(capture2Bundle.session.sessionId)}, insertionTarget: ${JSON.stringify(capture2?.target || null)} }
         );
         return true;
       })()
@@ -335,11 +378,14 @@ async function checkNonInteractiveDelivery(dictation, record, runId) {
   );
 
   const insertFailText = `E2E InsertFail ${runId}`;
+  const invalidSession = await dictation.eval(
+    `window.electronAPI.e2eCreateDictationSession("insert")`
+  );
   await dictation.eval(`
     (async function () {
       await window.__echoDraftE2E.simulateTranscriptionComplete(
         { text: ${JSON.stringify(insertFailText)}, source: "e2e" },
-        { outputMode: "insert", sessionId: ${JSON.stringify(`sess-insert-fail-${runId}`)}, insertionTarget: { hwnd: 1, pid: 0, processName: "invalid", title: "invalid" } }
+        { outputMode: "insert", sessionId: ${JSON.stringify(invalidSession.sessionId)}, insertionTarget: { capability: "invalid-e2e-capability", sessionId: ${JSON.stringify(invalidSession.sessionId)}, capturedAt: 0 } }
       );
       return true;
     })()
@@ -355,11 +401,7 @@ async function checkNonInteractiveDelivery(dictation, record, runId) {
   const trayAfterInsertFail = await dictation.eval(`window.electronAPI.e2eGetTrayStatus()`);
   record(
     "Insert failure remains visible in terminal tray status",
-    trayAfterInsertFail?.stage === "done" &&
-      typeof trayAfterInsertFail?.message === "string" &&
-      trayAfterInsertFail.message.toLowerCase().includes("kept in clipboard") &&
-      typeof trayAfterInsertFail?.statusLabel === "string" &&
-      trayAfterInsertFail.statusLabel.toLowerCase().includes("kept in clipboard"),
+    isClipboardFallbackTrayStatus(trayAfterInsertFail),
     JSON.stringify(trayAfterInsertFail)
   );
 }
@@ -405,4 +447,5 @@ module.exports = {
   checkInsertionAndClipboard,
   checkNonInteractiveDelivery,
   closeInsertionTarget,
+  isClipboardFallbackTrayStatus,
 };

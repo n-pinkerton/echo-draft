@@ -160,6 +160,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
         }
         if (session.insertionTarget) {
           pasteOptions.insertionTarget = session.insertionTarget;
+          pasteOptions.sessionId = session.sessionId;
         }
         logger.info(
           "Paste attempt",
@@ -168,7 +169,8 @@ export const createTranscriptionCompleteHandler = (deps) => {
             jobId,
             source: result.source,
             textLength: result.text.length,
-            pasteOptions,
+            fromStreaming: pasteOptions.fromStreaming === true,
+            hasInsertionTarget: Boolean(session.insertionTarget),
           },
           "paste"
         );
@@ -318,7 +320,11 @@ export const createTranscriptionCompleteHandler = (deps) => {
       const deliverySucceeded = ["inserted", "clipboard", "clipboard_fallback"].includes(
         deliveryStatus
       );
-      const historyStatus = deliverySucceeded ? "success" : "delivery_issue";
+      // A clipboard fallback preserves the user's text, but automatic delivery still
+      // failed. Keep that distinction visible in history and diagnostic exports.
+      const historyStatus = ["inserted", "clipboard"].includes(deliveryStatus)
+        ? "success"
+        : "delivery_issue";
 
       assertDeliveryActive();
       const saveResult = await audioManager.saveTranscription({
@@ -331,7 +337,6 @@ export const createTranscriptionCompleteHandler = (deps) => {
           source: result.source,
           provider,
           model,
-          insertionTarget: session.insertionTarget || null,
           pasteSucceeded,
           clipboardSucceeded,
           delivery: {
@@ -438,7 +443,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
         const terminalStage =
           deliveryStatus === "failed"
             ? "error"
-            : deliveryStatus === "clipboard_fallback" || !saveSucceeded
+            : deliveryStatus === "clipboard_fallback" || !saveSucceeded || cleanupFallback
               ? "warning"
               : "done";
         updateStage(terminalStage, {
@@ -465,7 +470,13 @@ export const createTranscriptionCompleteHandler = (deps) => {
           generatedWords: countWords(result.text),
         });
 
-        if (deliverySucceeded && saveSucceeded && !cleanupFallback && saveMs > 0) {
+        if (
+          terminalStage === "done" &&
+          deliverySucceeded &&
+          saveSucceeded &&
+          !cleanupFallback &&
+          saveMs > 0
+        ) {
           setProgress((prev) => ({
             ...prev,
             message: `Saved in ${saveMs}ms`,
@@ -487,7 +498,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       assertDeliveryActive();
       if (deliveryStatus === "failed") {
         void playErrorCue?.();
-      } else if (deliveryStatus === "clipboard_fallback" || !saveSucceeded) {
+      } else if (deliveryStatus === "clipboard_fallback" || !saveSucceeded || cleanupFallback) {
         void playWarningCue?.();
       } else if (deliverySucceeded) {
         void playCompletionCue?.();

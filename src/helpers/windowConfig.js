@@ -20,6 +20,7 @@ const MAIN_WINDOW_CONFIG = {
     nodeIntegration: false,
     contextIsolation: true,
     sandbox: true,
+    webSecurity: true,
   },
   frame: false,
   alwaysOnTop: true,
@@ -43,14 +44,8 @@ const CONTROL_PANEL_CONFIG = {
     preload: path.join(__dirname, "..", "..", "preload.js"),
     nodeIntegration: false,
     contextIsolation: true,
-    // sandbox: false is required because the preload script bridges IPC
-    // between the renderer and main process.
-    sandbox: false,
-    // webSecurity: false disables same-origin policy. Required because in
-    // production the renderer loads from a file:// origin but makes
-    // cross-origin fetch calls to Neon Auth, Gemini, OpenAI, and Groq APIs
-    // directly from the browser. These would be blocked by CORS otherwise.
-    webSecurity: false,
+    sandbox: true,
+    webSecurity: true,
     spellcheck: false,
   },
   title: "Control Panel",
@@ -68,7 +63,7 @@ const CONTROL_PANEL_CONFIG = {
   fullscreenable: true,
   skipTaskbar: false, // Ensure control panel stays in taskbar
   alwaysOnTop: false, // Control panel should not be always on top
-  visibleOnAllWorkspaces: process.platform !== "win32", // Windows uses VirtualDesktop pinning.
+  visibleOnAllWorkspaces: process.platform !== "win32", // Windows moves the window to the active desktop.
   type: "normal", // Ensure it's a normal window, not a panel
   title: "EchoDraft",
 };

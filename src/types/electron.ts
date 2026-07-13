@@ -32,7 +32,6 @@ export interface TranscriptionMeta {
   source?: string;
   provider?: string;
   model?: string;
-  insertionTarget?: InsertionTargetSnapshot | null;
   pasteSucceeded?: boolean;
   clipboardSucceeded?: boolean;
   delivery?: {
@@ -54,11 +53,9 @@ export interface DictationTriggerPayload {
 }
 
 export interface InsertionTargetSnapshot {
-  hwnd: number;
-  pid?: number | null;
-  processName?: string;
-  title?: string;
-  capturedAt?: number;
+  capability: string;
+  sessionId: string;
+  capturedAt: number;
 }
 
 export interface TranscriptionItem {
@@ -79,6 +76,7 @@ export interface DictionaryImportResult {
   parsedCount?: number;
   uniqueCount?: number;
   duplicatesRemoved?: number;
+  unsupportedRemoved?: number;
   error?: string;
 }
 
@@ -94,8 +92,7 @@ export interface AudioFileSelectionResult {
   success: boolean;
   canceled?: boolean;
   error?: string;
-  filePath?: string;
-  fileName?: string;
+  displayName?: string;
   extension?: string | null;
   mimeType?: string;
   sizeBytes?: number;
@@ -160,7 +157,11 @@ export interface UpdateCheckResult {
 export interface UpdateStatusResult {
   updateAvailable: boolean;
   updateDownloaded: boolean;
+  hasCheckedForUpdates: boolean;
+  isChecking: boolean;
   isDevelopment: boolean;
+  updatesEnabled: boolean;
+  disabledReason?: string;
 }
 
 export interface UpdateInfoResult {

@@ -8,11 +8,17 @@ import {
   MAC_RESERVED_SHORTCUTS,
   SPECIAL_KEYS,
   WINDOWS_EXAMPLES,
+  WINDOWS_ECHODRAFT_RESERVED_SHORTCUTS,
   WINDOWS_RECOMMENDED,
   WINDOWS_RESERVED_SHORTCUTS,
 } from "./constants";
 import { isLeftRightMix } from "./leftRightMix";
-import { isRightSideModifier, normalizeHotkey, normalizeKeyToken, normalizeModifier } from "./normalization";
+import {
+  isRightSideModifier,
+  normalizeHotkey,
+  normalizeKeyToken,
+  normalizeModifier,
+} from "./normalization";
 import type { Platform, ValidationResult } from "./types";
 
 export function getReservedShortcuts(platform: Platform): readonly string[] {
@@ -65,6 +71,11 @@ export function getValidationMessage(
   if (result.errorCode === "RESERVED") {
     const label = formatHotkeyLabelForPlatform(hotkey, platform);
     return `${label} is reserved by the system`;
+  }
+
+  if (result.errorCode === "APP_RESERVED") {
+    const label = formatHotkeyLabelForPlatform(hotkey, platform);
+    return `${label} is reserved for opening the EchoDraft control panel`;
   }
 
   return result.error || "That shortcut is not supported";
@@ -169,6 +180,18 @@ export function validateHotkey(
       valid: false,
       error: "That shortcut is already in use.",
       errorCode: "DUPLICATE",
+    };
+  }
+
+  if (
+    WINDOWS_ECHODRAFT_RESERVED_SHORTCUTS.map((entry) => normalizeHotkey(entry, platform)).includes(
+      normalizedHotkey
+    )
+  ) {
+    return {
+      valid: false,
+      error: "That shortcut is reserved for opening the EchoDraft control panel.",
+      errorCode: "APP_RESERVED",
     };
   }
 

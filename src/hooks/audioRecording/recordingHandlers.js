@@ -80,8 +80,8 @@ export const createStartRecordingHandler = (deps) => {
 
     if (session.outputMode === "insert" && electronAPI?.captureInsertionTarget) {
       try {
-        const captureResult = await electronAPI.captureInsertionTarget();
-        if (captureResult?.success && captureResult?.target?.hwnd) {
+        const captureResult = await electronAPI.captureInsertionTarget(session.sessionId);
+        if (captureResult?.success && captureResult?.target?.capability) {
           session.insertionTarget = captureResult.target;
         }
       } catch (error) {

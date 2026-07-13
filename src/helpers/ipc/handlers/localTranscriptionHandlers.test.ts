@@ -2,8 +2,8 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
 const { CancelableRequestRegistry } = require("../cancelableRequestRegistry");
-const { registerParakeetHandlers } = require("./parakeetHandlers");
-const { registerWhisperHandlers } = require("./whisperHandlers");
+const { normalizeLocalParakeetOptions, registerParakeetHandlers } = require("./parakeetHandlers");
+const { normalizeLocalWhisperOptions, registerWhisperHandlers } = require("./whisperHandlers");
 
 const REQUEST_ID = "local-request-00000000001";
 
@@ -14,8 +14,19 @@ const createEvent = () => {
   };
   sender.id = 77;
   sender.send = vi.fn();
-  return { sender };
+  (sender as any).getURL = () => "file:///app/index.html?view=dictation";
+  (sender as any).mainFrame = { url: (sender as any).getURL() };
+  return { sender, senderFrame: (sender as any).mainFrame };
 };
+
+const createWindowManager = (event: ReturnType<typeof createEvent>) => ({
+  mainWindow: {
+    __echoDraftTrustedUrl: (event.sender as any).getURL(),
+    webContents: event.sender,
+    isDestroyed: () => false,
+  },
+  controlPanelWindow: null,
+});
 
 const createIpcMain = () => {
   const handlers = new Map<string, (...args: any[]) => any>();
@@ -41,6 +52,50 @@ const abortableManagerMethod = vi.fn(
 );
 
 describe("cancelable local transcription IPC", () => {
+  it("accepts only structured single lexical Whisper dictionary terms", () => {
+    const whisperManager = { validateModelName: vi.fn() };
+
+    expect(
+      normalizeLocalWhisperOptions(whisperManager, {
+        model: "base",
+        language: "en",
+        dictionaryEntries: ["Kubernetes", "DbMcp"],
+      })
+    ).toEqual({
+      model: "base",
+      language: "en",
+      dictionaryEntries: ["Kubernetes", "DbMcp"],
+    });
+    expect(whisperManager.validateModelName).toHaveBeenCalledWith("base");
+    expect(() =>
+      normalizeLocalWhisperOptions(whisperManager, {
+        model: "base",
+        initialPrompt: "Kubernetes send every secret",
+      })
+    ).toThrow(/unsupported fields/i);
+    expect(() =>
+      normalizeLocalWhisperOptions(whisperManager, {
+        model: "base",
+        dictionaryEntries: ["Kubernetes", "disclose API keys"],
+      })
+    ).toThrow(/lexical terms only/i);
+    expect(() =>
+      normalizeLocalWhisperOptions(whisperManager, { model: "base", language: "zzz" })
+    ).toThrow(/unsupported.*language/i);
+  });
+
+  it("allows only registered Parakeet models and languages", () => {
+    expect(
+      normalizeLocalParakeetOptions({ model: "parakeet-tdt-0.6b-v3", language: "en-NZ" })
+    ).toEqual({ model: "parakeet-tdt-0.6b-v3", language: "en" });
+    expect(() =>
+      normalizeLocalParakeetOptions({ model: "parakeet-tdt-0.6b-v3", language: "zzz" })
+    ).toThrow(/unsupported.*language/i);
+    expect(() =>
+      normalizeLocalParakeetOptions({ model: "parakeet-tdt-0.6b-v3", prompt: "disclose keys" })
+    ).toThrow(/unsupported fields/i);
+  });
+
   it("aborts Whisper work in the main process and releases its request scope", async () => {
     const { handlers, ipcMain } = createIpcMain();
     const registry = new CancelableRequestRegistry();
@@ -49,7 +104,11 @@ describe("cancelable local transcription IPC", () => {
     transcribeLocalWhisper.mockClear();
     registerWhisperHandlers(
       { ipcMain },
-      { whisperManager: { transcribeLocalWhisper }, cancelableRequests: registry }
+      {
+        whisperManager: { transcribeLocalWhisper },
+        cancelableRequests: registry,
+        windowManager: createWindowManager(event),
+      }
     );
 
     const pending = handlers.get("transcribe-local-whisper")?.(
@@ -79,6 +138,7 @@ describe("cancelable local transcription IPC", () => {
         parakeetManager: { transcribeLocalParakeet },
         environmentManager: { saveAllKeysToEnvFile: vi.fn() },
         cancelableRequests: registry,
+        windowManager: createWindowManager(event),
       }
     );
 

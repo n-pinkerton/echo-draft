@@ -9,7 +9,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 interface UpdateStatus {
   updateAvailable: boolean;
   updateDownloaded: boolean;
+  hasCheckedForUpdates: boolean;
+  isChecking: boolean;
   isDevelopment: boolean;
+  updatesEnabled: boolean;
+  disabledReason?: string;
 }
 
 interface UpdateInfo {
@@ -33,6 +37,8 @@ interface UpdateState {
   isDownloading: boolean;
   isInstalling: boolean;
   error: Error | null;
+  isInitialized: boolean;
+  isInitializing: boolean;
 }
 
 // Global state shared across all hook instances
@@ -40,7 +46,11 @@ let globalState: UpdateState = {
   status: {
     updateAvailable: false,
     updateDownloaded: false,
+    hasCheckedForUpdates: false,
+    isChecking: false,
     isDevelopment: false,
+    updatesEnabled: false,
+    disabledReason: "Update status is loading",
   },
   info: null,
   downloadProgress: 0,
@@ -48,6 +58,8 @@ let globalState: UpdateState = {
   isDownloading: false,
   isInstalling: false,
   error: null,
+  isInitialized: false,
+  isInitializing: true,
 };
 
 // Listeners registry for global state updates
@@ -72,6 +84,10 @@ function updateGlobalState(updates: Partial<UpdateState>) {
   notifyListeners();
 }
 
+function toError(error: unknown) {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 /**
  * Register IPC event listeners (only once globally)
  */
@@ -82,12 +98,30 @@ function registerEventListeners() {
 
   listenersRegistered = true;
 
+  if (window.electronAPI.onCheckingForUpdate) {
+    const dispose = window.electronAPI.onCheckingForUpdate(() => {
+      updateGlobalState({
+        status: { ...globalState.status, isChecking: true },
+        isChecking: true,
+        error: null,
+      });
+    });
+    if (dispose) cleanupFunctions.push(dispose);
+  }
+
   // Update available
   if (window.electronAPI.onUpdateAvailable) {
     const dispose = window.electronAPI.onUpdateAvailable((_event, info) => {
       updateGlobalState({
-        status: { ...globalState.status, updateAvailable: true },
+        status: {
+          ...globalState.status,
+          updateAvailable: true,
+          hasCheckedForUpdates: true,
+          isChecking: false,
+        },
         info: info || globalState.info,
+        isChecking: false,
+        error: null,
       });
     });
     if (dispose) cleanupFunctions.push(dispose);
@@ -101,9 +135,12 @@ function registerEventListeners() {
           ...globalState.status,
           updateAvailable: false,
           updateDownloaded: false,
+          hasCheckedForUpdates: true,
+          isChecking: false,
         },
         info: null,
         isChecking: false,
+        error: null,
       });
     });
     if (dispose) cleanupFunctions.push(dispose);
@@ -113,11 +150,18 @@ function registerEventListeners() {
   if (window.electronAPI.onUpdateDownloaded) {
     const dispose = window.electronAPI.onUpdateDownloaded((_event, info) => {
       updateGlobalState({
-        status: { ...globalState.status, updateDownloaded: true },
+        status: {
+          ...globalState.status,
+          updateDownloaded: true,
+          hasCheckedForUpdates: true,
+          isChecking: false,
+        },
         info: info || globalState.info,
         downloadProgress: 100,
+        isChecking: false,
         isDownloading: false,
         isInstalling: false,
+        error: null,
       });
     });
     if (dispose) cleanupFunctions.push(dispose);
@@ -129,6 +173,7 @@ function registerEventListeners() {
       updateGlobalState({
         downloadProgress: progressObj?.percent || 0,
         isDownloading: true,
+        error: null,
       });
     });
     if (dispose) cleanupFunctions.push(dispose);
@@ -138,10 +183,11 @@ function registerEventListeners() {
   if (window.electronAPI.onUpdateError) {
     const dispose = window.electronAPI.onUpdateError((_event, error) => {
       updateGlobalState({
+        status: { ...globalState.status, isChecking: false },
         isChecking: false,
         isDownloading: false,
         isInstalling: false,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: globalState.error || toError(error),
       });
     });
     if (dispose) cleanupFunctions.push(dispose);
@@ -185,7 +231,23 @@ export function useUpdater() {
       try {
         if (window.electronAPI?.getUpdateStatus) {
           const status = await window.electronAPI.getUpdateStatus();
-          updateGlobalState({ status });
+          updateGlobalState({
+            status,
+            isChecking: status.isChecking,
+            isInitialized: true,
+            isInitializing: false,
+            error: null,
+          });
+        } else {
+          updateGlobalState({
+            status: {
+              ...globalState.status,
+              updatesEnabled: false,
+              disabledReason: "Automatic update status is unavailable. Download updates manually.",
+            },
+            isInitialized: true,
+            isInitializing: false,
+          });
         }
 
         if (window.electronAPI?.getUpdateInfo) {
@@ -196,6 +258,17 @@ export function useUpdater() {
         }
       } catch (error) {
         console.error("Failed to initialize update status:", error);
+        updateGlobalState({
+          status: {
+            ...globalState.status,
+            updatesEnabled: false,
+            disabledReason:
+              "Automatic update status is unavailable. Try again later or download updates manually.",
+          },
+          isInitialized: true,
+          isInitializing: false,
+          error: error instanceof Error ? error : new Error(String(error)),
+        });
       }
     };
 
@@ -212,15 +285,28 @@ export function useUpdater() {
    * Check for updates manually
    */
   const checkForUpdates = useCallback(async () => {
-    updateGlobalState({ isChecking: true, error: null });
+    updateGlobalState({
+      status: { ...globalState.status, isChecking: true },
+      isChecking: true,
+      error: null,
+    });
     try {
       const result = await window.electronAPI.checkForUpdates();
-      updateGlobalState({ isChecking: false });
+      updateGlobalState({
+        status: {
+          ...globalState.status,
+          updateAvailable: Boolean(result?.updateAvailable),
+          hasCheckedForUpdates: true,
+          isChecking: false,
+        },
+        isChecking: false,
+      });
       return result;
     } catch (error) {
       updateGlobalState({
+        status: { ...globalState.status, isChecking: false },
         isChecking: false,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: globalState.error || toError(error),
       });
       throw error;
     }
@@ -300,6 +386,8 @@ export function useUpdater() {
     isDownloading: state.isDownloading,
     isInstalling: state.isInstalling,
     error: state.error,
+    isInitialized: state.isInitialized,
+    isInitializing: state.isInitializing,
 
     // Actions
     checkForUpdates,

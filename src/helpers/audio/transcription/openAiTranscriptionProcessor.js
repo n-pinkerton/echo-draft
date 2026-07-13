@@ -25,6 +25,13 @@ const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 10_000;
 const DEFAULT_TRANSPORT_RETRY_DELAY_MS = 750;
 const MAX_RETRY_AFTER_MS = 5_000;
 
+const normalizeProxyDurationMs = (value) => {
+  const duration = Number(value);
+  return Number.isFinite(duration) && duration >= 0 && duration <= 3_600_000
+    ? Math.round(duration)
+    : null;
+};
+
 const isRetryableHttpStatus = (status) =>
   status === 408 || status === 429 || (status >= 500 && status <= 599);
 
@@ -59,6 +66,45 @@ const waitForRetryDelay = async (delayMs, signal) => {
       reject(createTranscriptionCancelledError());
     };
     signal?.addEventListener("abort", handleAbort, { once: true });
+  });
+};
+
+const readBlobAsArrayBuffer = async (blob) => {
+  if (typeof blob?.arrayBuffer === "function") {
+    return await blob.arrayBuffer();
+  }
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Could not read recorded audio"));
+    reader.readAsArrayBuffer(blob);
+  });
+};
+
+const createBoundedProxyResponse = (proxyResponse) => {
+  const headers = new Headers();
+  for (const [name, rawValue] of Object.entries(proxyResponse?.headers || {})) {
+    const normalizedName = String(name).toLowerCase();
+    const value = typeof rawValue === "string" ? rawValue : "";
+    if (
+      !["content-type", "retry-after", "x-request-id", "openai-request-id"].includes(
+        normalizedName
+      ) ||
+      !value ||
+      value.length > 512 ||
+      /[\r\n\0]/.test(value)
+    ) {
+      continue;
+    }
+    try {
+      headers.set(normalizedName, value);
+    } catch {
+      // Provider metadata is optional. Ignore malformed values rather than failing transcription.
+    }
+  }
+  return new Response(typeof proxyResponse?.body === "string" ? proxyResponse.body : "", {
+    status: Number(proxyResponse?.status) || 500,
+    headers,
   });
 };
 
@@ -282,6 +328,58 @@ const isHardReject = (
   return false;
 };
 
+const combineTranscriptionTimings = (attempts) => {
+  const total = attempts.reduce(
+    (sum, attempt) => sum + (attempt?.timings?.transcriptionProcessingDurationMs || 0),
+    0
+  );
+  const transportAttempts = attempts.flatMap((attempt, index) =>
+    (attempt?.timings?.transcriptionTransportAttempts || []).map((transportAttempt) => ({
+      ...transportAttempt,
+      transcriptionAttempt: index + 1,
+      attemptLabel: attempt.attemptLabel || `attempt-${index + 1}`,
+    }))
+  );
+  const requestIds = transportAttempts.map((attempt) => attempt.requestId).filter(Boolean);
+  const lastSuccessfulAttempt = [...attempts]
+    .reverse()
+    .find((attempt) => attempt.attemptOutcome === "success");
+  const lastAttempt = lastSuccessfulAttempt?.timings || attempts.at(-1)?.timings || {};
+  const attemptSummaries = attempts.map((attempt, index) => ({
+    attempt: index + 1,
+    label: attempt.attemptLabel || `attempt-${index + 1}`,
+    outcome: attempt.attemptOutcome || "success",
+    durationMs: attempt?.timings?.transcriptionProcessingDurationMs || 0,
+    transportAttemptCount: attempt?.timings?.transcriptionTransportAttempts?.length || 0,
+  }));
+  return {
+    transcriptionProcessingDurationMs: total,
+    transcriptionAttemptCount: attempts.length,
+    ...(attempts.length > 1 ? { transcriptionRetried: true } : {}),
+    transcriptionTransportAttemptCount: transportAttempts.length,
+    ...(attempts.some(
+      (attempt) => (attempt?.timings?.transcriptionTransportAttempts?.length || 0) > 1
+    )
+      ? { transcriptionTransportRetried: true }
+      : {}),
+    transcriptionTimeToHeadersMs: lastAttempt.transcriptionTimeToHeadersMs ?? null,
+    transcriptionBodyReadDurationMs: lastAttempt.transcriptionBodyReadDurationMs ?? null,
+    ...(lastAttempt.transcriptionRequestId
+      ? { transcriptionRequestId: lastAttempt.transcriptionRequestId }
+      : {}),
+    ...(requestIds.length > 0 ? { transcriptionRequestIds: requestIds } : {}),
+    transcriptionAttempts: attemptSummaries,
+    transcriptionTransportAttempts: transportAttempts,
+  };
+};
+
+const applyCombinedTranscriptionTimings = (timings, attempts) => {
+  if (!attempts.length) return;
+
+  const combined = combineTranscriptionTimings(attempts);
+  Object.assign(timings, combined);
+};
+
 const choosePreferredResult = (primaryResult, retryResult, context = {}) => {
   const primaryText = typeof primaryResult?.rawText === "string" ? primaryResult.rawText : "";
   const retryText = typeof retryResult?.rawText === "string" ? retryResult.rawText : "";
@@ -289,16 +387,17 @@ const choosePreferredResult = (primaryResult, retryResult, context = {}) => {
   const retryAnalysis = analyzeCandidate(retryText, context);
   const agreement = getAttemptAgreement(primaryText, retryText);
 
+  if (context.requireAgreement === true && !agreement.agreed) {
+    return {
+      selected: null,
+      selectedName: "disagreement",
+      primaryAnalysis,
+      retryAnalysis,
+      agreement,
+    };
+  }
+
   if (retryAnalysis.score > primaryAnalysis.score) {
-    if (context.requireAgreement === true && !agreement.agreed) {
-      return {
-        selected: null,
-        selectedName: "disagreement",
-        primaryAnalysis,
-        retryAnalysis,
-        agreement,
-      };
-    }
     return {
       selected: retryResult,
       selectedName: "retry",
@@ -338,6 +437,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
   let remainingTransportRetries = options.allowTransportRetry === false ? 0 : 1;
 
   const timings = {};
+  const transcriptionAttemptLedger = [];
   const language = getBaseLanguageCode(localStorage.getItem("preferredLanguage"));
   const allowLocalFallback = localStorage.getItem("allowLocalFallback") === "true";
   const fallbackModel = localStorage.getItem("fallbackWhisperModel") || "base";
@@ -382,26 +482,12 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     ]);
     throwIfTranscriptionCancelled(externalSignal);
 
-    const transcriptionAttemptLedger = [];
-
     const performTranscribeOnce = async ({
       attemptLabel,
       attemptSkipDictionaryPrompt,
       attemptForceNoStream,
     }) => {
-      const formData = new FormData();
       const mimeType = optimizedAudio.type || "audio/webm";
-      const extension = mimeType.includes("webm")
-        ? "webm"
-        : mimeType.includes("ogg")
-          ? "ogg"
-          : mimeType.includes("mp4")
-            ? "mp4"
-            : mimeType.includes("mpeg")
-              ? "mp3"
-              : mimeType.includes("wav")
-                ? "wav"
-                : "webm";
 
       const dictionaryEntries = attemptSkipDictionaryPrompt ? [] : getCustomDictionaryArray();
       const dictionaryPromptPlan = buildCustomDictionaryPromptForTranscription({
@@ -420,7 +506,6 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         {
           attempt: attemptLabel,
           mimeType,
-          extension,
           optimizedSize: optimizedAudio.size,
           hasApiKey: !!apiKey,
           shouldStream,
@@ -432,57 +517,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         "transcription"
       );
 
-      formData.append("file", optimizedAudio, `audio.${extension}`);
-      formData.append("model", model);
-      if (language) {
-        formData.append("language", language);
-      }
-
-      if (shouldAttachDictionaryPrompt) {
-        formData.append("prompt", dictionaryPrompt);
-      }
-
-      if (shouldStream) {
-        formData.append("stream", "true");
-      }
-
       const endpoint = transcriber.getTranscriptionEndpoint();
       const apiCallStart = performance.now();
 
-      if (provider === "mistral" && window.electronAPI?.proxyMistralTranscription) {
-        const audioBuffer = await optimizedAudio.arrayBuffer();
-        const proxyData = { audioBuffer, model, language };
-
-        if (dictionaryPrompt) {
-          const tokens = dictionaryPrompt
-            .split(",")
-            .flatMap((entry) => entry.trim().split(/\\s+/))
-            .filter(Boolean)
-            .slice(0, 100);
-          if (tokens.length > 0) {
-            proxyData.contextBias = tokens;
-          }
-        }
-
-        const result = await invokeCancelableIpc(externalSignal, (requestId) =>
-          window.electronAPI.proxyMistralTranscription(proxyData, requestId)
-        );
-        throwIfTranscriptionCancelled(externalSignal);
-        const proxyText = result?.text;
-
-        if (!proxyText || proxyText.trim().length === 0) {
-          throw new Error("No text transcribed - Mistral response was empty");
-        }
-
-        const attemptDurationMs = Math.round(performance.now() - apiCallStart);
-        return {
-          rawText: proxyText,
-          source: "mistral",
-          timings: { transcriptionProcessingDurationMs: attemptDurationMs },
-          dictionaryEntries: dictionaryEntriesUsed,
-          shouldAttachDictionaryPrompt,
-        };
-      }
       transcriber.logger?.debug?.(
         "Making transcription API request",
         {
@@ -494,11 +531,6 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         },
         "transcription"
       );
-
-      const headers = {};
-      if (apiKey) {
-        headers.Authorization = `Bearer ${apiKey}`;
-      }
 
       const requestTimeoutMs =
         requestTimeoutOverrideMs ||
@@ -542,13 +574,53 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         }, slowRequestThresholdMs);
 
         try {
-          response = await fetch(endpoint, {
-            method: "POST",
-            headers,
-            body: formData,
-            signal: controller.signal,
-          });
-          timeToHeadersMs = Math.round(performance.now() - transportStartedAt);
+          const secureTransport = window.electronAPI?.providerTranscriptionRequest;
+          if (!secureTransport) throw new Error("Secure transcription transport is unavailable");
+          const audioBuffer = await readBlobAsArrayBuffer(optimizedAudio);
+          const contextBias =
+            provider === "mistral" && dictionaryEntries.length > 0
+              ? dictionaryEntries.slice(0, 100)
+              : undefined;
+          const proxyResponse = await invokeCancelableIpc(controller.signal, (ipcRequestId) =>
+            secureTransport(
+              {
+                provider,
+                endpoint,
+                audioBuffer,
+                mimeType: optimizedAudio.type || mimeType,
+                model,
+                language,
+                stream: shouldStream,
+                ...(contextBias?.length ? { contextBias } : {}),
+              },
+              ipcRequestId,
+              (progress) => {
+                if (
+                  controller.signal.aborted ||
+                  externalSignal?.aborted ||
+                  !Number.isSafeInteger(progress?.generatedChars) ||
+                  progress.generatedChars < 0 ||
+                  !Number.isSafeInteger(progress?.generatedWords) ||
+                  progress.generatedWords < 0
+                ) {
+                  return;
+                }
+                transcriber.emitProgress?.({
+                  stage: "transcribing",
+                  stageLabel: "Transcribing",
+                  generatedChars: progress.generatedChars,
+                  generatedWords: progress.generatedWords,
+                  isSlow: false,
+                  transportRetrying: false,
+                  transportAttempt,
+                });
+              }
+            )
+          );
+          response = createBoundedProxyResponse(proxyResponse);
+          timeToHeadersMs =
+            normalizeProxyDurationMs(proxyResponse?.timings?.timeToHeadersMs) ??
+            Math.round(performance.now() - transportStartedAt);
           const responseContentType = response.headers.get("content-type") || "";
           requestId = sanitizeOpaqueRequestId(
             response.headers.get("x-request-id") || response.headers.get("openai-request-id")
@@ -575,7 +647,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           const bodyReadStartedAt = performance.now();
           if (!response.ok) {
             const errorText = await response.text();
-            bodyReadDurationMs = Math.round(performance.now() - bodyReadStartedAt);
+            bodyReadDurationMs =
+              normalizeProxyDurationMs(proxyResponse?.timings?.bodyReadDurationMs) ??
+              Math.round(performance.now() - bodyReadStartedAt);
             let providerErrorCode = null;
             try {
               const errorData = JSON.parse(errorText);
@@ -641,7 +715,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
               throw invalidResponseError;
             }
           }
-          bodyReadDurationMs = Math.round(performance.now() - bodyReadStartedAt);
+          bodyReadDurationMs =
+            normalizeProxyDurationMs(proxyResponse?.timings?.bodyReadDurationMs) ??
+            Math.round(performance.now() - bodyReadStartedAt);
           transportAttempts.push({
             attempt: transportAttempt,
             status: response.status,
@@ -667,7 +743,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
             });
             return {
               rawText: result.text,
-              source: "openai",
+              source: provider,
               timings: {
                 transcriptionProcessingDurationMs: attemptDurationMs,
                 transcriptionTimeToHeadersMs: timeToHeadersMs,
@@ -787,51 +863,6 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         }
         throw error;
       }
-    };
-
-    const combineTranscriptionTimings = (attempts) => {
-      const total = attempts.reduce(
-        (sum, attempt) => sum + (attempt?.timings?.transcriptionProcessingDurationMs || 0),
-        0
-      );
-      const transportAttempts = attempts.flatMap((attempt, index) =>
-        (attempt?.timings?.transcriptionTransportAttempts || []).map((transportAttempt) => ({
-          ...transportAttempt,
-          transcriptionAttempt: index + 1,
-          attemptLabel: attempt.attemptLabel || `attempt-${index + 1}`,
-        }))
-      );
-      const requestIds = transportAttempts.map((attempt) => attempt.requestId).filter(Boolean);
-      const lastSuccessfulAttempt = [...attempts]
-        .reverse()
-        .find((attempt) => attempt.attemptOutcome === "success");
-      const lastAttempt = lastSuccessfulAttempt?.timings || attempts.at(-1)?.timings || {};
-      const attemptSummaries = attempts.map((attempt, index) => ({
-        attempt: index + 1,
-        label: attempt.attemptLabel || `attempt-${index + 1}`,
-        outcome: attempt.attemptOutcome || "success",
-        durationMs: attempt?.timings?.transcriptionProcessingDurationMs || 0,
-        transportAttemptCount: attempt?.timings?.transcriptionTransportAttempts?.length || 0,
-      }));
-      return {
-        transcriptionProcessingDurationMs: total,
-        transcriptionAttemptCount: attempts.length,
-        ...(attempts.length > 1 ? { transcriptionRetried: true } : {}),
-        transcriptionTransportAttemptCount: transportAttempts.length,
-        ...(attempts.some(
-          (attempt) => (attempt?.timings?.transcriptionTransportAttempts?.length || 0) > 1
-        )
-          ? { transcriptionTransportRetried: true }
-          : {}),
-        transcriptionTimeToHeadersMs: lastAttempt.transcriptionTimeToHeadersMs ?? null,
-        transcriptionBodyReadDurationMs: lastAttempt.transcriptionBodyReadDurationMs ?? null,
-        ...(lastAttempt.transcriptionRequestId
-          ? { transcriptionRequestId: lastAttempt.transcriptionRequestId }
-          : {}),
-        ...(requestIds.length > 0 ? { transcriptionRequestIds: requestIds } : {}),
-        transcriptionAttempts: attemptSummaries,
-        transcriptionTransportAttempts: transportAttempts,
-      };
     };
 
     const transcribeWithDictionaryRetry = async ({
@@ -1151,26 +1182,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       );
     }
 
-    const combinedTimings = combineTranscriptionTimings(transcriptionAttemptLedger);
-    timings.transcriptionProcessingDurationMs = combinedTimings.transcriptionProcessingDurationMs;
-    timings.transcriptionAttemptCount = combinedTimings.transcriptionAttemptCount;
-    if (combinedTimings.transcriptionRetried) {
-      timings.transcriptionRetried = true;
-    }
-    timings.transcriptionTransportAttemptCount = combinedTimings.transcriptionTransportAttemptCount;
-    timings.transcriptionTimeToHeadersMs = combinedTimings.transcriptionTimeToHeadersMs;
-    timings.transcriptionBodyReadDurationMs = combinedTimings.transcriptionBodyReadDurationMs;
-    timings.transcriptionAttempts = combinedTimings.transcriptionAttempts;
-    timings.transcriptionTransportAttempts = combinedTimings.transcriptionTransportAttempts;
-    if (combinedTimings.transcriptionTransportRetried) {
-      timings.transcriptionTransportRetried = true;
-    }
-    if (combinedTimings.transcriptionRequestId) {
-      timings.transcriptionRequestId = combinedTimings.transcriptionRequestId;
-    }
-    if (combinedTimings.transcriptionRequestIds) {
-      timings.transcriptionRequestIds = combinedTimings.transcriptionRequestIds;
-    }
+    applyCombinedTranscriptionTimings(timings, transcriptionAttemptLedger);
     if (recoveredFromIncompleteStream) {
       timings.transcriptionStreamRecovery = true;
     }
@@ -1236,7 +1248,14 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     const isOpenAIMode = localStorage.getItem("useLocalWhisper") !== "true";
 
     if (allowLocalFallback && isOpenAIMode) {
+      applyCombinedTranscriptionTimings(timings, transcriptionAttemptLedger);
+      timings.cloudTranscriptionFailed = true;
+      timings.cloudTranscriptionFailureCode =
+        typeof error?.code === "string" && /^[A-Z0-9_]{1,64}$/.test(error.code)
+          ? error.code
+          : "error";
       try {
+        const localFallbackStartedAt = performance.now();
         const arrayBuffer = await audioBlob.arrayBuffer();
         const options = { model: fallbackModel };
         if (language && language !== "auto") {
@@ -1248,47 +1267,73 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         );
         throwIfTranscriptionCancelled(externalSignal);
         if (result.success && result.text) {
+          timings.localFallbackUsed = true;
+          timings.localFallbackProcessingDurationMs = Math.round(
+            performance.now() - localFallbackStartedAt
+          );
           const rawText = result.text;
-          if (
-            typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome ===
-            "function"
-          ) {
-            const cleanupResult =
-              await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
+          try {
+            if (
+              typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome ===
+              "function"
+            ) {
+              const cleanupResult =
+                await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
+                  rawText,
+                  "local-fallback",
+                  transcriber.getCleanupEnabledOverride?.() ?? null,
+                  { signal: externalSignal }
+                );
+              if (cleanupResult.text) {
+                return {
+                  success: true,
+                  text: cleanupResult.text,
+                  rawText,
+                  source: cleanupResult.cleanup?.applied
+                    ? "local-fallback-reasoned"
+                    : "local-fallback",
+                  timings,
+                  cleanup: cleanupResult.cleanup,
+                };
+              }
+            } else if (
+              typeof transcriber.reasoningCleanupService?.processTranscription === "function"
+            ) {
+              const text = await transcriber.reasoningCleanupService.processTranscription(
                 rawText,
                 "local-fallback",
                 transcriber.getCleanupEnabledOverride?.() ?? null,
                 { signal: externalSignal }
               );
-            if (cleanupResult.text) {
-              return {
-                success: true,
-                text: cleanupResult.text,
-                rawText,
-                source: cleanupResult.cleanup?.applied
-                  ? "local-fallback-reasoned"
-                  : "local-fallback",
-                timings,
-                cleanup: cleanupResult.cleanup,
-              };
+              if (text) {
+                return {
+                  success: true,
+                  text,
+                  rawText,
+                  source: "local-fallback-reasoned",
+                  timings,
+                };
+              }
             }
-          } else {
-            const text = await transcriber.reasoningCleanupService.processTranscription(
-              rawText,
-              "local-fallback",
-              transcriber.getCleanupEnabledOverride?.() ?? null,
-              { signal: externalSignal }
+          } catch (cleanupError) {
+            if (isTranscriptionCancelled(cleanupError, externalSignal)) {
+              throw createTranscriptionCancelledError();
+            }
+            timings.localFallbackCleanupFailed = true;
+            transcriber.logger?.warn?.(
+              "Cleanup failed after local transcription recovery; preserving the raw local transcript",
+              {},
+              "transcription"
             );
-            if (text) {
-              return {
-                success: true,
-                text,
-                rawText,
-                source: "local-fallback-reasoned",
-                timings,
-              };
-            }
           }
+
+          return {
+            success: true,
+            text: rawText,
+            rawText,
+            source: "local-fallback",
+            timings,
+          };
         }
 
         throw error;

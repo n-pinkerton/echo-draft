@@ -1,3 +1,5 @@
+import controlPanelShortcut from "../../shared/controlPanelShortcut.json";
+
 export const MODIFIER_ORDER = ["Control", "Command", "Alt", "Shift", "Super", "Fn"] as const;
 
 export const MODIFIERS = new Set<string>(MODIFIER_ORDER);
@@ -143,6 +145,8 @@ export const WINDOWS_RESERVED_SHORTCUTS = [
   "Super+Down",
 ] as const;
 
+export const WINDOWS_ECHODRAFT_RESERVED_SHORTCUTS = [controlPanelShortcut.accelerator] as const;
+
 export const LINUX_RESERVED_SHORTCUTS = [
   "Control+C",
   "Control+V",
@@ -277,4 +281,3 @@ export const VALIDATION_RULES = [
   "Does not mix left and right versions of the same modifier",
   "Is not reserved by the system",
 ] as const;
-

@@ -17,8 +17,9 @@ export function resolveOAuthRedirectConfig(): OAuthRedirectConfig {
     .toLowerCase();
   const appChannel = VALID_CHANNELS.has(configuredChannel) ? configuredChannel : inferredChannel;
   const defaultOAuthProtocol =
-    DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL[appChannel as keyof typeof DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL] ||
-    DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL.production;
+    DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL[
+      appChannel as keyof typeof DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL
+    ] || DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL.production;
 
   const protocol = (import.meta.env.VITE_OPENWHISPR_PROTOCOL || defaultOAuthProtocol)
     .trim()
@@ -223,9 +224,16 @@ const renderOAuthRedirectPage = () => `
 export function handleOAuthBrowserRedirect(): boolean {
   const params = new URLSearchParams(window.location.search);
   const verifier = params.get("neon_auth_session_verifier");
+  const state = params.get("oauth_state");
   const isInElectron = typeof window.electronAPI !== "undefined";
 
-  if (!verifier || isInElectron) {
+  if (
+    !verifier ||
+    !/^[A-Za-z0-9._~+/=-]{16,2048}$/.test(verifier) ||
+    !state ||
+    !/^[A-Za-z0-9_-]{43}$/.test(state) ||
+    isInElectron
+  ) {
     return false;
   }
 
@@ -235,6 +243,7 @@ export function handleOAuthBrowserRedirect(): boolean {
     try {
       const bridgeUrl = new URL(authBridgeUrl);
       bridgeUrl.searchParams.set("neon_auth_session_verifier", verifier);
+      bridgeUrl.searchParams.set("oauth_state", state);
       window.location.replace(bridgeUrl.toString());
       return true;
     } catch {
@@ -243,7 +252,7 @@ export function handleOAuthBrowserRedirect(): boolean {
   }
 
   setTimeout(() => {
-    window.location.href = `${protocol}://auth/callback?neon_auth_session_verifier=${encodeURIComponent(verifier)}`;
+    window.location.href = `${protocol}://auth/callback?neon_auth_session_verifier=${encodeURIComponent(verifier)}&oauth_state=${encodeURIComponent(state)}`;
   }, 2000);
 
   document.body.innerHTML = renderOAuthRedirectPage();

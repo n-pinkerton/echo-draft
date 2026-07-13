@@ -1,5 +1,9 @@
 const { getFailureReason } = require("./hotkeyFailureReason");
 const { isModifierOnlyHotkey, isRightSideModifier } = require("./hotkeyPatterns");
+const {
+  getControlPanelShortcutConflict,
+  isControlPanelShortcut,
+} = require("../app/controlPanelShortcutPolicy");
 
 function restorePreviousHotkey(previousHotkey, callback, { globalShortcut, debugLogger } = {}) {
   if (
@@ -36,6 +40,10 @@ function setupShortcuts(
 ) {
   if (!callback) {
     throw new Error("Callback function is required for hotkey setup");
+  }
+
+  if (isControlPanelShortcut(hotkey)) {
+    return getControlPanelShortcutConflict();
   }
 
   debugLogger?.log?.(`[HotkeyManager] Setting up hotkey: "${hotkey}"`);

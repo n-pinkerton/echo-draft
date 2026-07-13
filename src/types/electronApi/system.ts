@@ -22,5 +22,9 @@ export interface ElectronAPISystem {
 
   // Auth
   authClearSession?: () => Promise<void>;
+  authBeginSocialSignIn?: (
+    provider: "google",
+    state: string
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 

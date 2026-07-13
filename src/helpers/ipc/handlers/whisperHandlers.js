@@ -1,17 +1,71 @@
 const debugLogger = require("../../debugLogger");
+const { requireTrustedRenderer } = require("../trustedRenderer");
+const { sanitizeLexicalDictionaryEntries } = require("../../../utils/dictionaryLexicon.cjs");
+const { requireLanguageCode } = require("../../../utils/languagePolicy.cjs");
 
-function registerWhisperHandlers({ ipcMain }, { whisperManager, cancelableRequests }) {
-  ipcMain.handle("transcribe-local-whisper", async (event, audioBlob, options = {}, requestId) => {
-    let requestScope;
-    debugLogger.log("transcribe-local-whisper called", {
-      audioBlobType: typeof audioBlob,
-      audioBlobSize: audioBlob?.byteLength || audioBlob?.length || 0,
-      options,
+const LOCAL_WHISPER_OPTION_FIELDS = new Set(["model", "language", "dictionaryEntries"]);
+
+function normalizeLocalWhisperOptions(whisperManager, value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Local Whisper options must be an object");
+  }
+  const unknownFields = Object.keys(value).filter((key) => !LOCAL_WHISPER_OPTION_FIELDS.has(key));
+  if (unknownFields.length > 0) {
+    throw new Error("Local Whisper options contain unsupported fields");
+  }
+
+  const model = typeof value.model === "string" && value.model.trim() ? value.model.trim() : "base";
+  whisperManager.validateModelName?.(model);
+  const language =
+    requireLanguageCode(
+      value.language,
+      { allowAuto: false, capability: "whisper", baseOnly: true },
+      "local Whisper language"
+    ) || "";
+
+  let dictionaryEntries = [];
+  if (value.dictionaryEntries !== undefined) {
+    if (!Array.isArray(value.dictionaryEntries) || value.dictionaryEntries.length > 100) {
+      throw new Error("Invalid local Whisper dictionary entries");
+    }
+    dictionaryEntries = sanitizeLexicalDictionaryEntries(value.dictionaryEntries, {
+      maxEntries: 100,
+      maxEntryLength: 80,
+      maxWords: 1,
     });
+    if (dictionaryEntries.length !== value.dictionaryEntries.length) {
+      throw new Error("Local Whisper dictionary must contain unique lexical terms only");
+    }
+  }
+
+  return {
+    model,
+    ...(language ? { language } : {}),
+    ...(dictionaryEntries.length > 0 ? { dictionaryEntries } : {}),
+  };
+}
+
+function registerWhisperHandlers(
+  { ipcMain },
+  { whisperManager, cancelableRequests, windowManager }
+) {
+  const requireControlPanel = (event) =>
+    requireTrustedRenderer(event, windowManager, ["control-panel"]);
+  ipcMain.handle("transcribe-local-whisper", async (event, audioBlob, options = {}, requestId) => {
+    requireTrustedRenderer(event, windowManager);
+    let requestScope;
 
     try {
+      const safeOptions = normalizeLocalWhisperOptions(whisperManager, options);
+      debugLogger.log("transcribe-local-whisper called", {
+        audioBlobType: typeof audioBlob,
+        audioBlobSize: audioBlob?.byteLength || audioBlob?.length || 0,
+        model: safeOptions.model,
+        language: safeOptions.language || "auto",
+        dictionaryEntryCount: safeOptions.dictionaryEntries?.length || 0,
+      });
       requestScope = cancelableRequests.createScope(event, requestId);
-      const result = await whisperManager.transcribeLocalWhisper(audioBlob, options, {
+      const result = await whisperManager.transcribeLocalWhisper(audioBlob, safeOptions, {
         signal: requestScope.signal,
       });
 
@@ -85,56 +139,68 @@ function registerWhisperHandlers({ ipcMain }, { whisperManager, cancelableReques
     }
   });
 
-  ipcMain.handle("check-whisper-installation", async () => {
+  ipcMain.handle("check-whisper-installation", async (event) => {
+    requireControlPanel(event);
     return whisperManager.checkWhisperInstallation();
   });
 
-  ipcMain.handle("get-audio-diagnostics", async () => {
+  ipcMain.handle("get-audio-diagnostics", async (event) => {
+    requireControlPanel(event);
     return whisperManager.getDiagnostics();
   });
 
   ipcMain.handle("download-whisper-model", async (event, modelName) => {
+    requireControlPanel(event);
     return whisperManager.downloadWhisperModel(modelName, (progressData) => {
       event.sender.send("whisper-download-progress", progressData);
     });
   });
 
-  ipcMain.handle("check-model-status", async (_event, modelName) => {
+  ipcMain.handle("check-model-status", async (event, modelName) => {
+    requireControlPanel(event);
     return whisperManager.checkModelStatus(modelName);
   });
 
-  ipcMain.handle("list-whisper-models", async () => {
+  ipcMain.handle("list-whisper-models", async (event) => {
+    requireControlPanel(event);
     return whisperManager.listWhisperModels();
   });
 
-  ipcMain.handle("delete-whisper-model", async (_event, modelName) => {
+  ipcMain.handle("delete-whisper-model", async (event, modelName) => {
+    requireControlPanel(event);
     return whisperManager.deleteWhisperModel(modelName);
   });
 
-  ipcMain.handle("delete-all-whisper-models", async () => {
+  ipcMain.handle("delete-all-whisper-models", async (event) => {
+    requireControlPanel(event);
     return whisperManager.deleteAllWhisperModels();
   });
 
-  ipcMain.handle("cancel-whisper-download", async () => {
+  ipcMain.handle("cancel-whisper-download", async (event) => {
+    requireControlPanel(event);
     return whisperManager.cancelDownload();
   });
 
   // Whisper server handlers (for faster repeated transcriptions)
-  ipcMain.handle("whisper-server-start", async (_event, modelName) => {
+  ipcMain.handle("whisper-server-start", async (event, modelName) => {
+    requireControlPanel(event);
     return whisperManager.startServer(modelName);
   });
 
-  ipcMain.handle("whisper-server-stop", async () => {
+  ipcMain.handle("whisper-server-stop", async (event) => {
+    requireControlPanel(event);
     return whisperManager.stopServer();
   });
 
-  ipcMain.handle("whisper-server-status", async () => {
+  ipcMain.handle("whisper-server-status", async (event) => {
+    requireControlPanel(event);
     return whisperManager.getServerStatus();
   });
 
-  ipcMain.handle("check-ffmpeg-availability", async () => {
+  ipcMain.handle("check-ffmpeg-availability", async (event) => {
+    requireControlPanel(event);
     return whisperManager.checkFFmpegAvailability();
   });
 }
 
-module.exports = { registerWhisperHandlers };
+module.exports = { normalizeLocalWhisperOptions, registerWhisperHandlers };

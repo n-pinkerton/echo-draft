@@ -281,7 +281,8 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
 
     const exportDir = path.join(
       process.env.TEMP || process.env.TMP || "C:\\\\Windows\\\\Temp",
-      "echodraft-e2e"
+      "echodraft-e2e",
+      runId
     );
     if (allowForegroundAutomation) {
       const screenshotPath = await captureControlPanelUi(panel, exportDir, runId);

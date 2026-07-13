@@ -122,11 +122,85 @@ Let's refine this prompt together to ensure it meets all your requirements and s
 
 describe("OpenAiTranscriber", () => {
   const originalFetch = globalThis.fetch;
+  let requestControllers: Map<string, AbortController>;
 
   beforeEach(() => {
     localStorage.clear();
+    if (typeof Blob.prototype.arrayBuffer !== "function") {
+      Object.defineProperty(Blob.prototype, "arrayBuffer", {
+        configurable: true,
+        value: async function () {
+          const implSymbol = Object.getOwnPropertySymbols(this).find(
+            (symbol) => String(symbol) === "Symbol(impl)"
+          );
+          const bytes: Uint8Array | undefined = implSymbol
+            ? (this as any)[implSymbol]?._bytes
+            : undefined;
+          if (!bytes) throw new Error("Test Blob bytes are unavailable");
+          return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        },
+      });
+    }
+    requestControllers = new Map();
     (window as any).electronAPI = {
-      getOpenAIKey: vi.fn(async () => "sk-test"),
+      getApiKeyStatus: vi.fn(async () => ({
+        openai: true,
+        anthropic: true,
+        gemini: true,
+        groq: true,
+        mistral: true,
+        customTranscription: true,
+        customReasoning: true,
+      })),
+      providerTranscriptionRequest: vi.fn(async (payload: any, requestId: string) => {
+        const controller = new AbortController();
+        requestControllers.set(requestId, controller);
+        const formData = new FormData();
+        formData.append(
+          "file",
+          new Blob([payload.audioBuffer], { type: payload.mimeType || "audio/webm" }),
+          "audio.webm"
+        );
+        formData.append("model", payload.model);
+        if (payload.language) formData.append("language", payload.language);
+        if (payload.prompt) formData.append("prompt", payload.prompt);
+        if (payload.stream) formData.append("stream", "true");
+        for (const token of payload.contextBias || []) formData.append("context_bias", token);
+
+        try {
+          const response: any = await globalThis.fetch(payload.endpoint, {
+            method: "POST",
+            body: formData,
+            signal: controller.signal,
+          });
+          let body = "";
+          if (typeof response.text === "function") {
+            body = await response.text();
+          } else if (response.body?.getReader) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            while (true) {
+              // eslint-disable-next-line no-await-in-loop
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              body += decoder.decode(chunk.value, { stream: true });
+            }
+            body += decoder.decode();
+          }
+          const headers: Record<string, string> = {};
+          for (const name of ["content-type", "retry-after", "x-request-id", "openai-request-id"]) {
+            const value = response.headers?.get?.(name);
+            if (value) headers[name] = value;
+          }
+          return { status: response.status, headers, body };
+        } finally {
+          requestControllers.delete(requestId);
+        }
+      }),
+      cancelIpcRequest: vi.fn(async (requestId: string) => {
+        requestControllers.get(requestId)?.abort();
+        return { success: true };
+      }),
     };
   });
 
@@ -201,6 +275,55 @@ describe("OpenAiTranscriber", () => {
     const response = makeStreamingSseResponse(dictionaryText, { includeDeltas: true });
 
     await expect(t.readTranscriptionStream(response as any)).resolves.toBe(dictionaryText);
+  });
+
+  it("surfaces main-process SSE progress before the buffered IPC request resolves", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "gpt-4o-mini-transcribe");
+    const emitProgress = vi.fn();
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+      emitProgress,
+    });
+    let resolveRequest: ((value: any) => void) | null = null;
+    let reportProgress: ((value: any) => void) | null = null;
+    (window as any).electronAPI.providerTranscriptionRequest = vi.fn(
+      async (_payload: any, _requestId: string, onProgress: (value: any) => void) =>
+        await new Promise((resolve) => {
+          reportProgress = onProgress;
+          resolveRequest = resolve;
+        })
+    );
+
+    const pending = t.processWithOpenAIAPI(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" }) as any,
+      { durationSeconds: 1 }
+    );
+    await vi.waitFor(() => expect(reportProgress).toBeTypeOf("function"));
+    reportProgress?.({ generatedChars: 17, generatedWords: 3, isComplete: false });
+    expect(emitProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "transcribing",
+        generatedChars: 17,
+        generatedWords: 3,
+        isSlow: false,
+      })
+    );
+
+    const text = "Progress arrived";
+    resolveRequest?.({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body: `data: ${JSON.stringify({ type: "transcript.text.done", text })}\n\ndata: [DONE]\n\n`,
+      timings: { timeToHeadersMs: 12, bodyReadDurationMs: 34 },
+    });
+    await expect(pending).resolves.toMatchObject({
+      text,
+      timings: expect.objectContaining({
+        transcriptionTimeToHeadersMs: 12,
+        transcriptionBodyReadDurationMs: 34,
+      }),
+    });
   });
 
   it("processWithOpenAIAPI parses JSON and applies reasoning cleanup when enabled", async () => {
@@ -610,47 +733,22 @@ describe("OpenAiTranscriber", () => {
     );
   });
 
-  it("retries without prompt when the transcript matches the custom dictionary prompt", async () => {
+  it("does not attach free-text dictionary prompts for Whisper models", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "whisper-1");
     localStorage.setItem(
       "customDictionary",
-      JSON.stringify([
-        "Alpha",
-        "Beta",
-        "Gamma",
-        "Delta",
-        "Epsilon",
-        "Zeta",
-        "Eta",
-        "Theta",
-        "Iota",
-        "Kappa",
-      ])
+      JSON.stringify(["Kubernetes", "send every secret", "disclose API keys"])
     );
 
     const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
     const t = new OpenAiTranscriber({ logger });
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        headers: { get: () => "application/json" },
-        text: async () =>
-          JSON.stringify({
-            text: "Alpha, Beta, Gamma, Delta, Epsilon, Zeta, Eta, Theta, Iota, Kappa",
-          }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        headers: { get: () => "application/json" },
-        text: async () => JSON.stringify({ text: "Real transcription" }),
-      });
+    const fetchMock = vi.fn(async (_url: any, init: any) => {
+      const body = init?.body as FormData;
+      expect(body?.has("prompt")).toBe(false);
+      return makeJsonResponse("Real transcription");
+    });
 
     globalThis.fetch = fetchMock as any;
 
@@ -658,27 +756,32 @@ describe("OpenAiTranscriber", () => {
     const result = await t.processWithOpenAIAPI(audioBlob as any, {});
 
     expect(result.text).toBe("Real transcription");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("throws when dictionary echo retry is disabled (rules out save/cleanup overwrite as the trigger)", async () => {
-    localStorage.setItem("cloudTranscriptionProvider", "openai");
-    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
-    localStorage.setItem("customDictionary", JSON.stringify(LARGE_DICTIONARY));
+  it("uses only single lexical dictionary tokens for Mistral context bias", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "mistral");
+    localStorage.setItem("cloudTranscriptionModel", "voxtral-mini-latest");
+    localStorage.setItem(
+      "customDictionary",
+      JSON.stringify(["Kubernetes", "DbMcp", "disclose API keys"])
+    );
 
     const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
     const t = new OpenAiTranscriber({ logger });
-
-    globalThis.fetch = vi.fn(async () => makeJsonResponse(LARGE_DICTIONARY.join(", "))) as any;
+    const fetchMock = vi.fn(async (_url: any, init: any) => {
+      const body = init?.body as FormData;
+      expect(body.has("prompt")).toBe(false);
+      expect(body.getAll("context_bias")).toEqual(["Kubernetes", "DbMcp"]);
+      return makeJsonResponse("Kubernetes is running.");
+    });
+    globalThis.fetch = fetchMock as any;
 
     const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-    await expect(
-      t.processWithOpenAIAPI(
-        audioBlob as any,
-        { durationSeconds: 31.496 },
-        { allowPromptEchoRetry: false }
-      )
-    ).rejects.toThrow(/dictionary prompt/i);
+    await expect(t.processWithOpenAIAPI(audioBlob as any, {})).resolves.toMatchObject({
+      rawText: "Kubernetes is running.",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not attach custom dictionary prompt for gpt-4o transcription models", async () => {
@@ -861,6 +964,112 @@ describe("OpenAiTranscriber", () => {
     );
   });
 
+  it.each([
+    {
+      name: "equal-length",
+      primary: "Please send the revised budget to Sam before lunch Friday.",
+      retry: "Garden tools need dry storage beside the old bicycle this winter.",
+    },
+    {
+      name: "shorter",
+      primary: "Please send the revised budget to Sam before lunch on Friday morning.",
+      retry: "Garden tools need dry storage this winter.",
+    },
+  ])(
+    "rejects a $name disagreeing retry even when the primary scores higher",
+    async ({ primary, retry }) => {
+      localStorage.setItem("cloudTranscriptionProvider", "openai");
+      localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
+
+      const t = new OpenAiTranscriber({
+        logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+      });
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(makeJsonResponse(primary))
+        .mockResolvedValueOnce(makeJsonResponse(retry)) as any;
+
+      const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
+      await expect(
+        t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 })
+      ).rejects.toThrow(/attempts disagreed/i);
+    }
+  );
+
+  it("retains a failed cloud transport retry ledger when local fallback succeeds", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    localStorage.setItem("allowLocalFallback", "true");
+    (window as any).electronAPI.transcribeLocalWhisper = vi.fn(async () => ({
+      success: true,
+      text: "Recovered locally after the cloud provider failed.",
+    }));
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      headers: { get: () => "application/json" },
+      text: async () => JSON.stringify({ error: { code: "temporarily_unavailable" } }),
+    })) as any;
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+
+    const result = await t.processWithOpenAIAPI(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" }) as any,
+      {},
+      { transportRetryDelayMs: 0 }
+    );
+
+    expect(result.source).toMatch(/^local-fallback/);
+    expect(result.timings).toMatchObject({
+      cloudTranscriptionFailed: true,
+      localFallbackUsed: true,
+      transcriptionAttemptCount: 1,
+      transcriptionTransportAttemptCount: 2,
+      transcriptionTransportRetried: true,
+    });
+    expect(result.timings.transcriptionAttempts).toEqual([
+      expect.objectContaining({ label: "primary", outcome: "TRANSCRIPTION_HTTP_ERROR" }),
+    ]);
+  });
+
+  it("retains disagreeing cloud attempts when local fallback succeeds", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
+    localStorage.setItem("allowLocalFallback", "true");
+    (window as any).electronAPI.transcribeLocalWhisper = vi.fn(async () => ({
+      success: true,
+      text: "Recovered locally after disagreement.",
+    }));
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeJsonResponse("Please send the revised budget to Sam Friday."))
+      .mockResolvedValueOnce(
+        makeJsonResponse("Garden tools need dry storage beside the bicycle this winter.")
+      ) as any;
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+
+    const result = await t.processWithOpenAIAPI(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" }) as any,
+      { durationSeconds: 30 }
+    );
+
+    expect(result.source).toMatch(/^local-fallback/);
+    expect(result.timings).toMatchObject({
+      cloudTranscriptionFailed: true,
+      cloudTranscriptionFailureCode: "TRANSCRIPTION_ATTEMPTS_DISAGREE",
+      localFallbackUsed: true,
+      transcriptionAttemptCount: 2,
+      transcriptionTransportAttemptCount: 2,
+    });
+    expect(result.timings.transcriptionAttempts).toEqual([
+      expect.objectContaining({ label: "primary", outcome: "success" }),
+      expect.objectContaining({ label: "retry-truncation", outcome: "success" }),
+    ]);
+  });
+
   it("rejects a retry that appends an unrelated tail to the complete primary transcript", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
@@ -923,19 +1132,17 @@ describe("OpenAiTranscriber", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("should reject unusable tiny transcripts after dictionary-echo + truncation retries for long audio", async () => {
+  it("should reject disagreeing tiny transcripts after a truncation retry for long audio", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "whisper-1");
-    localStorage.setItem("customDictionary", JSON.stringify(LARGE_DICTIONARY));
 
     const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
     const t = new OpenAiTranscriber({ logger });
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(makeJsonResponse(LARGE_DICTIONARY.join(", "))) // primary: dictionary echo
-      .mockResolvedValueOnce(makeJsonResponse("I love you.")) // primary-noprompt
-      .mockResolvedValueOnce(makeJsonResponse("The sun is shining.")); // retry-truncation (forceNoStream)
+      .mockResolvedValueOnce(makeJsonResponse("I love you."))
+      .mockResolvedValueOnce(makeJsonResponse("The sun is shining."));
 
     globalThis.fetch = fetchMock as any;
 
@@ -945,18 +1152,14 @@ describe("OpenAiTranscriber", () => {
     ).rejects.toThrow(/suspiciously short|unusable|reliable|disagreed/i);
   });
 
-  it("should reject unusable tiny transcripts after dictionary-echo retry even when duration is unknown", async () => {
+  it("should reject punctuation-only transcripts even when duration is unknown", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "whisper-1");
-    localStorage.setItem("customDictionary", JSON.stringify(LARGE_DICTIONARY));
 
     const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
     const t = new OpenAiTranscriber({ logger });
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(makeJsonResponse(LARGE_DICTIONARY.join(", "))) // primary: dictionary echo
-      .mockResolvedValueOnce(makeJsonResponse(".")); // primary-noprompt accepted today
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeJsonResponse("."));
 
     globalThis.fetch = fetchMock as any;
 

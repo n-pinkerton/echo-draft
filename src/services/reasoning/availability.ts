@@ -1,10 +1,12 @@
 import logger from "../../utils/logger";
 
 type ElectronAPI = {
-  getOpenAIKey?: () => Promise<string | null | undefined>;
-  getAnthropicKey?: () => Promise<string | null | undefined>;
-  getGeminiKey?: () => Promise<string | null | undefined>;
-  getGroqKey?: () => Promise<string | null | undefined>;
+  getApiKeyStatus?: () => Promise<{
+    openai?: boolean;
+    anthropic?: boolean;
+    gemini?: boolean;
+    groq?: boolean;
+  }>;
   checkLocalReasoningAvailable?: () => Promise<boolean | undefined>;
 };
 
@@ -13,36 +15,39 @@ export async function checkReasoningAvailability(
   provider: string = "auto"
 ): Promise<boolean> {
   try {
-    const openaiKey = await electronAPI?.getOpenAIKey?.();
-    const anthropicKey = await electronAPI?.getAnthropicKey?.();
-    const geminiKey = await electronAPI?.getGeminiKey?.();
-    const groqKey = await electronAPI?.getGroqKey?.();
+    const keyStatus = await electronAPI?.getApiKeyStatus?.();
     const localAvailable = await electronAPI?.checkLocalReasoningAvailable?.();
 
     logger.logReasoning("API_KEY_CHECK", {
-      hasOpenAI: !!openaiKey,
-      hasAnthropic: !!anthropicKey,
-      hasGemini: !!geminiKey,
-      hasGroq: !!groqKey,
+      hasOpenAI: Boolean(keyStatus?.openai),
+      hasAnthropic: Boolean(keyStatus?.anthropic),
+      hasGemini: Boolean(keyStatus?.gemini),
+      hasGroq: Boolean(keyStatus?.groq),
       hasLocal: !!localAvailable,
     });
 
     switch (provider) {
       case "openai":
-        return Boolean(openaiKey);
+        return Boolean(keyStatus?.openai);
       case "anthropic":
-        return Boolean(anthropicKey);
+        return Boolean(keyStatus?.anthropic);
       case "gemini":
-        return Boolean(geminiKey);
+        return Boolean(keyStatus?.gemini);
       case "groq":
-        return Boolean(groqKey);
+        return Boolean(keyStatus?.groq);
       case "local":
         return Boolean(localAvailable);
       case "custom":
         // Custom OpenAI-compatible endpoints may intentionally allow unauthenticated local access.
         return true;
       default:
-        return !!(openaiKey || anthropicKey || geminiKey || groqKey || localAvailable);
+        return Boolean(
+          keyStatus?.openai ||
+          keyStatus?.anthropic ||
+          keyStatus?.gemini ||
+          keyStatus?.groq ||
+          localAvailable
+        );
     }
   } catch (error) {
     logger.logReasoning("API_KEY_CHECK_ERROR", {

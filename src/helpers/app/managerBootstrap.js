@@ -23,10 +23,14 @@ function setupProductionPath({ env = process.env, platform = process.platform } 
 function bootstrapManagers() {
   setupProductionPath();
 
+  const EnvironmentManager = require("../environment");
+  const environmentManager = new EnvironmentManager();
+  environmentManager.enforceDebugConsent();
+
   const debugLogger = require("../debugLogger");
+  debugLogger.refreshLogLevel();
   debugLogger.ensureFileLogging();
 
-  const EnvironmentManager = require("../environment");
   const WindowManager = require("../windowManager");
   const DatabaseManager = require("../database");
   const ClipboardManager = require("../clipboard");
@@ -38,9 +42,6 @@ function bootstrapManagers() {
   const WindowsKeyManager = require("../windowsKeyManager");
   const IPCHandlers = require("../ipcHandlers");
 
-  const environmentManager = new EnvironmentManager();
-  debugLogger.refreshLogLevel();
-
   const windowManager = new WindowManager();
   const hotkeyManager = windowManager.hotkeyManager;
   const databaseManager = new DatabaseManager();
@@ -50,6 +51,10 @@ function bootstrapManagers() {
   const parakeetManager = new ParakeetManager();
   const trayManager = new TrayManager({ databaseManager, clipboardManager });
   const updateManager = new UpdateManager();
+  updateManager.setWindowProvider(() => ({
+    mainWindow: windowManager.mainWindow,
+    controlPanelWindow: windowManager.controlPanelWindow,
+  }));
   const globeKeyManager = new GlobeKeyManager();
   const windowsKeyManager = new WindowsKeyManager();
 
@@ -118,4 +123,3 @@ module.exports = {
   bootstrapManagers,
   setupProductionPath,
 };
-

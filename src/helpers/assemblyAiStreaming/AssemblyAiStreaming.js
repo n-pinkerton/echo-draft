@@ -50,6 +50,8 @@ class AssemblyAiStreaming {
     this.rewarmTimer = null;
     this.keepAliveInterval = null;
     this.isDisconnecting = false;
+    this.sessionStartedAt = null;
+    this.limitErrorRaised = false;
 
     this.audioStats = createAudioStats();
   }
@@ -128,8 +130,8 @@ class AssemblyAiStreaming {
     return await disconnectSession(this, terminate);
   }
 
-  cleanup() {
-    return cleanupSession(this);
+  cleanup(reason) {
+    return cleanupSession(this, reason);
   }
 
   cleanupAll() {
@@ -145,4 +147,3 @@ class AssemblyAiStreaming {
 }
 
 module.exports = AssemblyAiStreaming;
-

@@ -14,12 +14,13 @@ export interface ElectronAPIUpdates {
   getAppVersion: () => Promise<AppVersionResult>;
   getUpdateStatus: () => Promise<UpdateStatusResult>;
   getUpdateInfo: () => Promise<UpdateInfoResult | null>;
+  openVerifiedReleases: () => Promise<{ success: boolean }>;
 
   // Update event listeners
+  onCheckingForUpdate: (callback: (event: any) => void) => () => void;
   onUpdateAvailable: (callback: (event: any, info: any) => void) => () => void;
   onUpdateNotAvailable: (callback: (event: any, info: any) => void) => () => void;
   onUpdateDownloaded: (callback: (event: any, info: any) => void) => () => void;
   onUpdateDownloadProgress: (callback: (event: any, progressObj: any) => void) => () => void;
   onUpdateError: (callback: (event: any, error: any) => void) => () => void;
 }
-

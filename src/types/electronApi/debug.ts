@@ -42,11 +42,11 @@ export interface ElectronAPIDebugLogging {
     success: boolean;
     skipped?: boolean;
     reason?: string;
-    audioDir?: string;
-    filePath?: string;
     bytes?: number;
     kept?: number;
     deleted?: number;
+    bytesKept?: number;
+    bytesDeleted?: number;
     error?: string;
   }>;
   openLogsFolder: () => Promise<{ success: boolean; error?: string }>;

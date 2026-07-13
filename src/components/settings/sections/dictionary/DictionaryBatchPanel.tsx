@@ -19,6 +19,7 @@ type Props = {
     parsedCount: number;
     uniqueWordsCount: number;
     duplicatesRemoved: number;
+    invalidEntriesRemoved: number;
   };
   importedDictionaryFileName: string;
 
@@ -79,7 +80,7 @@ export default function DictionaryBatchPanel(props: Props) {
           <Textarea
             value={dictionaryBatchText}
             onChange={(e) => onDictionaryBatchTextChange(e.target.value)}
-            placeholder="Paste one word or phrase per line. Commas and semicolons are also supported."
+            placeholder="Paste one word, name, or identifier per line. Commas and semicolons are also supported."
             className="min-h-[110px] text-[12px] leading-relaxed dark:bg-surface-2/80 dark:border-border-subtle focus:border-primary/40 focus:ring-primary/10"
           />
 
@@ -125,7 +126,7 @@ export default function DictionaryBatchPanel(props: Props) {
           <div className="rounded-md border border-border/40 dark:border-border-subtle bg-muted/40 dark:bg-surface-2/70 px-3 py-2 space-y-1">
             <p className="text-[10px] text-muted-foreground/80">
               {preview.parsedCount > 0
-                ? `Preview: ${preview.uniqueWordsCount} unique words (${preview.duplicatesRemoved} duplicates removed).`
+                ? `Preview: ${preview.uniqueWordsCount} valid unique terms (${preview.duplicatesRemoved} duplicates and ${preview.invalidEntriesRemoved} unsupported entries removed).`
                 : "Preview: Add words to see import counts."}
             </p>
             {importedDictionaryFileName && (
@@ -142,4 +143,3 @@ export default function DictionaryBatchPanel(props: Props) {
     </SettingsPanel>
   );
 }
-

@@ -1,4 +1,8 @@
 const { ICON_ASSET_PATHS } = require("./src/config/iconPaths.cjs");
+const {
+  WINDOWS_CODE_SIGNING_ENABLED,
+  WINDOWS_UPDATE_PUBLISHERS,
+} = require("./src/config/updateTrust");
 
 module.exports = {
   appId: "com.herotools.echodraft",
@@ -24,6 +28,7 @@ module.exports = {
     "src/hooks/**/*",
     "src/models/**/*",
     "src/services/localReasoningBridge.js",
+    "src/shared/**/*",
     "src/types/**/*",
     "src/utils.js",
     "src/utils/**/*",
@@ -131,7 +136,10 @@ module.exports = {
   win: {
     target: ["nsis", "portable"],
     icon: ICON_ASSET_PATHS.windows,
-    signAndEditExecutable: false,
+    signAndEditExecutable: WINDOWS_CODE_SIGNING_ENABLED,
+    ...(WINDOWS_UPDATE_PUBLISHERS.length > 0
+      ? { publisherName: [...WINDOWS_UPDATE_PUBLISHERS] }
+      : {}),
   },
   linux: {
     target: ["AppImage", "deb", "rpm", "tar.gz"],

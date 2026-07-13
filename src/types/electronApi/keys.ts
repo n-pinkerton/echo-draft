@@ -2,11 +2,17 @@ import type { LocalTranscriptionProvider } from "../electron";
 
 export interface ElectronAPIKeys {
   // API key management
-  getOpenAIKey: () => Promise<string>;
+  getApiKeyStatus: () => Promise<{
+    openai: boolean;
+    anthropic: boolean;
+    gemini: boolean;
+    groq: boolean;
+    mistral: boolean;
+    customTranscription: boolean;
+    customReasoning: boolean;
+  }>;
   saveOpenAIKey: (key: string) => Promise<{ success: boolean }>;
-  createProductionEnvFile: (key: string) => Promise<void>;
-  getAnthropicKey: () => Promise<string | null>;
-  saveAnthropicKey: (key: string) => Promise<void>;
+  saveAnthropicKey: (key: string) => Promise<{ success: boolean }>;
   saveAllKeysToEnv: () => Promise<{ success: boolean; path: string }>;
   syncStartupPreferences: (prefs: {
     useLocalWhisper: boolean;
@@ -17,31 +23,78 @@ export interface ElectronAPIKeys {
   }) => Promise<void>;
 
   // Gemini API key management
-  getGeminiKey: () => Promise<string | null>;
-  saveGeminiKey: (key: string) => Promise<void>;
+  saveGeminiKey: (key: string) => Promise<{ success: boolean }>;
 
   // Groq API key management
-  getGroqKey: () => Promise<string | null>;
-  saveGroqKey: (key: string) => Promise<void>;
+  saveGroqKey: (key: string) => Promise<{ success: boolean }>;
 
   // Mistral API key management
-  getMistralKey: () => Promise<string | null>;
-  saveMistralKey: (key: string) => Promise<void>;
-  proxyMistralTranscription: (
-    data: {
+  saveMistralKey: (key: string) => Promise<{ success: boolean }>;
+  // Custom endpoint API keys
+  saveCustomTranscriptionKey?: (key: string) => Promise<{ success: boolean }>;
+  saveCustomReasoningKey?: (key: string) => Promise<{ success: boolean }>;
+  approveCustomProviderEndpoint?: (
+    purpose: "transcription" | "reasoning",
+    endpoint: string
+  ) => Promise<{ success: boolean; endpoint?: string; cancelled?: boolean }>;
+  providerCleanupRequest?: (
+    payload: {
+      provider: string;
+      endpoint: string;
+      operation: {
+        kind: "cleanup";
+        variant: "responses" | "chat-completions" | "gemini-generate";
+        model: string;
+        userPrompt: string;
+        cleanupPromptMode?: "standard" | "preservation-first" | "strict-preservation";
+        language?: string;
+        maxOutputTokens: number;
+        temperature?: number;
+        reasoningEffort?: string;
+      };
+    },
+    requestId: string,
+    onProgress?: (progress: {
+      generatedChars: number;
+      generatedWords: number;
+      isComplete: boolean;
+    }) => void
+  ) => Promise<{
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+    timings?: { timeToHeadersMs: number; bodyReadDurationMs: number };
+  }>;
+  providerModelsRequest?: (
+    payload: {
+      purpose: "transcription" | "reasoning";
+      endpoint: string;
+    },
+    requestId: string,
+    onProgress?: (progress: {
+      generatedChars: number;
+      generatedWords: number;
+      isComplete: boolean;
+    }) => void
+  ) => Promise<{
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+    timings?: { timeToHeadersMs: number; bodyReadDurationMs: number };
+  }>;
+  providerTranscriptionRequest?: (
+    payload: {
+      provider: string;
+      endpoint: string;
       audioBuffer: ArrayBuffer;
-      model?: string;
+      mimeType?: string;
+      model: string;
       language?: string;
+      stream?: boolean;
       contextBias?: string[];
     },
     requestId: string
-  ) => Promise<{ text: string }>;
-
-  // Custom endpoint API keys
-  getCustomTranscriptionKey?: () => Promise<string | null>;
-  saveCustomTranscriptionKey?: (key: string) => Promise<void>;
-  getCustomReasoningKey?: () => Promise<string | null>;
-  saveCustomReasoningKey?: (key: string) => Promise<void>;
+  ) => Promise<{ status: number; headers: Record<string, string>; body: string }>;
 
   // Dictation key persistence (file-based for reliable startup)
   getDictationKey?: () => Promise<string | null>;

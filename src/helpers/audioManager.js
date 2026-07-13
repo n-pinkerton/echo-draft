@@ -11,6 +11,9 @@ import {
   stopStreamingRecording,
   warmupStreamingConnection,
 } from "./audio/streaming/assemblyAiStreamingController";
+import {
+  cancelStreamingStartup as cancelStreamingStartupImpl,
+} from "./audio/streaming/assemblyAiStreamingStart";
 import { StreamingWorkletManager } from "./audio/streaming/streamingWorkletManager";
 import {
   cancelNonStreamingRecording,
@@ -113,6 +116,9 @@ class AudioManager {
     };
     window.addEventListener("api-key-changed", this._onApiKeyChanged);
     this.isStreaming = false;
+    this.streamingStartInProgress = false;
+    this.streamingStartAbortController = null;
+    this.streamingStartupGeneration = 0;
     this.streamingStopPromise = null;
     this.streamingMainStopPromise = null;
     this.pendingNonStreamingStopContext = null;
@@ -273,11 +279,13 @@ class AudioManager {
   }
 
   stopRecording(stopContext = null) {
-    return stopNonStreamingRecording(this, stopContext);
+    const startupCancelled = this.cancelStreamingStartup();
+    return stopNonStreamingRecording(this, stopContext) || startupCancelled;
   }
 
   cancelRecording() {
-    return cancelNonStreamingRecording(this);
+    const startupCancelled = this.cancelStreamingStartup();
+    return cancelNonStreamingRecording(this) || startupCancelled;
   }
 
   cancelProcessing() {
@@ -369,6 +377,10 @@ class AudioManager {
     return await startStreamingRecording(this, context);
   }
 
+  cancelStreamingStartup(reason) {
+    return cancelStreamingStartupImpl(this, reason);
+  }
+
   async stopStreamingRecording() {
     return await stopStreamingRecording(this);
   }
@@ -386,6 +398,7 @@ class AudioManager {
   }
 
   cleanup() {
+    this.cancelStreamingStartup();
     this.activeProcessingAbortController?.abort();
     this.activeProcessingAbortController = null;
     if (this.isStreaming) {

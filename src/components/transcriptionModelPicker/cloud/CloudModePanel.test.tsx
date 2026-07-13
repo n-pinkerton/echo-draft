@@ -53,10 +53,26 @@ describe("CloudModePanel", () => {
       />
     );
 
-    expect(screen.getByText("Endpoint URL")).toBeInTheDocument();
-    expect(screen.getByText("API Key (Optional)")).toBeInTheDocument();
-    expect(screen.getByText("Model")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Endpoint URL" })).toBeInTheDocument();
+    expect(screen.getByLabelText("API Key (Optional)")).toHaveAttribute("type", "password");
+    expect(screen.getByRole("textbox", { name: "Model" })).toBeInTheDocument();
     expect(screen.queryByText("Get key →")).not.toBeInTheDocument();
   });
-});
 
+  it("shows endpoint rejection feedback independently of any saved value", () => {
+    render(
+      <CloudModePanel
+        {...baseProps}
+        selectedCloudProvider="custom"
+        cloudTranscriptionBaseUrl="http://remote.example/v1"
+        customEndpointError="Enter a valid HTTPS endpoint."
+      />
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a valid HTTPS endpoint.");
+    expect(screen.getByRole("textbox", { name: "Endpoint URL" })).toHaveAttribute(
+      "aria-invalid",
+      "true"
+    );
+  });
+});

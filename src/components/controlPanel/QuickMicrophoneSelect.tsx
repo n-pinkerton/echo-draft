@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Mic, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { useAudioInputDevices } from "../../hooks/useAudioInputDevices";
+import { getMicrophoneLabelPermissionGuidance } from "../../utils/microphonePermissionGuidance";
 import { Button } from "../ui/button";
 
 const AUTOMATIC_MIC = "__automatic_builtin__";
@@ -79,7 +80,7 @@ export default function QuickMicrophoneSelect({
           className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground outline-none transition-colors focus:border-primary focus:ring-[3px] focus:ring-primary/15"
         >
           <option value={AUTOMATIC_MIC}>Automatic (prefer built-in)</option>
-          <option value={SYSTEM_DEFAULT_MIC}>Windows default microphone</option>
+          <option value={SYSTEM_DEFAULT_MIC}>System default microphone</option>
           {!preferBuiltInMic && selectedMicDeviceId && !selectedDeviceAvailable && (
             <option value={selectedMicDeviceId}>
               {hasLoaded
@@ -111,9 +112,7 @@ export default function QuickMicrophoneSelect({
 
       {(hasHiddenLabels || error) && (
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground md:basis-full">
-          <span role="status">
-            {error || "Windows is hiding microphone names until access is granted."}
-          </span>
+          <span role="status">{error || getMicrophoneLabelPermissionGuidance()}</span>
           {hasHiddenLabels && (
             <Button
               type="button"
@@ -140,7 +139,7 @@ export default function QuickMicrophoneSelect({
               <p className="font-semibold text-warning-text">Selected microphone disconnected</p>
               <p className="mt-0.5 leading-relaxed text-muted-foreground">
                 EchoDraft is temporarily using{" "}
-                {systemDefaultLabel || "the Windows default microphone"}. Your saved microphone will
+                {systemDefaultLabel || "the system default microphone"}. Your saved microphone will
                 be tried again when it reconnects.
               </p>
             </div>
@@ -153,7 +152,7 @@ export default function QuickMicrophoneSelect({
               className="h-8 px-2.5 text-xs"
               onClick={() => onDeviceSelect("")}
             >
-              Switch to Windows default
+              Switch to system default
             </Button>
             {onOpenMicrophoneSettings && (
               <Button

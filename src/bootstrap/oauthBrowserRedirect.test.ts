@@ -13,10 +13,19 @@ describe("oauthBrowserRedirect", () => {
     expect(handleOAuthBrowserRedirect()).toBe(false);
   });
 
+  it("returns false when a verifier arrives without main-issued OAuth state", () => {
+    window.history.pushState({}, "", `/?neon_auth_session_verifier=${"v".repeat(32)}`);
+    expect(handleOAuthBrowserRedirect()).toBe(false);
+  });
+
   it("returns false when running inside Electron (window.electronAPI defined)", () => {
     const original = (window as any).electronAPI;
     (window as any).electronAPI = {};
-    window.history.pushState({}, "", "/?neon_auth_session_verifier=test");
+    window.history.pushState(
+      {},
+      "",
+      `/?neon_auth_session_verifier=${"v".repeat(32)}&oauth_state=${"s".repeat(43)}`
+    );
     try {
       expect(handleOAuthBrowserRedirect()).toBe(false);
     } finally {
@@ -24,4 +33,3 @@ describe("oauthBrowserRedirect", () => {
     }
   });
 });
-

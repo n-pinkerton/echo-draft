@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -108,5 +108,112 @@ describe("TelemetryFileLogger", () => {
     expect(content.length).toBe(2);
     expect(JSON.parse(content[0])).toMatchObject({ type: "header", marker: "recreate" });
     expect(JSON.parse(content[1])).toMatchObject({ type: "event", n: 2 });
+  });
+
+  it("keeps sustained maximum-rate logging within per-file, directory, and retention caps", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-telemetry-bounded-"));
+    const logger = new TelemetryFileLogger({
+      logsDir: tempDir,
+      filePrefix: "echodraft-test",
+      getNow: () => new Date(2026, 1, 12, 12, 0, 0),
+      getHeaderRecord: () => ({ type: "header" }),
+      maxFileBytes: 320,
+      maxTotalBytes: 800,
+      maxFiles: 3,
+      maxRecordBytes: 160,
+      maxPendingBytes: 1024 * 1024,
+      // This test exercises accounting under hundreds of intentionally tiny
+      // rotations. Native Windows identity/deletion is covered separately.
+      platform: "linux",
+    });
+    logger.setEnabled(true);
+
+    for (let index = 0; index < 1000; index += 1) {
+      logger.write({ type: "event", index, message: "x".repeat(48) });
+    }
+    await logger.closeAndWait();
+
+    await vi.waitFor(() => {
+      const files = fs.readdirSync(tempDir).filter((name) => name.endsWith(".jsonl"));
+      const sizes = files.map((name) => fs.statSync(path.join(tempDir, name)).size);
+      expect(files.length).toBeLessThanOrEqual(3);
+      expect(sizes.every((size) => size <= 320)).toBe(true);
+      expect(sizes.reduce((sum, size) => sum + size, 0)).toBeLessThanOrEqual(800);
+    });
+  });
+
+  it("fails closed without throwing when the stream reports a disk-full error", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-telemetry-disk-full-"));
+    const logger = new TelemetryFileLogger({
+      logsDir: tempDir,
+      filePrefix: "echodraft-test",
+      getNow: () => new Date(2026, 1, 12, 12, 0, 0),
+    });
+    logger.setEnabled(true);
+    expect(logger.write({ type: "event", index: 1 })).toBe(true);
+
+    expect(() =>
+      logger.stream.emit("error", Object.assign(new Error("disk full"), { code: "ENOSPC" }))
+    ).not.toThrow();
+    expect(logger.write({ type: "event", index: 2 })).toBe(false);
+    expect(logger.stream).toBeNull();
+  });
+
+  it("rejects a pre-existing linked logs folder without writing outside it", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-telemetry-link-parent-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-telemetry-link-outside-"));
+    const logsDir = path.join(parent, "logs");
+    try {
+      fs.symlinkSync(outside, logsDir, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      fs.rmSync(parent, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+      return;
+    }
+
+    const logger = new TelemetryFileLogger({ logsDir, filePrefix: "echodraft-test" });
+    logger.setEnabled(true);
+    expect(logger.write({ marker: "SENSITIVE_LINK_MARKER" })).toBe(false);
+    logger.setEnabled(false);
+
+    expect(fs.readdirSync(outside)).toEqual([]);
+    fs.rmSync(parent, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("writes no sensitive record when the retained logs pathname is swapped immediately before open", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-telemetry-swap-"));
+    const logsDir = path.join(parent, "logs");
+    const displaced = path.join(parent, "retained-logs");
+    fs.mkdirSync(logsDir);
+    const realOpenSync = fs.openSync.bind(fs);
+    let swapped = false;
+    vi.spyOn(fs, "openSync").mockImplementation(((target: fs.PathLike, flags: any, mode?: any) => {
+      if (!swapped && String(target).endsWith(".jsonl")) {
+        fs.renameSync(logsDir, displaced);
+        fs.mkdirSync(logsDir);
+        swapped = true;
+      }
+      return realOpenSync(target, flags, mode);
+    }) as typeof fs.openSync);
+
+    const logger = new TelemetryFileLogger({
+      logsDir,
+      filePrefix: "echodraft-test",
+      getNow: () => new Date(2026, 1, 12, 12, 0, 0),
+    });
+    logger.setEnabled(true);
+    expect(logger.write({ marker: "SENSITIVE_SWAP_MARKER" })).toBe(false);
+    logger.setEnabled(false);
+
+    expect(swapped).toBe(true);
+    for (const directory of [logsDir, displaced]) {
+      for (const name of fs.readdirSync(directory)) {
+        expect(fs.readFileSync(path.join(directory, name), "utf8")).not.toContain(
+          "SENSITIVE_SWAP_MARKER"
+        );
+      }
+    }
+    fs.rmSync(parent, { recursive: true, force: true });
   });
 });

@@ -4,12 +4,24 @@ export interface ElectronAPIWindow {
   // Basic window operations
   pasteText: (
     text: string,
-    options?: { fromStreaming?: boolean; insertionTarget?: InsertionTargetSnapshot | null }
+    options?: {
+      fromStreaming?: boolean;
+      insertionTarget?: InsertionTargetSnapshot | null;
+      sessionId?: string;
+    }
   ) => Promise<void>;
   hideWindow: () => Promise<void>;
   showDictationPanel: () => Promise<void>;
   showRecordingIndicator?: () => Promise<{ success: boolean; message?: string }>;
   showControlPanel: () => Promise<{ success: boolean }>;
+  getControlPanelShortcutStatus?: () => Promise<{
+    accelerator: string;
+    registered: boolean;
+    reason?: string | null;
+  }>;
+  onControlPanelShortcutStatusChanged?: (
+    callback: (status: { accelerator: string; registered: boolean; reason?: string | null }) => void
+  ) => () => void;
   onToggleDictation: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
   onStartDictation?: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
   onStopDictation?: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
@@ -26,4 +38,5 @@ export interface ElectronAPIWindow {
   setMainWindowInteractivity: (interactive: boolean) => Promise<void>;
 
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+  beginOAuthSession: () => Promise<{ state: string; expiresAt: number }>;
 }

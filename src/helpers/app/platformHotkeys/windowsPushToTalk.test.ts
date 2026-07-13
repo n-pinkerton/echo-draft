@@ -14,9 +14,16 @@ const createPushHarness = () => {
   windowsKeyManager.start = vi.fn();
   windowsKeyManager.stop = vi.fn();
   let sessionCounter = 0;
+  const controlFrame = { url: "file:///app/index.html?view=control-panel" };
+  const controlSender = { mainFrame: controlFrame, getURL: () => controlFrame.url };
+  const trustedControlEvent = { sender: controlSender, senderFrame: controlFrame };
   const windowManager = {
     mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
-    controlPanelWindow: null,
+    controlPanelWindow: {
+      __echoDraftTrustedUrl: controlFrame.url,
+      webContents: controlSender,
+      isDestroyed: () => false,
+    },
     getActivationMode: () => "push",
     getCurrentClipboardHotkey: () => "F9",
     shouldUseWindowsNativeListener: () => true,
@@ -40,12 +47,26 @@ const createPushHarness = () => {
     debugLogger: { debug: vi.fn(), warn: vi.fn() },
     platform: "win32",
   });
-  return { controller, ipcMain, windowManager, windowsKeyManager };
+  return { controller, ipcMain, trustedControlEvent, windowManager, windowsKeyManager };
 };
 
 describe("registerWindowsPushToTalk", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("ignores untrusted renderer refresh events and accepts the control panel", () => {
+    vi.useFakeTimers();
+    const { controller, ipcMain, trustedControlEvent, windowsKeyManager } = createPushHarness();
+
+    ipcMain.emit("activation-mode-changed", {}, "push");
+    ipcMain.emit("hotkey-changed", {}, "F8");
+    expect(windowsKeyManager.start).not.toHaveBeenCalled();
+
+    ipcMain.emit("activation-mode-changed", trustedControlEvent, "push");
+    expect(windowsKeyManager.start).toHaveBeenCalledTimes(2);
+
+    controller.dispose();
   });
 
   it("clears stale route readiness and restarts a listener after a non-zero exit", async () => {

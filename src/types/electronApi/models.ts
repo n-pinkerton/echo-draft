@@ -13,12 +13,25 @@ import type {
   WhisperModelsListResult,
 } from "../electron";
 
+export interface CleanupReasoningIpcOptions {
+  maxTokens?: number;
+  temperature?: number;
+  contextSize?: number;
+  cleanupPromptMode?: "standard" | "preservation-first" | "strict-preservation";
+  reasoningEffort?: "none" | "low" | "medium";
+  language?: string;
+}
+
 export interface ElectronAPIModels {
   // Audio
   onNoAudioDetected: (callback: (event: any, data?: any) => void) => () => void;
 
   // Whisper operations (whisper.cpp)
-  transcribeLocalWhisper: (audioBlob: Blob | ArrayBuffer, options?: any) => Promise<any>;
+  transcribeLocalWhisper: (
+    audioBlob: Blob | ArrayBuffer,
+    options: { model: string; language?: string; dictionaryEntries?: string[] },
+    requestId: string
+  ) => Promise<any>;
   checkWhisperInstallation: () => Promise<WhisperCheckResult>;
   downloadWhisperModel: (modelName: string) => Promise<WhisperModelResult>;
   onWhisperDownloadProgress: (
@@ -82,7 +95,7 @@ export interface ElectronAPIModels {
     text: string,
     modelId: string,
     agentName: string | null,
-    config: any,
+    config: CleanupReasoningIpcOptions,
     requestId: string
   ) => Promise<{ success: boolean; text?: string; error?: string; code?: string }>;
   checkLocalReasoningAvailable: () => Promise<boolean>;
@@ -92,7 +105,7 @@ export interface ElectronAPIModels {
     text: string,
     modelId: string,
     agentName: string | null,
-    config: any,
+    config: CleanupReasoningIpcOptions,
     requestId: string
   ) => Promise<{ success: boolean; text?: string; error?: string; code?: string }>;
 

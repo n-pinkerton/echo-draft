@@ -89,8 +89,8 @@ async function checkStageAndEchoGuards(dictation, record) {
       indicatorWindow?.focusable === false &&
       indicatorWindow?.interactive === false &&
       indicatorWindow?.alwaysOnTop === true &&
-      indicatorWindow?.bounds?.width === 210 &&
-      indicatorWindow?.bounds?.height === 64
+      indicatorWindow?.bounds?.width === 260 &&
+      indicatorWindow?.bounds?.height === 72
   );
   record(
     "Recording indicator renders click-through without taking focus",
@@ -114,15 +114,40 @@ async function checkStageAndEchoGuards(dictation, record) {
     stageTranscribing.matched,
     JSON.stringify(stageTranscribing)
   );
-  const hiddenIndicatorWindow = await waitForEvaluation(
+  const processingIndicatorState = await waitForEvaluation(
     dictation,
-    `window.electronAPI.e2eGetMainWindowState()`,
-    (value) => value?.available === true && value?.visible === false
+    `(async () => {
+      const indicator = document.querySelector('[data-testid="dictation-status-indicator"]');
+      const rect = indicator?.getBoundingClientRect();
+      const indicatorWindow = await window.electronAPI.e2eGetMainWindowState();
+      return {
+        indicatorUi: {
+          found: Boolean(indicator),
+          visible: Boolean(rect && rect.width > 0 && rect.height > 0),
+          stage: indicator?.getAttribute("data-stage"),
+          hasTranscribingLabel: indicator?.textContent?.includes("Transcribing") === true
+        },
+        indicatorWindow
+      };
+    })()`,
+    ({ indicatorUi, indicatorWindow } = {}) =>
+      indicatorUi?.found === true &&
+      indicatorUi?.visible === true &&
+      indicatorUi?.stage === "transcribing" &&
+      indicatorUi?.hasTranscribingLabel === true &&
+      indicatorWindow?.available === true &&
+      indicatorWindow?.visible === true &&
+      indicatorWindow?.focused === false &&
+      indicatorWindow?.focusable === false &&
+      indicatorWindow?.interactive === false &&
+      indicatorWindow?.alwaysOnTop === true &&
+      indicatorWindow?.bounds?.width === 260 &&
+      indicatorWindow?.bounds?.height === 72
   );
   record(
-    "Recording indicator hides when microphone capture ends",
-    hiddenIndicatorWindow.matched,
-    JSON.stringify(hiddenIndicatorWindow)
+    "Processing indicator replaces the live microphone state without taking focus",
+    processingIndicatorState.matched,
+    JSON.stringify(processingIndicatorState)
   );
 
   await dictation.eval(`

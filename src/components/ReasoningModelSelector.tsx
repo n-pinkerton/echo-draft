@@ -12,6 +12,7 @@ import {
   type CloudModelOption,
   useCustomEndpointModels,
 } from "./reasoningModelSelector/customEndpointModels";
+import type { CustomEndpointSetter } from "../types/customEndpoint";
 
 const CLOUD_PROVIDER_IDS = ["openai", "anthropic", "gemini", "groq", "custom"] as const;
 
@@ -24,7 +25,7 @@ interface ReasoningModelSelectorProps {
   localReasoningProvider: string;
   setLocalReasoningProvider: (provider: string) => void;
   cloudReasoningBaseUrl: string;
-  setCloudReasoningBaseUrl: (value: string) => void;
+  setCloudReasoningBaseUrl: CustomEndpointSetter;
   openaiApiKey: string;
   setOpenaiApiKey: (key: string) => void;
   anthropicApiKey: string;

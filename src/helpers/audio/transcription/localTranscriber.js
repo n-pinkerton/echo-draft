@@ -1,6 +1,10 @@
 import { getBaseLanguageCode, validateLanguageForModel } from "../../../utils/languageSupport";
 import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
-import { getCustomDictionaryPrompt } from "./customDictionary";
+import { getCustomDictionaryArray } from "./customDictionary";
+import {
+  areTranscriptionsEquivalent,
+  classifyDictionaryPromptEcho,
+} from "./dictionaryPromptEcho";
 import {
   createTranscriptionCancelledError,
   isTranscriptionCancelled,
@@ -77,9 +81,9 @@ export class LocalTranscriber {
         options.language = language;
       }
 
-      const dictionaryPrompt = getCustomDictionaryPrompt();
-      if (dictionaryPrompt) {
-        options.initialPrompt = dictionaryPrompt;
+      const dictionaryEntries = getCustomDictionaryArray();
+      if (dictionaryEntries.length > 0) {
+        options.dictionaryEntries = dictionaryEntries;
       }
 
       const transcriptionStart = performance.now();
@@ -87,12 +91,44 @@ export class LocalTranscriber {
         window.electronAPI.transcribeLocalWhisper(arrayBuffer, options, requestId)
       );
       throwIfTranscriptionCancelled(signal);
-      timings.transcriptionProcessingDurationMs = Math.round(
-        performance.now() - transcriptionStart
-      );
-
       if (result.success && result.text) {
-        const rawText = result.text;
+        let rawText = result.text;
+        const echoClassification =
+          dictionaryEntries.length > 0
+            ? classifyDictionaryPromptEcho(rawText, dictionaryEntries)
+            : "none";
+
+        if (echoClassification === "exact-short") {
+          // A short exact match could be either real speech or a prompt echo. Confirm it once with
+          // the same local model and audio but no dictionary prompt before allowing fallback.
+          const confirmationOptions = { model };
+          if (language) confirmationOptions.language = language;
+          const confirmation = await invokeCancelableIpc(signal, (requestId) =>
+            window.electronAPI.transcribeLocalWhisper(
+              arrayBuffer,
+              confirmationOptions,
+              requestId
+            )
+          );
+          throwIfTranscriptionCancelled(signal);
+          if (
+            !confirmation.success ||
+            !confirmation.text ||
+            !areTranscriptionsEquivalent(rawText, confirmation.text)
+          ) {
+            throw new Error(
+              "Local transcription returned only dictionary hints. Please check the microphone and try again."
+            );
+          }
+          rawText = confirmation.text;
+        } else if (echoClassification === "likely") {
+          throw new Error(
+            "Local transcription returned only dictionary hints. Please check the microphone and try again."
+          );
+        }
+        timings.transcriptionProcessingDurationMs = Math.round(
+          performance.now() - transcriptionStart
+        );
         let cleanedText = rawText;
         let cleanup = null;
 

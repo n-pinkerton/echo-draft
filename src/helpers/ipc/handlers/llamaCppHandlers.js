@@ -1,5 +1,10 @@
-function registerLlamaCppHandlers({ ipcMain }) {
-  ipcMain.handle("llama-cpp-check", async () => {
+const { requireTrustedRenderer } = require("../trustedRenderer");
+
+function registerLlamaCppHandlers({ ipcMain }, { windowManager }) {
+  const requireControlPanel = (event) =>
+    requireTrustedRenderer(event, windowManager, ["control-panel"]);
+  ipcMain.handle("llama-cpp-check", async (event) => {
+    requireControlPanel(event);
     try {
       const llamaCppInstaller = require("../../llamaCppInstaller").default;
       const isInstalled = await llamaCppInstaller.isInstalled();
@@ -10,7 +15,8 @@ function registerLlamaCppHandlers({ ipcMain }) {
     }
   });
 
-  ipcMain.handle("llama-cpp-install", async () => {
+  ipcMain.handle("llama-cpp-install", async (event) => {
+    requireControlPanel(event);
     try {
       const llamaCppInstaller = require("../../llamaCppInstaller").default;
       return await llamaCppInstaller.install();
@@ -19,7 +25,8 @@ function registerLlamaCppHandlers({ ipcMain }) {
     }
   });
 
-  ipcMain.handle("llama-cpp-uninstall", async () => {
+  ipcMain.handle("llama-cpp-uninstall", async (event) => {
+    requireControlPanel(event);
     try {
       const llamaCppInstaller = require("../../llamaCppInstaller").default;
       return await llamaCppInstaller.uninstall();
@@ -30,4 +37,3 @@ function registerLlamaCppHandlers({ ipcMain }) {
 }
 
 module.exports = { registerLlamaCppHandlers };
-

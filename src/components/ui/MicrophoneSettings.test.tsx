@@ -6,6 +6,7 @@ import QuickMicrophoneSelect from "../controlPanel/QuickMicrophoneSelect";
 import MicrophoneSettings from "./MicrophoneSettings";
 
 const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
 const mediaDevices = {
   enumerateDevices: vi.fn(),
   getUserMedia: vi.fn(),
@@ -55,6 +56,11 @@ describe("MicrophoneSettings", () => {
       Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
     } else {
       Reflect.deleteProperty(navigator, "mediaDevices");
+    }
+    if (originalPlatform) {
+      Object.defineProperty(navigator, "platform", originalPlatform);
+    } else {
+      Reflect.deleteProperty(navigator, "platform");
     }
   });
 
@@ -149,7 +155,29 @@ describe("MicrophoneSettings", () => {
     expect(screen.getByText(/saved microphone will be tried again/i)).toBeInTheDocument();
     expect(screen.getByText(/Testing System Default because/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Windows default" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch to system default" }));
     expect(onDeviceSelect).toHaveBeenCalledWith("");
+  });
+
+  it("uses platform-neutral fallback wording and macOS permission guidance", async () => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
+    mediaDevices.enumerateDevices.mockResolvedValue([
+      { kind: "audioinput", deviceId: "unknown-mic", label: "" },
+    ]);
+
+    render(
+      <MicrophoneSettings
+        preferBuiltInMic={false}
+        selectedMicDeviceId="missing-usb"
+        onPreferBuiltInChange={vi.fn()}
+        onDeviceSelect={vi.fn()}
+      />
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Switch to system default" })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/macOS is hiding microphone names/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Windows default/i)).not.toBeInTheDocument();
   });
 });

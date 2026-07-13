@@ -14,7 +14,9 @@ const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
 const createEvent = (id: number) => {
   const sender = new EventEmitter() as EventEmitter & { id: number };
   sender.id = id;
-  return { sender };
+  (sender as any).getURL = () => "file:///app/index.html?view=dictation";
+  (sender as any).mainFrame = { url: (sender as any).getURL() };
+  return { sender, senderFrame: (sender as any).mainFrame };
 };
 
 describe("CancelableRequestRegistry", () => {
@@ -76,10 +78,24 @@ describe("CancelableRequestRegistry", () => {
       }),
     };
     const registry = new CancelableRequestRegistry();
-    registerCancelableRequestHandler({ ipcMain }, { registry });
+    const event = createEvent(1);
+    registerCancelableRequestHandler(
+      { ipcMain },
+      {
+        registry,
+        windowManager: {
+          mainWindow: {
+            __echoDraftTrustedUrl: (event.sender as any).getURL(),
+            webContents: event.sender,
+            isDestroyed: () => false,
+          },
+          controlPanelWindow: null,
+        },
+      }
+    );
     const handler = handlers.get("cancel-ipc-request");
 
-    expect(handler?.(createEvent(1), "invalid")).toMatchObject({
+    expect(handler?.(event, "invalid")).toMatchObject({
       success: false,
       code: "INVALID_REQUEST_ID",
     });

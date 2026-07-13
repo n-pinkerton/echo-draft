@@ -1,10 +1,7 @@
-import React, { useState, useEffect } from "react";
-import { Eye, Edit3, TestTube } from "lucide-react";
-import { AlertDialog } from "./dialog";
-import { useDialogs } from "../../hooks/useDialogs";
-import { useAgentName } from "../../utils/agentName";
-import { UNIFIED_SYSTEM_PROMPT } from "../../config/prompts";
-import { PromptStudioEditTab } from "./promptStudio/PromptStudioEditTab";
+import React, { useEffect, useState } from "react";
+import { Eye, TestTube } from "lucide-react";
+import { DEFAULT_CLEANUP_MODEL_ID, getSystemPrompt } from "../../config/prompts";
+import { ECHO_DRAFT_CLOUD_MODE, normalizeCloudMode } from "../../utils/branding";
 import { PromptStudioTestTab } from "./promptStudio/PromptStudioTestTab";
 import { PromptStudioViewTab } from "./promptStudio/PromptStudioViewTab";
 
@@ -13,95 +10,75 @@ interface PromptStudioProps {
 }
 
 export default function PromptStudio({ className = "" }: PromptStudioProps) {
-  const [activeTab, setActiveTab] = useState<"current" | "edit" | "test">("current");
-  const [editedPrompt, setEditedPrompt] = useState(UNIFIED_SYSTEM_PROMPT);
-  const [currentPrompt, setCurrentPrompt] = useState(UNIFIED_SYSTEM_PROMPT);
+  const [activeTab, setActiveTab] = useState<"current" | "test">("current");
   const [copiedPrompt, setCopiedPrompt] = useState(false);
-
-  const { alertDialog, showAlertDialog, hideAlertDialog } = useDialogs();
-  const { agentName } = useAgentName();
+  const reasoningModel = localStorage.getItem("reasoningModel") || DEFAULT_CLEANUP_MODEL_ID;
+  const preferredLanguage = localStorage.getItem("preferredLanguage") || "auto";
+  const managedByCloud =
+    localStorage.getItem("isSignedIn") === "true" &&
+    normalizeCloudMode(localStorage.getItem("cloudReasoningMode")) === ECHO_DRAFT_CLOUD_MODE;
+  const activePrompt = getSystemPrompt(
+    null,
+    undefined,
+    preferredLanguage,
+    reasoningModel,
+    "preservation-first"
+  );
 
   useEffect(() => {
-    const legacyPrompts = localStorage.getItem("customPrompts");
-    if (legacyPrompts && !localStorage.getItem("customUnifiedPrompt")) {
-      try {
-        const parsed = JSON.parse(legacyPrompts);
-        if (parsed.agent) {
-          localStorage.setItem("customUnifiedPrompt", JSON.stringify(parsed.agent));
-          localStorage.removeItem("customPrompts");
-        }
-      } catch (e) {
-        console.error("Failed to migrate legacy custom prompts:", e);
-      }
-    }
-
-    const customPrompt = localStorage.getItem("customUnifiedPrompt");
-    if (customPrompt) {
-      try {
-        const parsed = JSON.parse(customPrompt);
-        setEditedPrompt(parsed);
-        setCurrentPrompt(parsed);
-      } catch (error) {
-        console.error("Failed to load custom prompt:", error);
-      }
-    } else {
-      setCurrentPrompt(UNIFIED_SYSTEM_PROMPT);
-    }
-  }, []);
-
-  const savePrompt = () => {
-    localStorage.setItem("customUnifiedPrompt", JSON.stringify(editedPrompt));
-    setCurrentPrompt(editedPrompt);
-    showAlertDialog({
-      title: "Prompt Saved",
-      description:
-        "Your custom notes will be included below the model-specific cleanup safety prompt.",
-    });
-  };
-
-  const resetToDefault = () => {
-    setEditedPrompt(UNIFIED_SYSTEM_PROMPT);
+    // Arbitrary privileged prompt text is intentionally retired. Cleanup behavior is governed
+    // by the fixed, versioned policy shown here so dictation can never become model instructions.
+    localStorage.removeItem("customPrompts");
     localStorage.removeItem("customUnifiedPrompt");
-    setCurrentPrompt(UNIFIED_SYSTEM_PROMPT);
-    showAlertDialog({
-      title: "Reset Complete",
-      description: "Prompt has been reset to the default value.",
-    });
-  };
+  }, []);
 
   const copyText = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedPrompt(true);
     setTimeout(() => setCopiedPrompt(false), 2000);
   };
-  const isCustomPrompt = currentPrompt !== UNIFIED_SYSTEM_PROMPT;
 
   const tabs = [
     { id: "current" as const, label: "View", icon: Eye },
-    { id: "edit" as const, label: "Customize", icon: Edit3 },
     { id: "test" as const, label: "Test", icon: TestTube },
   ];
 
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex = index;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = tabs.length - 1;
+    else return;
+
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    setActiveTab(nextTab.id);
+    document.getElementById(`cleanup-policy-tab-${nextTab.id}`)?.focus();
+  };
+
   return (
     <div className={className}>
-      <AlertDialog
-        open={alertDialog.open}
-        onOpenChange={(open) => !open && hideAlertDialog()}
-        title={alertDialog.title}
-        description={alertDialog.description}
-        onOk={() => {}}
-      />
-
       {/* Tab Navigation + Content in a single panel */}
       <div className="rounded-xl border border-border/60 dark:border-border-subtle bg-card dark:bg-surface-2 overflow-hidden">
-        <div className="flex border-b border-border/40 dark:border-border-subtle">
-          {tabs.map((tab) => {
+        <div
+          className="flex border-b border-border/40 dark:border-border-subtle"
+          role="tablist"
+          aria-label="Cleanup policy"
+        >
+          {tabs.map((tab, index) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
+                id={`cleanup-policy-tab-${tab.id}`}
+                role="tab"
+                aria-selected={isActive}
+                aria-controls={`cleanup-policy-panel-${tab.id}`}
+                tabIndex={isActive ? 0 : -1}
                 onClick={() => setActiveTab(tab.id)}
+                onKeyDown={(event) => handleTabKeyDown(event, index)}
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-[12px] font-medium transition-all duration-150 border-b-2 ${
                   isActive
                     ? "border-primary text-foreground bg-primary/5 dark:bg-primary/3"
@@ -115,32 +92,30 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
           })}
         </div>
 
-        {/* ── View Tab ── */}
-        {activeTab === "current" && (
+        {/* Keep both panels mounted so every tab's aria-controls relationship stays valid. */}
+        <div
+          id="cleanup-policy-panel-current"
+          role="tabpanel"
+          aria-labelledby="cleanup-policy-tab-current"
+          hidden={activeTab !== "current"}
+        >
           <PromptStudioViewTab
-            agentName={agentName}
-            currentPrompt={currentPrompt}
-            isCustomPrompt={isCustomPrompt}
+            currentPrompt={activePrompt}
+            activeModel={reasoningModel}
+            managedByCloud={managedByCloud}
             copiedPrompt={copiedPrompt}
-            onCopyPrompt={() => copyText(currentPrompt)}
+            onCopyPrompt={() => copyText(activePrompt)}
           />
-        )}
+        </div>
 
-        {/* ── Edit Tab ── */}
-        {activeTab === "edit" && (
-          <PromptStudioEditTab
-            agentName={agentName}
-            editedPrompt={editedPrompt}
-            onEditedPromptChange={setEditedPrompt}
-            onSave={savePrompt}
-            onResetToDefault={resetToDefault}
-          />
-        )}
-
-        {/* ── Test Tab ── */}
-        {activeTab === "test" && (
-          <PromptStudioTestTab agentName={agentName} editedPrompt={editedPrompt} onCopyText={copyText} />
-        )}
+        <div
+          id="cleanup-policy-panel-test"
+          role="tabpanel"
+          aria-labelledby="cleanup-policy-tab-test"
+          hidden={activeTab !== "test"}
+        >
+          <PromptStudioTestTab managedByCloud={managedByCloud} onCopyText={copyText} />
+        </div>
       </div>
     </div>
   );

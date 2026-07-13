@@ -6,10 +6,7 @@ describe("checkReasoningAvailability", () => {
   it("returns true when any provider key is present", async () => {
     await expect(
       checkReasoningAvailability({
-        getOpenAIKey: async () => "sk-test",
-        getAnthropicKey: async () => null,
-        getGeminiKey: async () => null,
-        getGroqKey: async () => null,
+        getApiKeyStatus: async () => ({ openai: true }),
         checkLocalReasoningAvailable: async () => false,
       })
     ).resolves.toBe(true);
@@ -18,10 +15,7 @@ describe("checkReasoningAvailability", () => {
   it("returns false when no keys are present and local is unavailable", async () => {
     await expect(
       checkReasoningAvailability({
-        getOpenAIKey: async () => null,
-        getAnthropicKey: async () => undefined,
-        getGeminiKey: async () => "",
-        getGroqKey: async () => null,
+        getApiKeyStatus: async () => ({}),
         checkLocalReasoningAvailable: async () => false,
       })
     ).resolves.toBe(false);
@@ -29,10 +23,7 @@ describe("checkReasoningAvailability", () => {
 
   it("checks the selected provider instead of treating an unrelated key as available", async () => {
     const electronAPI = {
-      getOpenAIKey: async () => "sk-test",
-      getAnthropicKey: async () => null,
-      getGeminiKey: async () => null,
-      getGroqKey: async () => null,
+      getApiKeyStatus: async () => ({ openai: true }),
       checkLocalReasoningAvailable: async () => false,
     };
 
@@ -47,7 +38,7 @@ describe("checkReasoningAvailability", () => {
   it("returns false when electronAPI throws", async () => {
     await expect(
       checkReasoningAvailability({
-        getOpenAIKey: async () => {
+        getApiKeyStatus: async () => {
           throw new Error("boom");
         },
       })

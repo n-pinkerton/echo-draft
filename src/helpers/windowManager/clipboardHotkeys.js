@@ -1,26 +1,89 @@
+const {
+  getControlPanelShortcutConflict,
+  isControlPanelShortcut,
+} = require("../app/controlPanelShortcutPolicy");
+
+const CLIPBOARD_REGISTRATION_RETRY_DELAY_MS = 1_000;
+const MAX_CLIPBOARD_REGISTRATION_RETRIES = 2;
+
+function clearClipboardRegistrationRetry(manager) {
+  if (manager.clipboardHotkeyRetryTimer) {
+    clearTimeout(manager.clipboardHotkeyRetryTimer);
+    manager.clipboardHotkeyRetryTimer = null;
+  }
+}
+
+function reportPersistentClipboardRegistrationFailure(manager, failure) {
+  manager.clipboardHotkeyRegistrationFailure = failure;
+  const logger = manager.debugLogger || manager.logger;
+  logger?.error?.("Clipboard hotkey registration failed after bounded retries", {
+    hotkey: failure.hotkey,
+    attempts: failure.attempts,
+  });
+  manager.onClipboardHotkeyRegistrationFailure?.(failure);
+}
+
+function scheduleClipboardRegistrationRetry(manager, hotkey, { globalShortcut } = {}) {
+  clearClipboardRegistrationRetry(manager);
+  manager.clipboardHotkeyRetryAttempts = Number(manager.clipboardHotkeyRetryAttempts || 0);
+
+  const retry = () => {
+    manager.clipboardHotkeyRetryTimer = null;
+    manager.clipboardHotkeyRetryAttempts += 1;
+    const result = registerClipboardHotkeyInternal(manager, hotkey, {
+      globalShortcut,
+      scheduleRetry: false,
+    });
+    if (result.success) {
+      manager.clipboardHotkeyRetryAttempts = 0;
+      manager.clipboardHotkeyRegistrationFailure = null;
+      return;
+    }
+    if (manager.clipboardHotkeyRetryAttempts < MAX_CLIPBOARD_REGISTRATION_RETRIES) {
+      manager.clipboardHotkeyRetryTimer = setTimeout(retry, CLIPBOARD_REGISTRATION_RETRY_DELAY_MS);
+      return;
+    }
+    reportPersistentClipboardRegistrationFailure(manager, {
+      hotkey,
+      attempts: manager.clipboardHotkeyRetryAttempts,
+      message: result.message,
+    });
+  };
+
+  manager.clipboardHotkeyRetryTimer = setTimeout(retry, CLIPBOARD_REGISTRATION_RETRY_DELAY_MS);
+}
+
 function normalizeClipboardAccelerator(hotkey) {
   const trimmed = String(hotkey || "").trim();
   return trimmed.startsWith("Fn+") ? trimmed.slice(3) : trimmed;
 }
 
 function unregisterClipboardHotkey(manager, { globalShortcut } = {}) {
+  clearClipboardRegistrationRetry(manager);
   if (!manager.registeredClipboardAccelerator) {
     return;
   }
   try {
     globalShortcut.unregister(manager.registeredClipboardAccelerator);
   } catch {
-    // Ignore unregister errors
+    return;
   }
   manager.registeredClipboardAccelerator = null;
 }
 
-function registerClipboardHotkeyInternal(manager, hotkey, { globalShortcut } = {}) {
+function registerClipboardHotkeyInternal(
+  manager,
+  hotkey,
+  { globalShortcut, scheduleRetry = true } = {}
+) {
   if (!hotkey || !String(hotkey).trim()) {
     return { success: false, message: "Please enter a valid clipboard hotkey." };
   }
 
   const trimmedHotkey = String(hotkey).trim();
+  if (isControlPanelShortcut(trimmedHotkey)) {
+    return getControlPanelShortcutConflict();
+  }
   if (trimmedHotkey === manager.hotkeyManager.getCurrentHotkey()) {
     return {
       success: false,
@@ -28,10 +91,14 @@ function registerClipboardHotkeyInternal(manager, hotkey, { globalShortcut } = {
     };
   }
 
+  const previousHotkey = manager.currentClipboardHotkey;
+  const previousAccelerator = manager.registeredClipboardAccelerator;
   unregisterClipboardHotkey(manager, { globalShortcut });
 
   if (!manager.canRegisterClipboardWithGlobalShortcut(trimmedHotkey)) {
     manager.currentClipboardHotkey = trimmedHotkey;
+    manager.clipboardHotkeyRetryAttempts = 0;
+    manager.clipboardHotkeyRegistrationFailure = null;
     return { success: true, hotkey: trimmedHotkey };
   }
 
@@ -39,6 +106,20 @@ function registerClipboardHotkeyInternal(manager, hotkey, { globalShortcut } = {
   const callback = manager.getClipboardHotkeyCallback();
   const registered = globalShortcut.register(accelerator, callback);
   if (!registered) {
+    if (previousAccelerator && previousAccelerator !== accelerator) {
+      try {
+        if (globalShortcut.register(previousAccelerator, callback)) {
+          manager.currentClipboardHotkey = previousHotkey;
+          manager.registeredClipboardAccelerator = previousAccelerator;
+        }
+      } catch {
+        // The bounded retry below remains the recovery path.
+      }
+    }
+    if (scheduleRetry) {
+      manager.clipboardHotkeyRetryAttempts = 0;
+      scheduleClipboardRegistrationRetry(manager, trimmedHotkey, { globalShortcut });
+    }
     return {
       success: false,
       message: `Could not register "${trimmedHotkey}". It may be in use by another application.`,
@@ -47,6 +128,9 @@ function registerClipboardHotkeyInternal(manager, hotkey, { globalShortcut } = {
 
   manager.currentClipboardHotkey = trimmedHotkey;
   manager.registeredClipboardAccelerator = accelerator;
+  clearClipboardRegistrationRetry(manager);
+  manager.clipboardHotkeyRetryAttempts = 0;
+  manager.clipboardHotkeyRegistrationFailure = null;
   return { success: true, hotkey: trimmedHotkey };
 }
 
@@ -69,10 +153,7 @@ async function persistClipboardHotkey(manager, hotkey) {
   }
 }
 
-async function initializeClipboardHotkey(
-  manager,
-  { defaultHotkey, globalShortcut } = {}
-) {
+async function initializeClipboardHotkey(manager, { defaultHotkey, globalShortcut } = {}) {
   let savedHotkey = process.env.DICTATION_KEY_CLIPBOARD || "";
 
   if (!savedHotkey && manager.mainWindow && !manager.mainWindow.isDestroyed()) {
@@ -85,8 +166,7 @@ async function initializeClipboardHotkey(
     }
   }
 
-  const desiredHotkey =
-    savedHotkey && savedHotkey.trim() ? savedHotkey.trim() : defaultHotkey;
+  const desiredHotkey = savedHotkey && savedHotkey.trim() ? savedHotkey.trim() : defaultHotkey;
   const registrationResult = registerClipboardHotkeyInternal(manager, desiredHotkey, {
     globalShortcut,
   });
@@ -111,13 +191,9 @@ async function initializeClipboardHotkey(
 }
 
 async function updateClipboardHotkey(manager, hotkey, { globalShortcut } = {}) {
-  const previousHotkey = manager.currentClipboardHotkey;
   const result = registerClipboardHotkeyInternal(manager, hotkey, { globalShortcut });
 
   if (!result.success) {
-    if (previousHotkey) {
-      registerClipboardHotkeyInternal(manager, previousHotkey, { globalShortcut });
-    }
     return result;
   }
 
@@ -129,6 +205,9 @@ async function updateClipboardHotkey(manager, hotkey, { globalShortcut } = {}) {
 }
 
 module.exports = {
+  CLIPBOARD_REGISTRATION_RETRY_DELAY_MS,
+  MAX_CLIPBOARD_REGISTRATION_RETRIES,
+  clearClipboardRegistrationRetry,
   initializeClipboardHotkey,
   normalizeClipboardAccelerator,
   persistClipboardHotkey,
@@ -136,4 +215,3 @@ module.exports = {
   unregisterClipboardHotkey,
   updateClipboardHotkey,
 };
-
