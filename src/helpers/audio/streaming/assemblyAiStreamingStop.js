@@ -16,6 +16,21 @@ import { cleanupStreamingListeners } from "./assemblyAiStreamingCleanup";
 const STREAMING_WORKLET_FLUSH_TIMEOUT_MS = 1000;
 const STREAMING_POST_FLUSH_GRACE_MS = 150;
 
+const getOrStartMainStreamingTeardown = (manager) => {
+  if (manager.streamingMainStopPromise) {
+    return manager.streamingMainStopPromise;
+  }
+
+  const stopPromise = Promise.resolve()
+    .then(() => window.electronAPI.assemblyAiStreamingStop())
+    .catch((error) => {
+      logger.debug("Streaming disconnect error", { error: error.message }, "streaming");
+      return { success: false, error: error.message };
+    });
+  manager.streamingMainStopPromise = stopPromise;
+  return stopPromise;
+};
+
 const settleStreamingState = (manager) => {
   manager.isProcessing = false;
   manager.streamingContext = null;
@@ -54,10 +69,13 @@ export function stopStreamingRecording(manager) {
 
       manager.streamingAudioForwarding = false;
       manager.isStreaming = false;
-      cleanupStreamingListeners(manager);
-      settleStreamingState(manager);
-      logger.info("Streaming processing cancelled before delivery", {}, "streaming");
-      return false;
+      window.electronAPI.assemblyAiStreamingForceEndpoint?.();
+      return getOrStartMainStreamingTeardown(manager).then(() => {
+        cleanupStreamingListeners(manager);
+        settleStreamingState(manager);
+        logger.info("Streaming processing cancelled after transport teardown", {}, "streaming");
+        return false;
+      });
     })
     .finally(() => {
       if (manager.activeProcessingAbortController === controller) {
@@ -66,6 +84,7 @@ export function stopStreamingRecording(manager) {
       if (manager.streamingStopPromise === guardedPromise) {
         manager.streamingStopPromise = null;
       }
+      manager.streamingMainStopPromise = null;
     });
   manager.streamingStopPromise = guardedPromise;
   return guardedPromise;
@@ -153,13 +172,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
   throwIfTranscriptionCancelled(signal);
   const tForceEndpoint = performance.now();
 
-  const stopResult = await raceWithAbort(
-    window.electronAPI.assemblyAiStreamingStop().catch((e) => {
-      logger.debug("Streaming disconnect error", { error: e.message }, "streaming");
-      return { success: false };
-    }),
-    signal
-  );
+  const stopResult = await raceWithAbort(getOrStartMainStreamingTeardown(manager), signal);
   throwIfTranscriptionCancelled(signal);
   const tTerminate = performance.now();
 

@@ -114,6 +114,7 @@ class AudioManager {
     window.addEventListener("api-key-changed", this._onApiKeyChanged);
     this.isStreaming = false;
     this.streamingStopPromise = null;
+    this.streamingMainStopPromise = null;
     this.pendingNonStreamingStopContext = null;
     this.pendingNonStreamingStopRequestedAt = null;
     this.isStopping = false;

@@ -14,6 +14,14 @@ vi.mock("../../services/ReasoningService", () => ({
 import ReasoningService from "../../services/ReasoningService";
 import AudioManager from "../audioManager.js";
 
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+};
+
 describe("AudioManager.stopStreamingRecording", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -246,6 +254,90 @@ describe("AudioManager.stopStreamingRecording", () => {
     await expect(stopPromise).resolves.toBe(false);
     expect(onTranscriptionComplete).not.toHaveBeenCalled();
     expect((manager as any).activeProcessingAbortController).toBeNull();
+
+    manager.cleanup();
+  });
+
+  it("awaits main-process teardown before rewarming when cancelled during worklet flush", async () => {
+    vi.useFakeTimers();
+    const teardown = deferred<any>();
+    const assemblyAiStreamingStop = vi.fn(() => teardown.promise);
+    (window as any).electronAPI = {
+      assemblyAiStreamingForceEndpoint: vi.fn(),
+      assemblyAiStreamingStop,
+    };
+
+    const manager = new AudioManager();
+    const warmupStreamingConnection = vi.fn(async () => true);
+    (manager as any).shouldUseStreaming = vi.fn(() => true);
+    (manager as any).warmupStreamingConnection = warmupStreamingConnection;
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError: vi.fn(),
+      onTranscriptionComplete: vi.fn(),
+      onPartialTranscript: vi.fn(),
+      onProgress: vi.fn(),
+    });
+    manager.isStreaming = true;
+    manager.isRecording = true;
+    (manager as any).streamingAudioForwarding = true;
+    manager.streamingProcessor = {
+      port: { postMessage: vi.fn() },
+      disconnect: vi.fn(),
+    } as any;
+    manager.streamingSource = { disconnect: vi.fn() } as any;
+    manager.streamingStream = { getTracks: () => [{ stop: vi.fn() }] } as any;
+
+    const stopPromise = manager.stopStreamingRecording();
+    expect(manager.cancelProcessing()).toBe(true);
+    await vi.waitFor(() => expect(assemblyAiStreamingStop).toHaveBeenCalledOnce());
+    expect(warmupStreamingConnection).not.toHaveBeenCalled();
+
+    teardown.resolve({ success: false, terminationConfirmed: false });
+    await expect(stopPromise).resolves.toBe(false);
+    expect(assemblyAiStreamingStop).toHaveBeenCalledOnce();
+    expect(warmupStreamingConnection).toHaveBeenCalledOnce();
+
+    manager.cleanup();
+  });
+
+  it("shares and awaits an already pending main stop before cancellation settles", async () => {
+    vi.useFakeTimers();
+    const teardown = deferred<any>();
+    const assemblyAiStreamingStop = vi.fn(() => teardown.promise);
+    const onTranscriptionComplete = vi.fn();
+    (window as any).electronAPI = {
+      assemblyAiStreamingForceEndpoint: vi.fn(),
+      assemblyAiStreamingStop,
+    };
+
+    const manager = new AudioManager();
+    const warmupStreamingConnection = vi.fn(async () => true);
+    (manager as any).shouldUseStreaming = vi.fn(() => true);
+    (manager as any).warmupStreamingConnection = warmupStreamingConnection;
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError: vi.fn(),
+      onTranscriptionComplete,
+      onPartialTranscript: vi.fn(),
+      onProgress: vi.fn(),
+    });
+    manager.isStreaming = true;
+    manager.isRecording = true;
+    manager.streamingFinalText = "must not be delivered";
+
+    const stopPromise = manager.stopStreamingRecording();
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.waitFor(() => expect(assemblyAiStreamingStop).toHaveBeenCalledOnce());
+
+    expect(manager.cancelProcessing()).toBe(true);
+    expect(warmupStreamingConnection).not.toHaveBeenCalled();
+    teardown.resolve({ success: true, text: "late text", terminationConfirmed: true });
+
+    await expect(stopPromise).resolves.toBe(false);
+    expect(assemblyAiStreamingStop).toHaveBeenCalledOnce();
+    expect(onTranscriptionComplete).not.toHaveBeenCalled();
+    expect(warmupStreamingConnection).toHaveBeenCalledOnce();
 
     manager.cleanup();
   });
