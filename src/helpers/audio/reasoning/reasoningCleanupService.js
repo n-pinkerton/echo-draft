@@ -1,5 +1,10 @@
 import { normalizeCleanupModelId, sanitizeProcessedText } from "../../../config/prompts";
 import { assessCleanupFidelity, CleanupFidelityError } from "./cleanupFidelity";
+import {
+  createTranscriptionCancelledError,
+  isTranscriptionCancelled,
+  throwIfTranscriptionCancelled,
+} from "../pipeline/cancellation";
 
 const OPENAI_FIDELITY_RETRY_MODEL = "gpt-5.6-sol";
 const SOL_RESCUE_ADVISORY_REASONS = new Set([
@@ -160,9 +165,10 @@ export class ReasoningCleanupService {
    * @param {string} text
    * @param {string} model
    * @param {string|null} agentName
+   * @param {{signal?: AbortSignal}} runtime
    * @returns {Promise<{text: string, assessment: any, retryCount: number, appliedModel: string}>}
    */
-  async processWithReasoningModelResult(text, model, agentName) {
+  async processWithReasoningModelResult(text, model, agentName, runtime = {}) {
     this.logger?.logReasoning?.("CALLING_REASONING_SERVICE", {
       model,
       agentName,
@@ -171,15 +177,19 @@ export class ReasoningCleanupService {
 
     const startTime = Date.now();
     const reasoningEffort = this._getReasoningEffort();
+    const signal = runtime?.signal || null;
     let retryAttempted = false;
     let attemptedRetryModel = null;
     try {
+      throwIfTranscriptionCancelled(signal);
       const firstResult = sanitizeProcessedText(
         await this.reasoningService.processText(text, model, agentName, {
           cleanupPromptMode: "preservation-first",
           reasoningEffort,
+          ...(signal ? { signal } : {}),
         })
       );
+      throwIfTranscriptionCancelled(signal);
       const firstAssessment = assessCleanupFidelity(text, firstResult);
 
       if (firstAssessment.accepted) {
@@ -208,12 +218,15 @@ export class ReasoningCleanupService {
       const retryModel = this._getFidelityRetryModel(model);
       retryAttempted = true;
       attemptedRetryModel = retryModel;
+      throwIfTranscriptionCancelled(signal);
       const retryResult = sanitizeProcessedText(
         await this.reasoningService.processText(text, retryModel, agentName, {
           cleanupPromptMode: "strict-preservation",
           reasoningEffort,
+          ...(signal ? { signal } : {}),
         })
       );
+      throwIfTranscriptionCancelled(signal);
       const retryAssessment = assessCleanupFidelity(text, retryResult);
       const solRescueAccepted =
         retryModel === OPENAI_FIDELITY_RETRY_MODEL && canAcceptStrictSolRescue(retryAssessment);
@@ -265,6 +278,9 @@ export class ReasoningCleanupService {
         appliedModel: retryModel,
       };
     } catch (error) {
+      if (isTranscriptionCancelled(error, signal)) {
+        throw createTranscriptionCancelledError();
+      }
       if (retryAttempted && error && typeof error === "object") {
         error.cleanupRetryCount = 1;
         error.cleanupRetryModel = attemptedRetryModel;
@@ -280,8 +296,8 @@ export class ReasoningCleanupService {
     }
   }
 
-  async processWithReasoningModel(text, model, agentName) {
-    const result = await this.processWithReasoningModelResult(text, model, agentName);
+  async processWithReasoningModel(text, model, agentName, runtime = {}) {
+    const result = await this.processWithReasoningModelResult(text, model, agentName, runtime);
     return result.text;
   }
 
@@ -298,10 +314,13 @@ export class ReasoningCleanupService {
    * @param {string} text
    * @param {string} source
    * @param {boolean|null} cleanupEnabledOverride
+   * @param {{signal?: AbortSignal}} runtime
    * @returns {Promise<{text: string, cleanup: Record<string, any>}>}
    */
-  async processTranscriptionWithOutcome(text, source, cleanupEnabledOverride) {
+  async processTranscriptionWithOutcome(text, source, cleanupEnabledOverride, runtime = {}) {
     const normalizedText = typeof text === "string" ? text.trim() : "";
+    const signal = runtime?.signal || null;
+    throwIfTranscriptionCancelled(signal);
 
     this.logger?.logReasoning?.("TRANSCRIPTION_RECEIVED", {
       source,
@@ -361,6 +380,7 @@ export class ReasoningCleanupService {
     }
 
     const useReasoning = await this.isReasoningAvailable(cleanupEnabledOverride, reasoningProvider);
+    throwIfTranscriptionCancelled(signal);
     this.logger?.logReasoning?.("REASONING_CHECK", {
       useReasoning,
       reasoningModel,
@@ -389,7 +409,8 @@ export class ReasoningCleanupService {
       const result = await this.processWithReasoningModelResult(
         normalizedText,
         reasoningModel,
-        agentName
+        agentName,
+        runtime
       );
       this.logger?.logReasoning?.("REASONING_SUCCESS", {
         resultLength: result.text.length,
@@ -412,6 +433,9 @@ export class ReasoningCleanupService {
         },
       };
     } catch (error) {
+      if (isTranscriptionCancelled(error, signal)) {
+        throw createTranscriptionCancelledError();
+      }
       this.logger?.logReasoning?.("REASONING_FAILED", {
         error: error?.message || String(error),
         stack: error?.stack,
@@ -435,8 +459,13 @@ export class ReasoningCleanupService {
     }
   }
 
-  async processTranscription(text, source, cleanupEnabledOverride) {
-    const result = await this.processTranscriptionWithOutcome(text, source, cleanupEnabledOverride);
+  async processTranscription(text, source, cleanupEnabledOverride, runtime = {}) {
+    const result = await this.processTranscriptionWithOutcome(
+      text,
+      source,
+      cleanupEnabledOverride,
+      runtime
+    );
     return result.text;
   }
 }

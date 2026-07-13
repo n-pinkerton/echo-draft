@@ -33,7 +33,10 @@ export class OpenAiTranscriber {
    *   emitProgress?: (payload: any) => void,
    *   shouldApplyReasoningCleanup?: () => boolean,
    *   getCleanupEnabledOverride?: () => boolean | null,
-   *   reasoningCleanupService?: { processTranscription: Function },
+   *   reasoningCleanupService?: {
+   *     processTranscription?: Function,
+   *     processTranscriptionWithOutcome?: Function,
+   *   },
    * }} deps
    */
   constructor(deps = {}) {

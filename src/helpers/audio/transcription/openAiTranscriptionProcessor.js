@@ -1136,7 +1136,8 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
             finalRawText,
             source,
-            cleanupEnabledOverride
+            cleanupEnabledOverride,
+            { signal: externalSignal }
           );
         cleanedText = cleanupResult.text;
         cleanup = cleanupResult.cleanup;
@@ -1144,7 +1145,8 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         cleanedText = await transcriber.reasoningCleanupService.processTranscription(
           finalRawText,
           source,
-          cleanupEnabledOverride
+          cleanupEnabledOverride,
+          { signal: externalSignal }
         );
         cleanup = {
           requested: true,
@@ -1183,6 +1185,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         }
 
         const result = await window.electronAPI.transcribeLocalWhisper(arrayBuffer, options);
+        throwIfTranscriptionCancelled(externalSignal);
         if (result.success && result.text) {
           const rawText = result.text;
           if (
@@ -1193,7 +1196,8 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
               await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
                 rawText,
                 "local-fallback",
-                transcriber.getCleanupEnabledOverride?.() ?? null
+                transcriber.getCleanupEnabledOverride?.() ?? null,
+                { signal: externalSignal }
               );
             if (cleanupResult.text) {
               return {
@@ -1211,7 +1215,8 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
             const text = await transcriber.reasoningCleanupService.processTranscription(
               rawText,
               "local-fallback",
-              transcriber.getCleanupEnabledOverride?.() ?? null
+              transcriber.getCleanupEnabledOverride?.() ?? null,
+              { signal: externalSignal }
             );
             if (text) {
               return {
@@ -1227,6 +1232,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
 
         throw error;
       } catch (fallbackError) {
+        if (isTranscriptionCancelled(fallbackError, externalSignal)) {
+          throw createTranscriptionCancelledError();
+        }
         throw new Error(
           `OpenAI API failed: ${error.message}. Local fallback also failed: ${fallbackError.message}`
         );

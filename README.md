@@ -711,7 +711,7 @@ EchoDraft is designed with privacy and security in mind:
    - All platforms: Text is always copied to clipboard - use Ctrl+V (Cmd+V on macOS) to paste manually
 7. **Panel position**: If the panel appears off-screen, restart the app to reset position
 8. **Microphone uncertainty**: Open **Settings → General → Microphone** and run the 15-second level test. It starts only when clicked and releases the microphone when stopped, completed, or closed.
-9. **Slow cloud transcription**: After ten seconds EchoDraft shows the elapsed transcription time. You can cancel the active request; transient network, timeout, rate-limit, and server failures receive at most one sequential transport retry.
+9. **Slow cloud transcription or cleanup**: After ten seconds EchoDraft shows the elapsed stage time. You can cancel the active request, including supported in-flight cleanup calls and retry delays. Transient network, timeout, rate-limit, and server failures receive at most one sequential retry, and cancelled text is never delivered later.
 
 ### Debug Logs (Local)
 

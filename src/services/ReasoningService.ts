@@ -17,6 +17,7 @@ import { processWithEchoDraftProvider } from "./reasoning/providers/echoDraftPro
 import { OpenAiEndpointResolver } from "./reasoning/openaiEndpoints";
 import { checkReasoningAvailability } from "./reasoning/availability";
 import { ECHO_DRAFT_CLOUD_MODE } from "../utils/branding";
+import { raceWithAbort, throwIfAborted } from "../utils/retry";
 
 /**
  * @deprecated Use UNIFIED_SYSTEM_PROMPT from ../config/prompts instead
@@ -57,6 +58,7 @@ class ReasoningService extends BaseReasoningService {
     agentName: string | null = null,
     config: ReasoningConfig = {}
   ): Promise<string> {
+    throwIfAborted(config.signal);
     const trimmedModel = model?.trim?.() || "";
     if (!trimmedModel) {
       throw new Error("No reasoning model selected");
@@ -105,6 +107,7 @@ class ReasoningService extends BaseReasoningService {
       }
 
       result = sanitizeProcessedText(stripUntrustedTranscriptionWrapper(result));
+      throwIfAborted(config.signal);
 
       const processingTime = Date.now() - startTime;
 
@@ -140,7 +143,10 @@ class ReasoningService extends BaseReasoningService {
       throw new Error("Already processing a request");
     }
 
-    const apiKey = await this.getApiKey(isCustomProvider ? "custom" : "openai");
+    const apiKey = await raceWithAbort(
+      this.getApiKey(isCustomProvider ? "custom" : "openai"),
+      config.signal
+    );
 
     this.isProcessing = true;
 
@@ -243,7 +249,7 @@ class ReasoningService extends BaseReasoningService {
       throw new Error("Already processing a request");
     }
 
-    const apiKey = await this.getApiKey("gemini");
+    const apiKey = await raceWithAbort(this.getApiKey("gemini"), config.signal);
 
     this.isProcessing = true;
 
@@ -283,7 +289,7 @@ class ReasoningService extends BaseReasoningService {
       throw new Error("Already processing a request");
     }
 
-    const apiKey = await this.getApiKey("groq");
+    const apiKey = await raceWithAbort(this.getApiKey("groq"), config.signal);
     this.isProcessing = true;
 
     try {

@@ -8,6 +8,12 @@ import {
 } from "../../../utils/branding";
 import { getCustomDictionaryArray } from "./customDictionary";
 import { isLikelyDictionaryPromptEcho } from "./dictionaryPromptEcho";
+import { raceWithAbort } from "../../../utils/retry";
+import {
+  createTranscriptionCancelledError,
+  isTranscriptionCancelled,
+  throwIfTranscriptionCancelled,
+} from "../pipeline/cancellation";
 
 /**
  * EchoDraft cloud transcription client used by AudioManager.
@@ -43,7 +49,9 @@ export class CloudTranscriber {
     this.reasoningCleanupService = deps.reasoningCleanupService;
   }
 
-  async processWithEchoDraftCloud(audioBlob, metadata = {}) {
+  async processWithEchoDraftCloud(audioBlob, metadata = {}, runtime = {}) {
+    const signal = runtime?.signal || null;
+    throwIfTranscriptionCancelled(signal);
     if (!navigator.onLine) {
       const err = new Error("You're offline. Cloud transcription requires an internet connection.");
       err.code = "OFFLINE";
@@ -54,6 +62,7 @@ export class CloudTranscriber {
     const language = getBaseLanguageCode(localStorage.getItem("preferredLanguage"));
 
     const arrayBuffer = await audioBlob.arrayBuffer();
+    throwIfTranscriptionCancelled(signal);
     const opts = {};
     if (language) opts.language = language;
 
@@ -63,7 +72,10 @@ export class CloudTranscriber {
 
     const transcriptionStart = performance.now();
     const result = await this.withSessionRefresh(async () => {
-      const res = await window.electronAPI.cloudTranscribe(arrayBuffer, opts);
+      const res = await raceWithAbort(
+        window.electronAPI.cloudTranscribe(arrayBuffer, opts),
+        signal
+      );
       if (!res.success) {
         const err = new Error(res.error || "Cloud transcription failed");
         err.code = res.code;
@@ -71,6 +83,7 @@ export class CloudTranscriber {
       }
       return res;
     });
+    throwIfTranscriptionCancelled(signal);
     timings.transcriptionProcessingDurationMs = Math.round(performance.now() - transcriptionStart);
 
     const rawText = result.text;
@@ -103,11 +116,14 @@ export class CloudTranscriber {
       try {
         if (cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE) {
           const reasonResult = await this.withSessionRefresh(async () => {
-            const res = await window.electronAPI.cloudReason(processedText, {
-              agentName,
-              customDictionary: getCustomDictionaryArray(),
-              language: localStorage.getItem("preferredLanguage") || "auto",
-            });
+            const res = await raceWithAbort(
+              window.electronAPI.cloudReason(processedText, {
+                agentName,
+                customDictionary: getCustomDictionaryArray(),
+                language: localStorage.getItem("preferredLanguage") || "auto",
+              }),
+              signal
+            );
             if (!res.success) {
               const err = new Error(res.error || "Cloud reasoning failed");
               err.code = res.code;
@@ -150,7 +166,8 @@ export class CloudTranscriber {
             const result = await this.reasoningCleanupService.processTranscriptionWithOutcome(
               rawText,
               ECHO_DRAFT_CLOUD_SOURCE,
-              override
+              override,
+              runtime
             );
             processedText = result.text || rawText;
             cleanup = result.cleanup;
@@ -160,13 +177,15 @@ export class CloudTranscriber {
                 ? await this.reasoningCleanupService.processWithReasoningModelResult(
                     rawText,
                     reasoningModel,
-                    agentName
+                    agentName,
+                    runtime
                   )
                 : {
                     text: await this.reasoningCleanupService.processWithReasoningModel(
                       rawText,
                       reasoningModel,
-                      agentName
+                      agentName,
+                      runtime
                     ),
                     retryCount: 0,
                     assessment: { metrics: {} },
@@ -203,6 +222,9 @@ export class CloudTranscriber {
           }
         }
       } catch (reasonError) {
+        if (isTranscriptionCancelled(reasonError, signal)) {
+          throw createTranscriptionCancelledError();
+        }
         processedText = rawText;
         const managedCleanup = cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE;
         cleanup = {

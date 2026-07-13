@@ -92,6 +92,7 @@ export async function processWithOpenAiProvider({
       : Math.max(legacyCalculatedMaxTokens, calculateCleanupMaxOutputTokens(text.length));
     const requestTimeoutMs = getCleanupRequestTimeoutMs(text.length);
     const reasoningEffort = config.reasoningEffort || "none";
+    const externalSignal = config.signal;
 
     const isOlderModel = model && (model.startsWith("gpt-4") || model.startsWith("gpt-3"));
     const isCustomEndpoint = openAiBase !== API_ENDPOINTS.OPENAI_BASE;
@@ -112,115 +113,131 @@ export async function processWithOpenAiProvider({
       });
     }
 
-    const response = await withRetry(async () => {
-      let lastError: Error | null = null;
+    const response = await withRetry(
+      async () => {
+        let lastError: Error | null = null;
 
-      for (const { url: endpoint, type } of endpointCandidates) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
-        try {
-          const requestBody: any = { model };
-          const usesOpenAiReasoningControls =
-            !isCustomProvider && (model.startsWith("gpt-5") || model.includes("codex"));
-
-          if (type === "responses") {
-            requestBody.input = responsesInput;
-            requestBody.store = false;
-            requestBody.max_output_tokens = maxOutputTokens;
-            if (usesOpenAiReasoningControls) {
-              requestBody.reasoning = { effort: reasoningEffort };
-              requestBody.text = { verbosity: OPENAI_CLEANUP_TEXT_VERBOSITY };
-              requestBody.truncation = "disabled";
-            }
+        for (const { url: endpoint, type } of endpointCandidates) {
+          const controller = new AbortController();
+          let timeoutTriggered = false;
+          const handleExternalAbort = () => controller.abort(externalSignal?.reason);
+          if (externalSignal?.aborted) {
+            controller.abort(externalSignal.reason);
           } else {
-            requestBody.messages = chatMessages;
-            if (isOlderModel) {
-              requestBody.temperature = config.temperature || 0.3;
-            }
-            const usesMaxCompletionTokens = model.startsWith("gpt-5");
-            if (usesMaxCompletionTokens) {
-              requestBody.max_completion_tokens = maxOutputTokens;
+            externalSignal?.addEventListener("abort", handleExternalAbort, { once: true });
+          }
+          const timeoutId = setTimeout(() => {
+            timeoutTriggered = true;
+            controller.abort();
+          }, requestTimeoutMs);
+          try {
+            const requestBody: any = { model };
+            const usesOpenAiReasoningControls =
+              !isCustomProvider && (model.startsWith("gpt-5") || model.includes("codex"));
+
+            if (type === "responses") {
+              requestBody.input = responsesInput;
+              requestBody.store = false;
+              requestBody.max_output_tokens = maxOutputTokens;
+              if (usesOpenAiReasoningControls) {
+                requestBody.reasoning = { effort: reasoningEffort };
+                requestBody.text = { verbosity: OPENAI_CLEANUP_TEXT_VERBOSITY };
+                requestBody.truncation = "disabled";
+              }
             } else {
-              requestBody.max_tokens = maxOutputTokens;
-            }
-            if (usesOpenAiReasoningControls) {
-              requestBody.reasoning_effort = reasoningEffort;
-            }
-          }
-
-          logger.logReasoning("OPENAI_REQUEST", {
-            endpoint,
-            type,
-            model,
-            maxOutputTokens,
-            inputTextLength: text.length,
-            systemPromptLength: systemPrompt.length,
-            userPromptLength: userPrompt.length,
-            isOlderModel,
-            temperature: requestBody.temperature ?? null,
-            reasoningEffort: usesOpenAiReasoningControls ? reasoningEffort : null,
-          });
-
-          const res = await fetchFn(endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal,
-          });
-
-          if (!res.ok) {
-            const errorData = await res.json().catch(() => ({ error: res.statusText }));
-            const errorMessage =
-              errorData.error?.message || errorData.message || `OpenAI API error: ${res.status}`;
-            const errorCode = errorData.error?.code || errorData.code || null;
-
-            const isUnsupportedEndpoint =
-              type === "responses" &&
-              (res.status === 405 ||
-                (res.status === 404 &&
-                  errorCode !== "model_not_found" &&
-                  errorCode !== "invalid_model"));
-
-            if (isUnsupportedEndpoint) {
-              lastError = new Error(errorMessage);
-              rememberOpenAiPreference(openAiBase, "chat");
-              logger.logReasoning("OPENAI_ENDPOINT_FALLBACK", {
-                attemptedEndpoint: endpoint,
-                status: res.status,
-                errorCode,
-              });
-              continue;
+              requestBody.messages = chatMessages;
+              if (isOlderModel) {
+                requestBody.temperature = config.temperature || 0.3;
+              }
+              const usesMaxCompletionTokens = model.startsWith("gpt-5");
+              if (usesMaxCompletionTokens) {
+                requestBody.max_completion_tokens = maxOutputTokens;
+              } else {
+                requestBody.max_tokens = maxOutputTokens;
+              }
+              if (usesOpenAiReasoningControls) {
+                requestBody.reasoning_effort = reasoningEffort;
+              }
             }
 
-            const apiError = new Error(errorMessage) as Error & {
-              status?: number;
-              response?: { status: number };
-              code?: string | null;
-            };
-            apiError.status = res.status;
-            apiError.response = { status: res.status };
-            apiError.code = errorCode;
-            throw apiError;
-          }
+            logger.logReasoning("OPENAI_REQUEST", {
+              endpoint,
+              type,
+              model,
+              maxOutputTokens,
+              inputTextLength: text.length,
+              systemPromptLength: systemPrompt.length,
+              userPromptLength: userPrompt.length,
+              isOlderModel,
+              temperature: requestBody.temperature ?? null,
+              reasoningEffort: usesOpenAiReasoningControls ? reasoningEffort : null,
+            });
 
-          rememberOpenAiPreference(openAiBase, type);
-          return await res.json();
-        } catch (error) {
-          if ((error as Error).name === "AbortError") {
-            throw new Error(`Request timed out after ${Math.round(requestTimeoutMs / 1000)}s`);
+            const res = await fetchFn(endpoint, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+              },
+              body: JSON.stringify(requestBody),
+              signal: controller.signal,
+            });
+
+            if (!res.ok) {
+              const errorData = await res.json().catch(() => ({ error: res.statusText }));
+              const errorMessage =
+                errorData.error?.message || errorData.message || `OpenAI API error: ${res.status}`;
+              const errorCode = errorData.error?.code || errorData.code || null;
+
+              const isUnsupportedEndpoint =
+                type === "responses" &&
+                (res.status === 405 ||
+                  (res.status === 404 &&
+                    errorCode !== "model_not_found" &&
+                    errorCode !== "invalid_model"));
+
+              if (isUnsupportedEndpoint) {
+                lastError = new Error(errorMessage);
+                rememberOpenAiPreference(openAiBase, "chat");
+                logger.logReasoning("OPENAI_ENDPOINT_FALLBACK", {
+                  attemptedEndpoint: endpoint,
+                  status: res.status,
+                  errorCode,
+                });
+                continue;
+              }
+
+              const apiError = new Error(errorMessage) as Error & {
+                status?: number;
+                response?: { status: number };
+                code?: string | null;
+              };
+              apiError.status = res.status;
+              apiError.response = { status: res.status };
+              apiError.code = errorCode;
+              throw apiError;
+            }
+
+            rememberOpenAiPreference(openAiBase, type);
+            return await res.json();
+          } catch (error) {
+            if ((error as Error).name === "AbortError") {
+              if (externalSignal?.aborted) throw error;
+              if (!timeoutTriggered) throw error;
+              throw new Error(`Request timed out after ${Math.round(requestTimeoutMs / 1000)}s`);
+            }
+            lastError = error as Error;
+            throw error;
+          } finally {
+            clearTimeout(timeoutId);
+            externalSignal?.removeEventListener("abort", handleExternalAbort);
           }
-          lastError = error as Error;
-          throw error;
-        } finally {
-          clearTimeout(timeoutId);
         }
-      }
 
-      throw lastError || new Error("No OpenAI endpoint responded");
-    }, createApiRetryStrategy());
+        throw lastError || new Error("No OpenAI endpoint responded");
+      },
+      { ...createApiRetryStrategy(), signal: externalSignal }
+    );
 
     const isResponsesApi = Array.isArray((response as any)?.output);
     const isChatCompletions = Array.isArray((response as any)?.choices);

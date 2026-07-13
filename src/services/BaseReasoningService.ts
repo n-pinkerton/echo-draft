@@ -8,6 +8,7 @@ export interface ReasoningConfig {
   contextSize?: number;
   cleanupPromptMode?: CleanupPromptMode;
   reasoningEffort?: CleanupReasoningEffort;
+  signal?: AbortSignal;
 }
 
 export abstract class BaseReasoningService {

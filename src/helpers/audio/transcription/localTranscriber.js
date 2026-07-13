@@ -1,5 +1,10 @@
 import { getBaseLanguageCode, validateLanguageForModel } from "../../../utils/languageSupport";
 import { getCustomDictionaryPrompt } from "./customDictionary";
+import {
+  createTranscriptionCancelledError,
+  isTranscriptionCancelled,
+  throwIfTranscriptionCancelled,
+} from "../pipeline/cancellation";
 
 /**
  * Local transcription via IPC to the main process (Whisper.cpp and Parakeet).
@@ -13,7 +18,10 @@ export class LocalTranscriber {
    *   emitProgress?: (payload: any) => void,
    *   shouldApplyReasoningCleanup?: () => boolean,
    *   getCleanupEnabledOverride?: () => boolean | null,
-   *   reasoningCleanupService?: { processTranscription: Function },
+   *   reasoningCleanupService?: {
+   *     processTranscription?: Function,
+   *     processTranscriptionWithOutcome?: Function,
+   *   },
    *   openAiTranscriber?: { processWithOpenAIAPI: Function }
    * }} deps
    */
@@ -26,20 +34,22 @@ export class LocalTranscriber {
     this.openAiTranscriber = deps.openAiTranscriber;
   }
 
-  async applyReasoningCleanup(rawText, source) {
+  async applyReasoningCleanup(rawText, source, runtime = {}) {
     const cleanupEnabledOverride = this.getCleanupEnabledOverride?.() ?? null;
     if (typeof this.reasoningCleanupService?.processTranscriptionWithOutcome === "function") {
       return await this.reasoningCleanupService.processTranscriptionWithOutcome(
         rawText,
         source,
-        cleanupEnabledOverride
+        cleanupEnabledOverride,
+        runtime
       );
     }
 
     const text = await this.reasoningCleanupService.processTranscription(
       rawText,
       source,
-      cleanupEnabledOverride
+      cleanupEnabledOverride,
+      runtime
     );
     return {
       text,
@@ -52,11 +62,14 @@ export class LocalTranscriber {
     };
   }
 
-  async processWithLocalWhisper(audioBlob, model = "base", metadata = {}) {
+  async processWithLocalWhisper(audioBlob, model = "base", metadata = {}, runtime = {}) {
     const timings = {};
+    const signal = runtime?.signal || null;
 
     try {
+      throwIfTranscriptionCancelled(signal);
       const arrayBuffer = await audioBlob.arrayBuffer();
+      throwIfTranscriptionCancelled(signal);
       const language = getBaseLanguageCode(localStorage.getItem("preferredLanguage"));
       const options = { model };
       if (language) {
@@ -70,6 +83,7 @@ export class LocalTranscriber {
 
       const transcriptionStart = performance.now();
       const result = await window.electronAPI.transcribeLocalWhisper(arrayBuffer, options);
+      throwIfTranscriptionCancelled(signal);
       timings.transcriptionProcessingDurationMs = Math.round(
         performance.now() - transcriptionStart
       );
@@ -82,7 +96,7 @@ export class LocalTranscriber {
         if (this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
           const reasoningStart = performance.now();
-          const cleanupResult = await this.applyReasoningCleanup(rawText, "local");
+          const cleanupResult = await this.applyReasoningCleanup(rawText, "local", runtime);
           cleanedText = cleanupResult.text;
           cleanup = cleanupResult.cleanup;
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
@@ -104,6 +118,9 @@ export class LocalTranscriber {
 
       throw new Error(result.message || result.error || "Local Whisper transcription failed");
     } catch (error) {
+      if (isTranscriptionCancelled(error, signal)) {
+        throw createTranscriptionCancelledError();
+      }
       if (error?.message === "No audio detected") {
         throw error;
       }
@@ -115,10 +132,14 @@ export class LocalTranscriber {
         try {
           const fallbackResult = await this.openAiTranscriber.processWithOpenAIAPI(
             audioBlob,
-            metadata
+            metadata,
+            runtime
           );
           return { ...fallbackResult, source: "openai-fallback" };
         } catch (fallbackError) {
+          if (isTranscriptionCancelled(fallbackError, signal)) {
+            throw createTranscriptionCancelledError();
+          }
           throw new Error(
             `Local Whisper failed: ${error.message}. OpenAI fallback also failed: ${fallbackError.message}`
           );
@@ -129,11 +150,19 @@ export class LocalTranscriber {
     }
   }
 
-  async processWithLocalParakeet(audioBlob, model = "parakeet-tdt-0.6b-v3", metadata = {}) {
+  async processWithLocalParakeet(
+    audioBlob,
+    model = "parakeet-tdt-0.6b-v3",
+    metadata = {},
+    runtime = {}
+  ) {
     const timings = {};
+    const signal = runtime?.signal || null;
 
     try {
+      throwIfTranscriptionCancelled(signal);
       const arrayBuffer = await audioBlob.arrayBuffer();
+      throwIfTranscriptionCancelled(signal);
       const language = validateLanguageForModel(localStorage.getItem("preferredLanguage"), model);
       const options = { model };
       if (language) {
@@ -142,6 +171,7 @@ export class LocalTranscriber {
 
       const transcriptionStart = performance.now();
       const result = await window.electronAPI.transcribeLocalParakeet(arrayBuffer, options);
+      throwIfTranscriptionCancelled(signal);
       timings.transcriptionProcessingDurationMs = Math.round(
         performance.now() - transcriptionStart
       );
@@ -154,7 +184,11 @@ export class LocalTranscriber {
         if (this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
           const reasoningStart = performance.now();
-          const cleanupResult = await this.applyReasoningCleanup(rawText, "local-parakeet");
+          const cleanupResult = await this.applyReasoningCleanup(
+            rawText,
+            "local-parakeet",
+            runtime
+          );
           cleanedText = cleanupResult.text;
           cleanup = cleanupResult.cleanup;
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
@@ -176,6 +210,9 @@ export class LocalTranscriber {
 
       throw new Error(result.message || result.error || "Parakeet transcription failed");
     } catch (error) {
+      if (isTranscriptionCancelled(error, signal)) {
+        throw createTranscriptionCancelledError();
+      }
       if (error?.message === "No audio detected") {
         throw error;
       }
@@ -187,10 +224,14 @@ export class LocalTranscriber {
         try {
           const fallbackResult = await this.openAiTranscriber.processWithOpenAIAPI(
             audioBlob,
-            metadata
+            metadata,
+            runtime
           );
           return { ...fallbackResult, source: "openai-fallback" };
         } catch (fallbackError) {
+          if (isTranscriptionCancelled(fallbackError, signal)) {
+            throw createTranscriptionCancelledError();
+          }
           throw new Error(
             `Parakeet failed: ${error.message}. OpenAI fallback also failed: ${fallbackError.message}`
           );

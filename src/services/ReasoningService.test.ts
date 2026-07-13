@@ -67,6 +67,33 @@ describe("ReasoningService (OpenAI)", () => {
     ).resolves.toBe("I have also provided the rest.");
   });
 
+  it("aborts OpenAI cleanup without retrying and releases the processing lock", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(
+      async (_url: RequestInfo | URL, init?: RequestInit) =>
+        await new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock as any);
+
+    const pending = ReasoningService.processText("input", "gpt-5.6-terra", null, {
+      reasoningEffort: "low",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect((ReasoningService as any).isProcessing).toBe(false);
+  });
+
   it("throws when Responses API is incomplete due to max_output_tokens (avoids returning partial text)", async () => {
     const fetchMock = vi.fn(async () => {
       return {

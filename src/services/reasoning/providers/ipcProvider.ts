@@ -1,5 +1,6 @@
 import { getUserPrompt } from "../../../config/prompts";
 import logger from "../../../utils/logger";
+import { raceWithAbort } from "../../../utils/retry";
 import type { ReasoningConfig } from "../../BaseReasoningService";
 
 export async function processWithIpcProvider({
@@ -17,7 +18,12 @@ export async function processWithIpcProvider({
   agentName: string | null;
   config: ReasoningConfig;
   getSystemPrompt: (agentName: string | null, modelId?: string | null) => string;
-  ipcCall: (userPrompt: string, model: string, agentName: string | null, options: any) => Promise<any>;
+  ipcCall: (
+    userPrompt: string,
+    model: string,
+    agentName: string | null,
+    options: any
+  ) => Promise<any>;
 }): Promise<string> {
   logger.logReasoning(`${providerName.toUpperCase()}_START`, {
     model,
@@ -38,10 +44,14 @@ export async function processWithIpcProvider({
 
   const systemPrompt = getSystemPrompt(agentName, model);
   const userPrompt = getUserPrompt(text, model);
-  const result = await ipcCall(userPrompt, model, agentName, {
-    ...config,
-    systemPrompt,
-  });
+  const { signal, ...serializableConfig } = config;
+  const result = await raceWithAbort(
+    ipcCall(userPrompt, model, agentName, {
+      ...serializableConfig,
+      systemPrompt,
+    }),
+    signal
+  );
 
   const processingTime = Date.now() - startTime;
 
@@ -61,4 +71,3 @@ export async function processWithIpcProvider({
   });
   throw new Error(result.error);
 }
-

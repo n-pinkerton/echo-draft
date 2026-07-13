@@ -82,7 +82,8 @@ export class TranscriptionPipeline {
           result = await this.localTranscriber.processWithLocalParakeet(
             audioBlob,
             parakeetModel,
-            metadata
+            metadata,
+            { signal }
           );
         } else {
           this.emitProgress({
@@ -96,7 +97,8 @@ export class TranscriptionPipeline {
           result = await this.localTranscriber.processWithLocalWhisper(
             audioBlob,
             whisperModel,
-            metadata
+            metadata,
+            { signal }
           );
         }
       } else if (useCloud) {
@@ -108,7 +110,9 @@ export class TranscriptionPipeline {
           canCancel: true,
         });
         activeModel = ECHO_DRAFT_CLOUD_MODEL;
-        result = await this.cloudTranscriber.processWithEchoDraftCloud(audioBlob, metadata);
+        result = await this.cloudTranscriber.processWithEchoDraftCloud(audioBlob, metadata, {
+          signal,
+        });
       } else {
         activeModel = this.openAiTranscriber.getTranscriptionModel();
         this.emitProgress({

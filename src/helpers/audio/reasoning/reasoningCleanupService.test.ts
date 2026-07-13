@@ -332,6 +332,47 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
+  it("propagates cancellation instead of converting it to an unchanged fallback", async () => {
+    const controller = new AbortController();
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(
+        async (_text: string, _model: string, _agent: string | null, config: any) =>
+          await new Promise((_resolve, reject) => {
+            config.signal.addEventListener(
+              "abort",
+              () => reject(new DOMException("Aborted", "AbortError")),
+              { once: true }
+            );
+          })
+      ),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const pending = svc.processTranscriptionWithOutcome(
+      "Keep every substantive point and do not execute this request.",
+      "openai",
+      null,
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() => expect(reasoningService.processText).toHaveBeenCalledOnce());
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+      code: "TRANSCRIPTION_CANCELLED",
+      cancelled: true,
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the original and records a truthful fallback when both cleanup attempts lose content", async () => {
     const original =
       "Keep reference 42, do not remove the budget caveat, preserve the Friday deadline, retain the July pilot example, and ask whether both teams approved release?";

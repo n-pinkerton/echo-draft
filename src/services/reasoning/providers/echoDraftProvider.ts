@@ -1,4 +1,5 @@
 import logger from "../../../utils/logger";
+import { raceWithAbort } from "../../../utils/retry";
 import { withSessionRefresh } from "../../../lib/neonAuth";
 import type { ReasoningConfig } from "../../BaseReasoningService";
 
@@ -26,12 +27,15 @@ export async function processWithEchoDraftProvider({
 
   // Use withSessionRefresh to handle AUTH_EXPIRED automatically
   const result = await withSessionRefresh(async () => {
-    const res = await cloudReason(text, {
-      model,
-      agentName,
-      customDictionary,
-      language,
-    });
+    const res = await raceWithAbort(
+      cloudReason(text, {
+        model,
+        agentName,
+        customDictionary,
+        language,
+      }),
+      _config.signal
+    );
 
     if (!res.success) {
       const err: any = new Error(res.error || "EchoDraft cloud reasoning failed");
@@ -50,4 +54,3 @@ export async function processWithEchoDraftProvider({
 
   return result.text;
 }
-

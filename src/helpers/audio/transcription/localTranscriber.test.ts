@@ -88,6 +88,49 @@ describe("LocalTranscriber", () => {
     expect(result.timings?.reasoningProcessingDurationMs).toEqual(expect.any(Number));
   });
 
+  it("propagates cancellation during local-transcription cleanup", async () => {
+    (window as any).electronAPI.transcribeLocalWhisper.mockResolvedValue({
+      success: true,
+      text: "Raw text",
+    });
+    const controller = new AbortController();
+    const processTranscriptionWithOutcome = vi.fn(
+      async (_text: string, _source: string, _override: unknown, runtime: any) =>
+        await new Promise((_resolve, reject) => {
+          runtime.signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => true,
+      getCleanupEnabledOverride: () => null,
+      reasoningCleanupService: { processTranscriptionWithOutcome },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+    const pending = transcriber.processWithLocalWhisper(
+      {
+        type: "audio/webm",
+        arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
+      } as any,
+      "base",
+      {},
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() => expect(processTranscriptionWithOutcome).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+      code: "TRANSCRIPTION_CANCELLED",
+      cancelled: true,
+    });
+  });
+
   it("processWithLocalWhisper falls back to OpenAI when configured", async () => {
     localStorage.setItem("allowOpenAIFallback", "true");
     localStorage.setItem("useLocalWhisper", "true");
@@ -162,7 +205,11 @@ describe("LocalTranscriber", () => {
       type: "audio/webm",
       arrayBuffer: vi.fn(async () => new Uint8Array([1, 2]).buffer),
     } as any;
-    const result = await transcriber.processWithLocalParakeet(audioBlob, "parakeet-tdt-0.6b-v3", {});
+    const result = await transcriber.processWithLocalParakeet(
+      audioBlob,
+      "parakeet-tdt-0.6b-v3",
+      {}
+    );
 
     expect((window as any).electronAPI.transcribeLocalParakeet).toHaveBeenCalledTimes(1);
     const [_buffer, options] = (window as any).electronAPI.transcribeLocalParakeet.mock.calls[0];

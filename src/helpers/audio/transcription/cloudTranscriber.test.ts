@@ -117,6 +117,38 @@ describe("CloudTranscriber", () => {
     expect(result.timings?.reasoningProcessingDurationMs).toEqual(expect.any(Number));
   });
 
+  it("propagates cancellation during managed cloud cleanup", async () => {
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("cloudReasoningMode", ECHO_DRAFT_CLOUD_MODE);
+    const controller = new AbortController();
+    (window as any).electronAPI.cloudTranscribe.mockResolvedValue({
+      success: true,
+      text: "raw",
+    });
+    (window as any).electronAPI.cloudReason.mockImplementation(
+      async () => await new Promise(() => {})
+    );
+    const transcriber = new CloudTranscriber({
+      logger: createLogger(),
+      withSessionRefresh: async (fn: any) => await fn(),
+      reasoningCleanupService: { validateCleanupCandidate: vi.fn() },
+    });
+    const pending = transcriber.processWithEchoDraftCloud(
+      { arrayBuffer: vi.fn(async () => new ArrayBuffer(4)) } as any,
+      {},
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() => expect((window as any).electronAPI.cloudReason).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+      code: "TRANSCRIPTION_CANCELLED",
+      cancelled: true,
+    });
+  });
+
   it("preserves raw cloud text when cleanup fails fidelity validation", async () => {
     localStorage.setItem("useReasoningModel", "true");
     localStorage.setItem("cloudReasoningMode", ECHO_DRAFT_CLOUD_MODE);

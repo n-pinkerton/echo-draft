@@ -246,6 +246,56 @@ describe("OpenAiTranscriber", () => {
       })
     );
     expect(reasoningCleanupService.processTranscription).toHaveBeenCalledTimes(1);
+    expect(reasoningCleanupService.processTranscription).toHaveBeenCalledWith(
+      "hello",
+      "openai",
+      null,
+      { signal: null }
+    );
+  });
+
+  it("aborts an in-flight cleanup request and returns cancellation", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const controller = new AbortController();
+    let cleanupSignal: AbortSignal | null = null;
+    const reasoningCleanupService = {
+      processTranscriptionWithOutcome: vi.fn(
+        async (_text: string, _source: string, _override: unknown, runtime: any) =>
+          await new Promise((_resolve, reject) => {
+            cleanupSignal = runtime.signal;
+            runtime.signal.addEventListener(
+              "abort",
+              () => reject(new DOMException("Aborted", "AbortError")),
+              { once: true }
+            );
+          })
+      ),
+    };
+    const transcriber = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+      shouldApplyReasoningCleanup: () => true,
+      getCleanupEnabledOverride: () => null,
+      reasoningCleanupService,
+    });
+    globalThis.fetch = vi.fn(async () => makeJsonResponse("hello")) as any;
+
+    const pending = transcriber.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any,
+      {},
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() =>
+      expect(reasoningCleanupService.processTranscriptionWithOutcome).toHaveBeenCalledOnce()
+    );
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      code: "TRANSCRIPTION_CANCELLED",
+      cancelled: true,
+    });
+    expect(cleanupSignal?.aborted).toBe(true);
   });
 
   it("aborts an in-flight request without retrying or falling back", async () => {
