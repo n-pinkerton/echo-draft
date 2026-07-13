@@ -2,6 +2,12 @@ import { TOKEN_LIMITS } from "../../../config/constants";
 import { getUserPrompt } from "../../../config/prompts";
 import { getCloudModel } from "../../../models/ModelRegistry";
 import logger from "../../../utils/logger";
+import {
+  finiteNonNegativeNumber,
+  normalizeProviderEnum,
+  sanitizeEndpointForLogging,
+  sanitizeProviderCode,
+} from "../../../utils/diagnosticSanitizers";
 import { withRetry, createApiRetryStrategy } from "../../../utils/retry";
 import type { ReasoningConfig } from "../../BaseReasoningService";
 
@@ -65,7 +71,7 @@ export async function callChatCompletionsApi({
   }
 
   logger.logReasoning(`${providerName.toUpperCase()}_REQUEST`, {
-    endpoint,
+    endpoint: sanitizeEndpointForLogging(endpoint),
     model,
     hasApiKey: Boolean(apiKey),
     inputTextLength: text.length,
@@ -96,32 +102,29 @@ export async function callChatCompletionsApi({
 
         if (!res.ok) {
           const errorText = await res.text();
-          let errorData: any = { error: res.statusText };
+          let errorData: any = {};
 
           try {
             errorData = JSON.parse(errorText);
           } catch {
-            errorData = { error: errorText || res.statusText };
+            errorData = {};
           }
 
           logger.logReasoning(`${providerName.toUpperCase()}_API_ERROR_DETAIL`, {
             status: res.status,
-            statusText: res.statusText,
-            errorCode: errorData.error?.code || errorData.code || null,
-            errorMessage: errorData.error?.message || errorData.message || errorData.error,
+            errorCode: sanitizeProviderCode(errorData.error?.code || errorData.code || null),
           });
 
-          const errorMessage =
-            errorData.error?.message ||
-            errorData.message ||
-            errorData.error ||
-            `${providerName} API error: ${res.status}`;
-          const apiError = new Error(errorMessage) as Error & {
+          const apiError = new Error(
+            `${providerName} cleanup request failed (HTTP ${res.status}).`
+          ) as Error & {
             status?: number;
             response?: { status: number };
+            code?: string;
           };
           apiError.status = res.status;
           apiError.response = { status: res.status };
+          apiError.code = "REASONING_HTTP_ERROR";
           throw apiError;
         }
 
@@ -129,7 +132,6 @@ export async function callChatCompletionsApi({
 
         logger.logReasoning(`${providerName.toUpperCase()}_RAW_RESPONSE`, {
           hasResponse: Boolean(jsonResponse),
-          responseKeys: jsonResponse ? Object.keys(jsonResponse) : [],
           hasChoices: Boolean(jsonResponse?.choices),
           choicesLength: jsonResponse?.choices?.length || 0,
         });
@@ -141,7 +143,12 @@ export async function callChatCompletionsApi({
           if (!timeoutTriggered) throw error;
           throw new Error("Request timed out after 30s");
         }
-        throw error;
+        if ((error as any)?.status) throw error;
+        const networkError = new Error(
+          `Unable to reach the ${providerName} cleanup provider.`
+        ) as Error & { code?: string };
+        networkError.code = "REASONING_NETWORK_ERROR";
+        throw networkError;
       } finally {
         clearTimeout(timeoutId);
         config.signal?.removeEventListener("abort", handleExternalAbort);
@@ -161,8 +168,12 @@ export async function callChatCompletionsApi({
 
   const choice = response.choices[0];
   const responseText = choice.message?.content?.trim() || "";
-  const finishReason =
-    typeof choice.finish_reason === "string" ? choice.finish_reason.trim().toLowerCase() : null;
+  const finishReason = normalizeProviderEnum(choice.finish_reason, [
+    "stop",
+    "length",
+    "content_filter",
+    "tool_calls",
+  ]);
 
   if (finishReason && finishReason !== "stop") {
     logger.logReasoning(`${providerName.toUpperCase()}_OUTPUT_INCOMPLETE`, {
@@ -183,7 +194,7 @@ export async function callChatCompletionsApi({
   if (!responseText) {
     logger.logReasoning(`${providerName.toUpperCase()}_EMPTY_RESPONSE`, {
       model,
-      finishReason: choice.finish_reason,
+      finishReason,
       hasMessage: Boolean(choice.message),
     });
     throw new Error(`${providerName} returned empty response`);
@@ -192,7 +203,7 @@ export async function callChatCompletionsApi({
   logger.logReasoning(`${providerName.toUpperCase()}_RESPONSE`, {
     model,
     responseLength: responseText.length,
-    tokensUsed: response.usage?.total_tokens || 0,
+    tokensUsed: finiteNonNegativeNumber(response?.usage?.total_tokens) || 0,
     success: true,
   });
 

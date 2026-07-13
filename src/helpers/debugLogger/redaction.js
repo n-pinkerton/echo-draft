@@ -10,6 +10,7 @@ const PRESENCE_FLAG_PATTERN = /^(has|is).*(apikey|credential|password|secret|tok
 const SENSITIVE_KEYS = new Set([
   "accesstoken",
   "apikey",
+  "auth",
   "authorization",
   "clientsecret",
   "cookie",
@@ -18,6 +19,7 @@ const SENSITIVE_KEYS = new Set([
   "customreasoningkey",
   "customtranscriptionkey",
   "idtoken",
+  "key",
   "keypreview",
   "password",
   "passphrase",
@@ -25,6 +27,7 @@ const SENSITIVE_KEYS = new Set([
   "reasoningkey",
   "refreshtoken",
   "secret",
+  "signature",
   "sessiontoken",
   "secretpreview",
   "setcookie",
@@ -45,12 +48,28 @@ const redactSensitiveString = (value) => {
   if (!value) return value;
 
   return String(value)
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
+    .replace(/\b(?:Set-Cookie|Cookie)\s*:\s*[^\r\n]+/gi, (header) => {
+      const name = header.slice(0, header.indexOf(":"));
+      return `${name}: ${REDACTED}`;
+    })
+    .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi, (rawUrl) => {
+      try {
+        const parsed = new URL(rawUrl);
+        parsed.username = "";
+        parsed.password = "";
+        parsed.search = "";
+        parsed.hash = "";
+        return parsed.toString();
+      } catch {
+        return REDACTED;
+      }
+    })
     .replace(/\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}\b/g, REDACTED)
     .replace(/\bgsk_[A-Za-z0-9_-]{8,}\b/g, REDACTED)
     .replace(/\bAIza[A-Za-z0-9_-]{20,}\b/g, REDACTED)
     .replace(
-      /([?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token)=)[^&#\s]+/gi,
+      /([?&](?:api[_-]?key|key|signature|auth|access[_-]?token|refresh[_-]?token|token|client[_-]?secret)=)[^&#\s]+/gi,
       `$1${REDACTED}`
     )
     .replace(

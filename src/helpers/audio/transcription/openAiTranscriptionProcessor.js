@@ -1,4 +1,5 @@
 import { getBaseLanguageCode } from "../../../utils/languageSupport";
+import { sanitizeOpaqueRequestId, sanitizeProviderCode } from "../../../utils/diagnosticSanitizers";
 import {
   buildCustomDictionaryPromptForTranscription,
   getCustomDictionaryArray,
@@ -544,17 +545,20 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           });
           timeToHeadersMs = Math.round(performance.now() - transportStartedAt);
           const responseContentType = response.headers.get("content-type") || "";
-          requestId =
-            response.headers.get("x-request-id") ||
-            response.headers.get("openai-request-id") ||
-            null;
+          requestId = sanitizeOpaqueRequestId(
+            response.headers.get("x-request-id") || response.headers.get("openai-request-id")
+          );
+          const responseFormat = responseContentType.includes("text/event-stream")
+            ? "event-stream"
+            : responseContentType.includes("json")
+              ? "json"
+              : "other";
 
           transcriber.logger?.debug?.(
             "Transcription API response received",
             {
               status: response.status,
-              statusText: response.statusText,
-              contentType: responseContentType,
+              responseFormat,
               requestId,
               ok: response.ok,
               transportAttempt,
@@ -567,16 +571,18 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           if (!response.ok) {
             const errorText = await response.text();
             bodyReadDurationMs = Math.round(performance.now() - bodyReadStartedAt);
-            let errorMessage = response.statusText || "Transcription request failed";
             let providerErrorCode = null;
             try {
               const errorData = JSON.parse(errorText);
-              errorMessage = errorData?.error?.message || errorData?.message || errorMessage;
-              providerErrorCode = errorData?.error?.code || errorData?.code || null;
+              providerErrorCode = sanitizeProviderCode(
+                errorData?.error?.code || errorData?.code || null
+              );
             } catch {
-              // Keep the status text when a provider returns a non-JSON error page.
+              // Provider response bodies are intentionally excluded from diagnostics and UI.
             }
-            const error = new Error(`API Error: ${response.status} ${errorMessage}`);
+            const error = new Error(
+              `Transcription provider request failed (HTTP ${response.status}).`
+            );
             error.code = "TRANSCRIPTION_HTTP_ERROR";
             error.httpStatus = response.status;
             error.providerErrorCode = providerErrorCode;
@@ -612,17 +618,22 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
             throwIfTranscriptionCancelled(externalSignal);
             try {
               result = JSON.parse(rawText);
-            } catch (parseError) {
+            } catch {
               transcriber.logger?.error?.(
                 "Failed to parse JSON response",
                 {
                   requestId,
-                  parseError: parseError.message,
+                  errorCategory: "invalid_json",
                   responseLength: rawText.length,
                 },
                 "transcription"
               );
-              throw new Error(`Failed to parse API response: ${parseError.message}`);
+              const invalidResponseError = new Error(
+                "Transcription provider returned an invalid response."
+              );
+              invalidResponseError.code = "TRANSCRIPTION_INVALID_RESPONSE";
+              invalidResponseError.retryable = false;
+              throw invalidResponseError;
             }
           }
           bodyReadDurationMs = Math.round(performance.now() - bodyReadStartedAt);
@@ -1235,9 +1246,11 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         if (isTranscriptionCancelled(fallbackError, externalSignal)) {
           throw createTranscriptionCancelledError();
         }
-        throw new Error(
-          `OpenAI API failed: ${error.message}. Local fallback also failed: ${fallbackError.message}`
+        const combinedError = new Error(
+          "Cloud transcription and local fallback both failed. Please retry."
         );
+        combinedError.code = "TRANSCRIPTION_AND_FALLBACK_FAILED";
+        throw combinedError;
       }
     }
 

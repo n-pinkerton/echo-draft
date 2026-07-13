@@ -375,7 +375,7 @@ describe("OpenAiTranscriber", () => {
     expect(result.timings).toMatchObject({
       transcriptionTransportAttemptCount: 2,
       transcriptionTransportRetried: true,
-      transcriptionRequestId: "request-recovered",
+      transcriptionRequestId: expect.stringMatching(/^req-[a-f0-9]{8}$/),
     });
     expect(result.timings.transcriptionTransportAttempts).toHaveLength(2);
     expect(result.timings.transcriptionTransportAttempts[0]).toMatchObject({
@@ -384,7 +384,7 @@ describe("OpenAiTranscriber", () => {
     });
     expect(result.timings.transcriptionTransportAttempts[1]).toMatchObject({
       status: 200,
-      requestId: "request-recovered",
+      requestId: expect.stringMatching(/^req-[a-f0-9]{8}$/),
       outcome: "success",
     });
     expect(emitProgress).toHaveBeenCalledWith(
@@ -415,6 +415,59 @@ describe("OpenAiTranscriber", () => {
       t.processWithOpenAIAPI(new Blob(["audio"], { type: "audio/webm" }) as any)
     ).rejects.toMatchObject({ code: "TRANSCRIPTION_HTTP_ERROR", httpStatus: 400 });
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("drops malformed provider request IDs from logs and stored timings", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const sentinel = "PRIVATE_TRANSCRIPT_SENTINEL\r\nInjected: yes";
+    const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
+    const transcriber = new OpenAiTranscriber({ logger });
+    globalThis.fetch = vi.fn(async () => ({
+      ...makeJsonResponse("Safe transcript"),
+      statusText: sentinel,
+      headers: {
+        get: (key: string) => {
+          if (key.toLowerCase() === "content-type") return "application/json";
+          if (key.toLowerCase() === "x-request-id") return sentinel;
+          return null;
+        },
+      },
+    })) as any;
+
+    const result = await transcriber.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any
+    );
+
+    expect(result.timings.transcriptionRequestId).toBeUndefined();
+    expect(result.timings.transcriptionRequestIds).toBeUndefined();
+    expect(JSON.stringify(logger)).not.toContain("PRIVATE_TRANSCRIPT_SENTINEL");
+  });
+
+  it("never exposes provider error messages or malformed codes", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const sentinel = "PRIVATE_TRANSCRIPT_SENTINEL";
+    const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
+    const transcriber = new OpenAiTranscriber({ logger });
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      statusText: sentinel,
+      headers: { get: () => null },
+      text: async () =>
+        JSON.stringify({ error: { message: sentinel, code: `${sentinel}\r\nInjected` } }),
+    })) as any;
+
+    const pending = transcriber.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any
+    );
+
+    await expect(pending).rejects.toMatchObject({
+      code: "TRANSCRIPTION_HTTP_ERROR",
+      message: "Transcription provider request failed (HTTP 400).",
+    });
+    expect(JSON.stringify(logger)).not.toContain(sentinel);
   });
 
   it("spends at most one transport retry budget for a dictation", async () => {

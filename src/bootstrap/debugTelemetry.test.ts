@@ -50,5 +50,13 @@ describe("debugTelemetry", () => {
       expect(sanitized).not.toContain("secret");
       expect(sanitized).not.toContain("private");
     });
+
+    it("removes URL userinfo as well as query and fragment credentials", () => {
+      expect(
+        sanitizeTelemetryUrl(
+          "https://user-secret:password-secret@app.example.test/control?signature=query-secret"
+        )
+      ).toBe("https://app.example.test/control");
+    });
   });
 });

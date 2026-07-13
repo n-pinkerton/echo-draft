@@ -1,6 +1,12 @@
 import { API_ENDPOINTS, TOKEN_LIMITS } from "../../../config/constants";
 import { getUserPrompt } from "../../../config/prompts";
 import logger from "../../../utils/logger";
+import {
+  finiteNonNegativeNumber,
+  normalizeProviderEnum,
+  sanitizeEndpointForLogging,
+  sanitizeProviderCode,
+} from "../../../utils/diagnosticSanitizers";
 import { withRetry, createApiRetryStrategy } from "../../../utils/retry";
 import type { ReasoningConfig } from "../../BaseReasoningService";
 
@@ -98,15 +104,15 @@ export async function processWithOpenAiProvider({
     const isCustomEndpoint = openAiBase !== API_ENDPOINTS.OPENAI_BASE;
 
     logger.logReasoning("OPENAI_ENDPOINTS", {
-      base: openAiBase,
+      base: sanitizeEndpointForLogging(openAiBase),
       isCustomEndpoint,
-      candidates: endpointCandidates.map((candidate) => candidate.url),
+      candidates: endpointCandidates.map((candidate) => sanitizeEndpointForLogging(candidate.url)),
       preference: getStoredOpenAiPreference(openAiBase) || null,
     });
 
     if (isCustomEndpoint) {
       logger.logReasoning("CUSTOM_TEXT_CLEANUP_REQUEST", {
-        customBase: openAiBase,
+        customBase: sanitizeEndpointForLogging(openAiBase),
         model,
         textLength: text.length,
         hasApiKey: Boolean(apiKey),
@@ -161,7 +167,7 @@ export async function processWithOpenAiProvider({
             }
 
             logger.logReasoning("OPENAI_REQUEST", {
-              endpoint,
+              endpoint: sanitizeEndpointForLogging(endpoint),
               type,
               model,
               maxOutputTokens,
@@ -184,37 +190,43 @@ export async function processWithOpenAiProvider({
             });
 
             if (!res.ok) {
-              const errorData = await res.json().catch(() => ({ error: res.statusText }));
-              const errorMessage =
-                errorData.error?.message || errorData.message || `OpenAI API error: ${res.status}`;
-              const errorCode = errorData.error?.code || errorData.code || null;
+              const errorData = await res.json().catch(() => ({}));
+              const rawErrorCode =
+                typeof (errorData.error?.code || errorData.code) === "string"
+                  ? String(errorData.error?.code || errorData.code)
+                  : null;
+              const errorCode = sanitizeProviderCode(rawErrorCode);
 
               const isUnsupportedEndpoint =
                 type === "responses" &&
                 (res.status === 405 ||
                   (res.status === 404 &&
-                    errorCode !== "model_not_found" &&
-                    errorCode !== "invalid_model"));
+                    rawErrorCode !== "model_not_found" &&
+                    rawErrorCode !== "invalid_model"));
 
               if (isUnsupportedEndpoint) {
-                lastError = new Error(errorMessage);
+                lastError = new Error("The cleanup endpoint is unsupported.");
                 rememberOpenAiPreference(openAiBase, "chat");
                 logger.logReasoning("OPENAI_ENDPOINT_FALLBACK", {
-                  attemptedEndpoint: endpoint,
+                  attemptedEndpoint: sanitizeEndpointForLogging(endpoint),
                   status: res.status,
                   errorCode,
                 });
                 continue;
               }
 
-              const apiError = new Error(errorMessage) as Error & {
+              const apiError = new Error(
+                `Cleanup provider request failed (HTTP ${res.status}).`
+              ) as Error & {
                 status?: number;
                 response?: { status: number };
                 code?: string | null;
+                providerCode?: string | null;
               };
               apiError.status = res.status;
               apiError.response = { status: res.status };
-              apiError.code = errorCode;
+              apiError.code = "REASONING_HTTP_ERROR";
+              apiError.providerCode = errorCode;
               throw apiError;
             }
 
@@ -226,8 +238,16 @@ export async function processWithOpenAiProvider({
               if (!timeoutTriggered) throw error;
               throw new Error(`Request timed out after ${Math.round(requestTimeoutMs / 1000)}s`);
             }
-            lastError = error as Error;
-            throw error;
+            if ((error as any)?.status) {
+              lastError = error as Error;
+              throw error;
+            }
+            const networkError = new Error("Unable to reach the cleanup provider.") as Error & {
+              code?: string;
+            };
+            networkError.code = "REASONING_NETWORK_ERROR";
+            lastError = networkError;
+            throw networkError;
           } finally {
             clearTimeout(timeoutId);
             externalSignal?.removeEventListener("abort", handleExternalAbort);
@@ -247,15 +267,13 @@ export async function processWithOpenAiProvider({
       format: isResponsesApi ? "responses" : isChatCompletions ? "chat_completions" : "unknown",
       hasOutput: isResponsesApi,
       outputLength: isResponsesApi ? response.output.length : 0,
-      outputTypes: isResponsesApi ? response.output.map((item: any) => item.type) : undefined,
       hasChoices: isChatCompletions,
       choicesLength: isChatCompletions ? response.choices.length : 0,
-      status: typeof response?.status === "string" ? response.status : null,
-      incompleteReason:
-        typeof response?.incomplete_details?.reason === "string"
-          ? response.incomplete_details.reason
-          : null,
-      usage: response.usage,
+      status: normalizeProviderEnum(response?.status, ["completed", "incomplete", "failed"]),
+      incompleteReason: normalizeProviderEnum(response?.incomplete_details?.reason, [
+        "max_output_tokens",
+      ]),
+      totalTokens: finiteNonNegativeNumber(response?.usage?.total_tokens),
     });
 
     let responseText = "";
@@ -322,7 +340,7 @@ export async function processWithOpenAiProvider({
     logger.logReasoning("OPENAI_RESPONSE", {
       model,
       responseLength: responseText.length,
-      tokensUsed: response.usage?.total_tokens || 0,
+      tokensUsed: finiteNonNegativeNumber(response?.usage?.total_tokens) || 0,
       success: true,
       isEmpty: responseText.length === 0,
       finishReason: chatFinishReason,
@@ -395,8 +413,9 @@ export async function processWithOpenAiProvider({
   } catch (error) {
     logger.logReasoning("OPENAI_ERROR", {
       model,
-      error: (error as Error).message,
-      errorType: (error as Error).name,
+      errorCategory: (error as any)?.code || (error as Error).name || "unknown",
+      status: finiteNonNegativeNumber((error as any)?.status),
+      providerCode: sanitizeProviderCode((error as any)?.providerCode),
     });
     throw error;
   }

@@ -36,6 +36,8 @@ export const sanitizeTelemetryUrl = (value: string): string => {
   const raw = String(value || "");
   try {
     const parsed = new URL(raw);
+    parsed.username = "";
+    parsed.password = "";
     parsed.search = "";
     parsed.hash = "";
     return parsed.toString();

@@ -13,6 +13,10 @@ const {
   redactSensitiveData,
   redactSensitiveString,
 } = require("../debugLogger/redaction");
+import {
+  sanitizeEndpointForLogging,
+  sanitizeOpaqueRequestId,
+} from "../../utils/diagnosticSanitizers";
 
 describe("debugLogger utilities", () => {
   it("normalizeLevel accepts known levels and lowercases", () => {
@@ -80,6 +84,53 @@ describe("debugLogger utilities", () => {
     expect(result).not.toContain("private-key");
     expect(result).not.toContain("private-query");
     expect(result).toContain(REDACTED);
+  });
+
+  it("structurally removes credentials from URLs, Basic auth, and cookies", () => {
+    const secretValues = [
+      "user-secret",
+      "password-secret",
+      "query-secret",
+      "signature-secret",
+      "client-secret",
+      "cookie-secret",
+      "YmFzaWMtc2VjcmV0",
+    ];
+    const result = redactSensitiveString(
+      "CUSTOM endpoint HTTPS://user-secret:password-secret@api.example.test/v1?KeY=query-secret&signature=signature-secret&client_secret=client-secret#auth=fragment-secret " +
+        "Authorization: Basic YmFzaWMtc2VjcmV0 Cookie: session=cookie-secret"
+    );
+
+    for (const secret of secretValues) expect(result).not.toContain(secret);
+    expect(result).toContain("https://api.example.test/v1");
+    expect(result).toContain("Basic [REDACTED]");
+    expect(result).toContain("Cookie: [REDACTED]");
+  });
+
+  it("redacts mixed-case nested settings without mutating caller metadata", () => {
+    const input = {
+      endpoint: "https://name:pass@example.test/v1?signature=encoded%2Bsecret",
+      headers: { AuTh: "private-auth", SeT_CoOkIe: "private-cookie" },
+      nested: { client_secret: "private-client", harmless: true },
+    };
+    const snapshot = structuredClone(input);
+    const result = redactSensitiveData(input);
+
+    expect(JSON.stringify(result)).not.toMatch(/pass|encoded%2Bsecret|private-/i);
+    expect(result.headers).toEqual({ AuTh: REDACTED, SeT_CoOkIe: REDACTED });
+    expect(input).toEqual(snapshot);
+  });
+
+  it("allows only bounded opaque request IDs and path-only diagnostic endpoints", () => {
+    expect(sanitizeOpaqueRequestId("request-123:abc")).toMatch(/^req-[a-f0-9]{8}$/);
+    expect(sanitizeOpaqueRequestId("request-123:abc")).not.toContain("request-123");
+    expect(sanitizeOpaqueRequestId("private transcript\r\nInjected: value")).toBeNull();
+    expect(sanitizeOpaqueRequestId("x".repeat(129))).toBeNull();
+    expect(
+      sanitizeEndpointForLogging(
+        "https://name:password@example.test/v1/responses?key=private#signature"
+      )
+    ).toBe("https://example.test/v1/responses");
   });
 
   it("handles circular metadata and avoids serializing audio buffers", () => {

@@ -99,6 +99,30 @@ describe("TranscriptionItem", () => {
     expect(screen.getByText("API attempts")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
     expect(screen.getByText("Request ID")).toBeInTheDocument();
-    expect(screen.getByText("request-123")).toBeInTheDocument();
+    expect(screen.getByText(/^req-[a-f0-9]{8}$/)).toBeInTheDocument();
+  });
+
+  it("does not render an untrusted provider request ID", () => {
+    render(
+      <TranscriptionItem
+        item={
+          makeItem("Original raw text", {
+            timings: {
+              transcriptionRequestId: "PRIVATE_TRANSCRIPT_SENTINEL\r\nInjected: yes",
+            },
+          }) as any
+        }
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.queryByText("Request ID")).not.toBeInTheDocument();
+    expect(screen.queryByText(/PRIVATE_TRANSCRIPT_SENTINEL/)).not.toBeInTheDocument();
   });
 });

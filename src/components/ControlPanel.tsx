@@ -13,6 +13,7 @@ import {
   clearTranscriptions as clearStoreTranscriptions,
 } from "../stores/transcriptionStore";
 import type { TranscriptionItem as TranscriptionItemType } from "../types/electron";
+import { sanitizeTranscriptionMetaForDiagnostics } from "../utils/transcriptionDiagnostics";
 import { filterHistory, getProviderOptions } from "./controlPanel/historyFilterUtils";
 import ControlPanelView from "./controlPanel/ControlPanelView";
 import { useFileTranscription } from "./controlPanel/useFileTranscription";
@@ -205,7 +206,7 @@ export default function ControlPanel() {
       timestamp: item.timestamp,
       textLength: item.text?.length || 0,
       rawTextLength: item.raw_text?.length || item.text?.length || 0,
-      meta: item.meta || {},
+      meta: sanitizeTranscriptionMetaForDiagnostics(item.meta),
     };
     await copyToClipboard(JSON.stringify(diagnostics, null, 2), {
       title: "Diagnostics Copied",

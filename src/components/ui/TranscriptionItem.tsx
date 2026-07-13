@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "./button";
 import { Copy, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
+import { sanitizeOpaqueRequestId } from "../../utils/diagnosticSanitizers";
 import { cn } from "../lib/utils";
 
 interface TranscriptionItemProps {
@@ -189,10 +190,7 @@ export default function TranscriptionItem({
       : null;
   const hotkeyToRecorderStartLabel =
     formatDuration(timings.hotkeyToRecorderStartMs) || formatDuration(timings.hotkeyToStartCallMs);
-  const requestId =
-    typeof timings.transcriptionRequestId === "string" && timings.transcriptionRequestId.trim()
-      ? timings.transcriptionRequestId.trim()
-      : null;
+  const requestId = sanitizeOpaqueRequestId(timings.transcriptionRequestId);
   const transportAttemptCount =
     typeof timings.transcriptionTransportAttemptCount === "number" &&
     Number.isFinite(timings.transcriptionTransportAttemptCount)
