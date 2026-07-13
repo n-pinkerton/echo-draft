@@ -338,6 +338,33 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
+  it("keeps an explicit request reason while repairing its sentence fragment", async () => {
+    const original =
+      "Can you check whether the staging config differs? Because the new runner delegates tasks differently. Then tell me what you recommend.";
+    const modelResult =
+      "Can you check whether the staging config differs? The new runner delegates tasks differently. Then tell me what you recommend.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn().mockResolvedValueOnce(modelResult),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
+
+    expect(result).toMatchObject({
+      text: "Can you check whether the staging config differs? I am asking because the new runner delegates tasks differently. Then tell me what you recommend.",
+      cleanup: { status: "applied", fallbackReason: null, retryCount: 0 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
   it("still rejects a Sol rescue that loses a critical literal", async () => {
     const original =
       "Review reference 42, keep the budget caveat, retain the customer example, name the fallback owner, preserve the Friday deadline, and notify both teams before release.";

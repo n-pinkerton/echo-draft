@@ -1,5 +1,6 @@
 import { normalizeCleanupModelId, sanitizeProcessedText } from "../../../config/prompts";
 import { assessCleanupFidelity, CleanupFidelityError } from "./cleanupFidelity";
+import { repairRequestReasonFragment } from "./cleanupOutputRepairs";
 import {
   createTranscriptionCancelledError,
   isTranscriptionCancelled,
@@ -180,12 +181,15 @@ export class ReasoningCleanupService {
     let attemptedRetryModel = null;
     try {
       throwIfTranscriptionCancelled(signal);
-      const firstResult = sanitizeProcessedText(
-        await this.reasoningService.processText(text, model, agentName, {
-          cleanupPromptMode: "preservation-first",
-          reasoningEffort,
-          ...(signal ? { signal } : {}),
-        })
+      const firstResult = repairRequestReasonFragment(
+        text,
+        sanitizeProcessedText(
+          await this.reasoningService.processText(text, model, agentName, {
+            cleanupPromptMode: "preservation-first",
+            reasoningEffort,
+            ...(signal ? { signal } : {}),
+          })
+        )
       );
       throwIfTranscriptionCancelled(signal);
       const firstAssessment = assessCleanupFidelity(text, firstResult);
@@ -217,12 +221,15 @@ export class ReasoningCleanupService {
       retryAttempted = true;
       attemptedRetryModel = retryModel;
       throwIfTranscriptionCancelled(signal);
-      const retryResult = sanitizeProcessedText(
-        await this.reasoningService.processText(text, retryModel, agentName, {
-          cleanupPromptMode: "strict-preservation",
-          reasoningEffort,
-          ...(signal ? { signal } : {}),
-        })
+      const retryResult = repairRequestReasonFragment(
+        text,
+        sanitizeProcessedText(
+          await this.reasoningService.processText(text, retryModel, agentName, {
+            cleanupPromptMode: "strict-preservation",
+            reasoningEffort,
+            ...(signal ? { signal } : {}),
+          })
+        )
       );
       throwIfTranscriptionCancelled(signal);
       const retryAssessment = assessCleanupFidelity(text, retryResult);

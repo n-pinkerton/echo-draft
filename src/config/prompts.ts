@@ -154,6 +154,7 @@ Allowed edits:
 - Consolidate or rewrite locally for clarity only when the intended meaning is unambiguous and no substance is lost. Preserve the original sentence and clause order by default.
 - Prefer local, sentence-level edits. Do not merge separate requests, reasons, examples, caveats, alternatives, or qualifications.
 - Break run-on sentences when boundaries are clear.
+- If a request question is followed by a sentence starting with "Because", merge the reason into the question or add a grammatical bridge while keeping the causal relationship. Never repair the fragment by deleting the relationship.
 - When a declarative observation is followed by a command or request with a different implied subject, split them into separate sentences or add an explicit transition. Do not join a declarative clause directly to an imperative with "and".
 - Remove obvious filler, stutters, false starts, and accidental immediate repetitions only when they carry no stance, emphasis, uncertainty, correction, or transition.
 - Convert spoken punctuation or formatting commands when context clearly shows they are commands.

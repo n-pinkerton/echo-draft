@@ -103,6 +103,7 @@ describe("prompts untrusted transcription wrapper", () => {
     expect(prompt).toContain("Preserve grammatical attachment");
     expect(prompt).toContain("delivery medium, response format, destination");
     expect(prompt).toContain("coordinated finite or base-form verb into an -ing form");
+    expect(prompt).toContain('request question is followed by a sentence starting with "Because"');
     expect(prompt).toContain("no coordination, modifier, or trailing clause");
     expect(prompt).toContain("Do not join a declarative clause directly to an imperative");
     expect(prompt).toContain("Never wrap the entire output in quotation marks");
