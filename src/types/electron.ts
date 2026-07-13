@@ -13,6 +13,18 @@ export interface TranscriptionTimings {
   [key: string]: unknown;
 }
 
+export interface CleanupOutcome {
+  requested: boolean;
+  attempted: boolean;
+  applied: boolean;
+  status: "disabled" | "applied" | "unchanged" | "fallback" | string;
+  fallbackReason?: string | null;
+  model?: string | null;
+  provider?: string | null;
+  retryCount?: number;
+  metrics?: Record<string, unknown>;
+}
+
 export interface TranscriptionMeta {
   sessionId?: string;
   outputMode?: DictationOutputMode;
@@ -22,7 +34,14 @@ export interface TranscriptionMeta {
   model?: string;
   insertionTarget?: InsertionTargetSnapshot | null;
   pasteSucceeded?: boolean;
+  clipboardSucceeded?: boolean;
+  delivery?: {
+    status: "inserted" | "clipboard" | "clipboard_fallback" | "failed" | string;
+    succeeded: boolean;
+    error?: string;
+  };
   error?: string;
+  cleanup?: CleanupOutcome;
   timings?: TranscriptionTimings;
   [key: string]: unknown;
 }

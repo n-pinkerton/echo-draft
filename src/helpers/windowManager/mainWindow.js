@@ -4,6 +4,37 @@ const DevServerManager = require("../devServerManager");
 const { DEV_SERVER_PORT } = DevServerManager;
 const MenuManager = require("../menuManager");
 const { MAIN_WINDOW_CONFIG, WINDOW_SIZES, WindowPositionUtil } = require("../windowConfig");
+const { shouldSuppressWindowPresentation } = require("./e2eWindowPresentation");
+
+function handleMainWindowLoadFailure(
+  manager,
+  { errorCode, errorDescription, validatedURL, isMainFrame },
+  { env = process.env, schedule = setTimeout, devServerManager = DevServerManager } = {}
+) {
+  if (!isMainFrame) {
+    return;
+  }
+
+  if (
+    env.NODE_ENV === "development" &&
+    validatedURL &&
+    validatedURL.includes(`localhost:${DEV_SERVER_PORT}`)
+  ) {
+    schedule(async () => {
+      const isReady = await devServerManager.waitForDevServer();
+      if (isReady && manager.mainWindow && !manager.mainWindow.isDestroyed()) {
+        manager.mainWindow.reload();
+      }
+    }, 2000);
+    return;
+  }
+
+  if (shouldSuppressWindowPresentation(env)) {
+    return;
+  }
+
+  manager.showLoadFailureDialog("Dictation panel", errorCode, errorDescription, validatedURL);
+}
 
 async function createMainWindow(manager) {
   const display = screen.getPrimaryDisplay();
@@ -25,25 +56,13 @@ async function createMainWindow(manager) {
   // Register load event handlers BEFORE loading to catch all events
   manager.mainWindow.webContents.on(
     "did-fail-load",
-    async (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame) {
-        return;
-      }
-      if (
-        process.env.NODE_ENV === "development" &&
-        validatedURL &&
-        validatedURL.includes(`localhost:${DEV_SERVER_PORT}`)
-      ) {
-        // Retry connection to dev server
-        setTimeout(async () => {
-          const isReady = await DevServerManager.waitForDevServer();
-          if (isReady) {
-            manager.mainWindow.reload();
-          }
-        }, 2000);
-      } else {
-        manager.showLoadFailureDialog("Dictation panel", errorCode, errorDescription, validatedURL);
-      }
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      handleMainWindowLoadFailure(manager, {
+        errorCode,
+        errorDescription,
+        validatedURL,
+        isMainFrame,
+      });
     }
   );
 
@@ -72,7 +91,7 @@ function setMainWindowInteractivity(manager, shouldCapture) {
   manager.isMainWindowInteractive = shouldCapture;
 }
 
-function resizeMainWindow(manager, sizeKey) {
+function resizeMainWindow(manager, sizeKey, { screenModule = screen } = {}) {
   if (!manager.mainWindow || manager.mainWindow.isDestroyed()) {
     return { success: false, message: "Window not available" };
   }
@@ -83,7 +102,7 @@ function resizeMainWindow(manager, sizeKey) {
   const bottomRightX = currentBounds.x + currentBounds.width;
   const bottomRightY = currentBounds.y + currentBounds.height;
 
-  const display = screen.getDisplayNearestPoint({ x: bottomRightX, y: bottomRightY });
+  const display = screenModule.getDisplayNearestPoint({ x: bottomRightX, y: bottomRightY });
   const workArea = display.workArea || display.bounds;
 
   let newX = bottomRightX - newSize.width;
@@ -124,6 +143,24 @@ function showLegacyDictationPanel(manager, options = {}) {
       manager.mainWindow.focus();
     }
   }
+}
+
+function showRecordingIndicator(manager, { screenModule = screen } = {}) {
+  if (!manager.mainWindow || manager.mainWindow.isDestroyed()) {
+    return { success: false, message: "Recording indicator window is unavailable" };
+  }
+
+  resizeMainWindow(manager, "RECORDING_INDICATOR", { screenModule });
+  setMainWindowInteractivity(manager, false);
+  if (!manager.mainWindow.isVisible()) {
+    if (typeof manager.mainWindow.showInactive === "function") {
+      manager.mainWindow.showInactive();
+    } else {
+      manager.mainWindow.show();
+    }
+  }
+  enforceMainWindowOnTop(manager);
+  return { success: true };
 }
 
 function hideDictationPanel(manager) {
@@ -178,10 +215,12 @@ module.exports = {
   createMainWindow,
   enforceMainWindowOnTop,
   hideDictationPanel,
+  handleMainWindowLoadFailure,
   isDictationPanelVisible,
   registerMainWindowEvents,
   resizeMainWindow,
   setMainWindowInteractivity,
   showDictationPanel,
   showLegacyDictationPanel,
+  showRecordingIndicator,
 };

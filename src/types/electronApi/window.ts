@@ -8,6 +8,7 @@ export interface ElectronAPIWindow {
   ) => Promise<void>;
   hideWindow: () => Promise<void>;
   showDictationPanel: () => Promise<void>;
+  showRecordingIndicator?: () => Promise<{ success: boolean; message?: string }>;
   showControlPanel: () => Promise<{ success: boolean }>;
   onToggleDictation: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
   onStartDictation?: (callback: (payload?: DictationTriggerPayload) => void) => () => void;

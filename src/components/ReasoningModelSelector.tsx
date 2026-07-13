@@ -16,6 +16,7 @@ import {
 const CLOUD_PROVIDER_IDS = ["openai", "anthropic", "gemini", "groq", "custom"] as const;
 
 interface ReasoningModelSelectorProps {
+  showEnableToggle?: boolean;
   useReasoningModel: boolean;
   setUseReasoningModel: (value: boolean) => void;
   reasoningModel: string;
@@ -38,6 +39,7 @@ interface ReasoningModelSelectorProps {
 }
 
 export default function ReasoningModelSelector({
+  showEnableToggle = true,
   useReasoningModel,
   setUseReasoningModel,
   reasoningModel,
@@ -268,26 +270,34 @@ export default function ReasoningModelSelector({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between p-3 bg-card border border-border rounded-lg">
-        <div>
-          <label className="text-sm font-medium text-foreground">Enable AI Text Enhancement</label>
-          <p className="text-xs text-muted-foreground">
-            Use AI to automatically improve transcription quality
-          </p>
-        </div>
-        <button
-          onClick={() => setUseReasoningModel(!useReasoningModel)}
-          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${
-            useReasoningModel ? "bg-primary" : "bg-muted-foreground/25"
-          }`}
-        >
-          <span
-            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200 ${
-              useReasoningModel ? "translate-x-4.5" : "translate-x-0.75"
+      {showEnableToggle && (
+        <div className="flex items-center justify-between p-3 bg-card border border-border rounded-lg">
+          <div>
+            <label className="text-sm font-medium text-foreground">
+              Enable AI Text Enhancement
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Use AI to automatically improve transcription quality
+            </p>
+          </div>
+          <button
+            onClick={() => setUseReasoningModel(!useReasoningModel)}
+            type="button"
+            role="switch"
+            aria-label="Enable AI text enhancement"
+            aria-checked={useReasoningModel}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ${
+              useReasoningModel ? "bg-primary" : "bg-muted-foreground/25"
             }`}
-          />
-        </button>
-      </div>
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200 ${
+                useReasoningModel ? "translate-x-4.5" : "translate-x-0.75"
+              }`}
+            />
+          </button>
+        </div>
+      )}
 
       {useReasoningModel && (
         <>

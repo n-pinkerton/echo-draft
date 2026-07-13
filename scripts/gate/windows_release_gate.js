@@ -8,6 +8,11 @@
  * Usage (Windows):
  *   node scripts\\gate\\windows_release_gate.js [path\\to\\EchoDraft.exe]
  *
+ * Safe mode is the default and never opens a typing target or takes foreground.
+ * On a dedicated idle test desktop only, add --allow-foreground-automation to
+ * exercise target capture, automatic insertion, clipboard-image restoration,
+ * and visual screenshot capture.
+ *
  * Required env:
  *   OPENWHISPR_E2E=1 (enables guarded E2E helpers in preload + IPC)
  */
@@ -18,4 +23,3 @@ runWindowsReleaseGate().catch((error) => {
   console.error(`[gate] ERROR: ${error.message}`);
   process.exit(1);
 });
-

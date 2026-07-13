@@ -112,6 +112,7 @@ class AudioManager {
     };
     window.addEventListener("api-key-changed", this._onApiKeyChanged);
     this.isStreaming = false;
+    this.streamingStopPromise = null;
     this.pendingNonStreamingStopContext = null;
     this.pendingNonStreamingStopRequestedAt = null;
     this.isStopping = false;
@@ -244,7 +245,9 @@ class AudioManager {
   }
 
   async isReasoningAvailable() {
-    return await this.reasoningCleanupService.isReasoningAvailable(this.getCleanupEnabledOverride());
+    return await this.reasoningCleanupService.isReasoningAvailable(
+      this.getCleanupEnabledOverride()
+    );
   }
 
   async getAudioConstraints() {
@@ -303,7 +306,11 @@ class AudioManager {
   }
 
   async processAudio(audioBlob, metadata = {}) {
-    await this.transcriptionPipeline.processAudio(audioBlob, metadata, this.activeProcessingContext);
+    await this.transcriptionPipeline.processAudio(
+      audioBlob,
+      metadata,
+      this.activeProcessingContext
+    );
   }
 
   async readTranscriptionStream(response) {

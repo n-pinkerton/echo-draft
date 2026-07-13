@@ -1,23 +1,144 @@
 const { safeString, sleep } = require("../utils");
 
+async function waitForEvaluation(
+  target,
+  expression,
+  predicate,
+  { timeoutMs = 3000, intervalMs = 100, sleepFn = sleep } = {}
+) {
+  const safeTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs >= 0 ? timeoutMs : 3000;
+  const safeIntervalMs = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 100;
+  const maxAttempts = Math.max(1, Math.ceil(safeTimeoutMs / safeIntervalMs) + 1);
+  let lastValue = null;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      lastValue = await target.eval(expression);
+      lastError = null;
+      if (predicate(lastValue)) {
+        return { matched: true, attempts: attempt, value: lastValue, error: null };
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : safeString(error);
+    }
+
+    if (attempt < maxAttempts) {
+      await sleepFn(safeIntervalMs);
+    }
+  }
+
+  return {
+    matched: false,
+    attempts: maxAttempts,
+    value: lastValue,
+    error: lastError,
+  };
+}
+
 async function checkStageAndEchoGuards(dictation, record) {
-  // B) Always-visible status bar
-  await dictation.waitForSelector('[data-testid="dictation-status-bar"]', 15000);
-  record("Status bar present", true);
-
-  await dictation.eval(`window.__echoDraftE2E.setStage("listening", { stageLabel: "Listening" }); true;`);
-  await sleep(250);
-  await dictation.eval(`window.__echoDraftE2E.setStage("listening", { stageLabel: "Listening" }); true;`);
-  const stageListening = await dictation.eval(
-    `document.querySelector('[data-testid="dictation-status-stage"]')?.textContent || ""`
+  const originalIndicatorSetting = await dictation.eval(
+    `localStorage.getItem("recordingIndicatorEnabled")`
   );
-  record("Stage label updates (Listening)", stageListening.trim() === "Listening", stageListening);
+  await dictation.eval(`
+    localStorage.setItem("recordingIndicatorEnabled", "true");
+    window.dispatchEvent(new CustomEvent("echodraft:local-storage-change", {
+      detail: { key: "recordingIndicatorEnabled" }
+    }));
+    true;
+  `);
 
-  await dictation.eval(`window.__echoDraftE2E.setStage("transcribing", { stageLabel: "Transcribing", generatedWords: 12 }); true;`);
-  const stageTranscribing = await dictation.eval(
-    `document.querySelector('[data-testid="dictation-status-stage"]')?.textContent || ""`
+  // B) Listening state must be unambiguous without taking keyboard focus.
+  await dictation.eval(
+    `window.__echoDraftE2E.setStage("listening", { stageLabel: "Listening" }); true;`
   );
-  record("Stage label updates (Transcribing)", stageTranscribing.trim() === "Transcribing", stageTranscribing);
+  const stageListening = await waitForEvaluation(
+    dictation,
+    `window.electronAPI.e2eGetTrayStatus()`,
+    (value) => value?.stage === "listening" && value?.stageLabel === "Listening"
+  );
+  record("Tray status updates (Listening)", stageListening.matched, JSON.stringify(stageListening));
+
+  const indicatorState = await waitForEvaluation(
+    dictation,
+    `(async () => {
+      const indicator = document.querySelector('[data-testid="recording-indicator"]');
+      const rect = indicator?.getBoundingClientRect();
+      const indicatorWindow = await window.electronAPI.e2eGetMainWindowState();
+      return {
+        indicatorUi: {
+          found: Boolean(indicator),
+          visible: Boolean(rect && rect.width > 0 && rect.height > 0),
+          hasRecLabel: indicator?.textContent?.includes("REC") === true,
+          hasLiveLabel: indicator?.textContent?.includes("Microphone live") === true,
+          hasTimer: Boolean(indicator?.querySelector("time")),
+          viewport: { width: window.innerWidth, height: window.innerHeight }
+        },
+        indicatorWindow
+      };
+    })()`,
+    ({ indicatorUi, indicatorWindow } = {}) =>
+      indicatorUi?.found === true &&
+      indicatorUi?.visible === true &&
+      indicatorUi?.hasRecLabel === true &&
+      indicatorUi?.hasLiveLabel === true &&
+      indicatorUi?.hasTimer === true &&
+      indicatorWindow?.available === true &&
+      indicatorWindow?.visible === true &&
+      indicatorWindow?.focused === false &&
+      indicatorWindow?.focusable === false &&
+      indicatorWindow?.interactive === false &&
+      indicatorWindow?.alwaysOnTop === true &&
+      indicatorWindow?.bounds?.width === 210 &&
+      indicatorWindow?.bounds?.height === 64
+  );
+  record(
+    "Recording indicator renders click-through without taking focus",
+    indicatorState.matched,
+    JSON.stringify(indicatorState)
+  );
+
+  await dictation.eval(
+    `window.__echoDraftE2E.setStage("transcribing", { stageLabel: "Transcribing", generatedWords: 12 }); true;`
+  );
+  const stageTranscribing = await waitForEvaluation(
+    dictation,
+    `window.electronAPI.e2eGetTrayStatus()`,
+    (value) =>
+      value?.stage === "transcribing" &&
+      value?.stageLabel === "Transcribing" &&
+      value?.generatedWords === 12
+  );
+  record(
+    "Tray status updates (Transcribing)",
+    stageTranscribing.matched,
+    JSON.stringify(stageTranscribing)
+  );
+  const hiddenIndicatorWindow = await waitForEvaluation(
+    dictation,
+    `window.electronAPI.e2eGetMainWindowState()`,
+    (value) => value?.available === true && value?.visible === false
+  );
+  record(
+    "Recording indicator hides when microphone capture ends",
+    hiddenIndicatorWindow.matched,
+    JSON.stringify(hiddenIndicatorWindow)
+  );
+
+  await dictation.eval(`
+    (() => {
+      const originalValue = ${JSON.stringify(originalIndicatorSetting)};
+      if (originalValue === null) {
+        localStorage.removeItem("recordingIndicatorEnabled");
+      } else {
+        localStorage.setItem("recordingIndicatorEnabled", originalValue);
+      }
+      window.dispatchEvent(new CustomEvent("echodraft:local-storage-change", {
+        detail: { key: "recordingIndicatorEnabled" }
+      }));
+      return true;
+    })()
+  `);
 
   // B/G) Regression guard: ensure dictionary prompt-echo heuristic flags obvious prompt output
   const dictTerms = [
@@ -54,4 +175,5 @@ async function checkStageAndEchoGuards(dictation, record) {
 
 module.exports = {
   checkStageAndEchoGuards,
+  waitForEvaluation,
 };

@@ -26,14 +26,32 @@ export function SettingsPanelRow({
   return <div className={`px-4 py-3 ${className}`}>{children}</div>;
 }
 
-export function SectionHeader({ title, description }: { title: string; description?: string }) {
+export function SectionHeader({
+  title,
+  description,
+  headingRef,
+  headingId,
+  headingTabIndex,
+}: {
+  title: string;
+  description?: string;
+  headingRef?: React.Ref<HTMLHeadingElement>;
+  headingId?: string;
+  headingTabIndex?: number;
+}) {
   return (
     <div className="mb-3">
-      <h3 className="text-[13px] font-semibold text-foreground tracking-tight">{title}</h3>
+      <h3
+        ref={headingRef}
+        id={headingId}
+        tabIndex={headingTabIndex}
+        className="text-[13px] font-semibold text-foreground tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      >
+        {title}
+      </h3>
       {description && (
         <p className="text-[11px] text-muted-foreground/80 mt-0.5 leading-relaxed">{description}</p>
       )}
     </div>
   );
 }
-

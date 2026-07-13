@@ -1,10 +1,10 @@
 import { installEchoDraftE2E } from "../../utils/branding";
+import { isLikelyDictionaryPromptEcho } from "../../helpers/audio/transcription/dictionaryPromptEcho";
 
 export const installE2EHelpers = (deps) => {
   const {
     enabled,
     activeSessionRef,
-    audioManagerRef,
     latestProgressRef,
     normalizeTriggerPayload,
     onTranscriptionComplete,
@@ -48,13 +48,8 @@ export const installE2EHelpers = (deps) => {
         wordsRemaining: resultPatch.wordsRemaining,
       });
     },
-    isLikelyDictionaryPromptEcho: (transcribedText = "", dictionaryEntries = []) => {
-      const manager = audioManagerRef.current;
-      if (!manager?.isLikelyDictionaryPromptEcho) {
-        return false;
-      }
-      return manager.isLikelyDictionaryPromptEcho(transcribedText, dictionaryEntries);
-    },
+    isLikelyDictionaryPromptEcho: (transcribedText = "", dictionaryEntries = []) =>
+      isLikelyDictionaryPromptEcho(transcribedText, dictionaryEntries),
   };
 
   return installEchoDraftE2E(helpers);

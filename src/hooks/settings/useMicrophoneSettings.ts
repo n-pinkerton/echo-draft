@@ -8,7 +8,7 @@ export function useMicrophoneSettings() {
 
   const [selectedMicDeviceId, setSelectedMicDeviceId] = useLocalStorage("selectedMicDeviceId", "", {
     serialize: String,
-    deserialize: String,
+    deserialize: (value) => (value === "default" || value === "communications" ? "" : value),
   });
 
   return {
@@ -18,4 +18,3 @@ export function useMicrophoneSettings() {
     setSelectedMicDeviceId,
   };
 }
-

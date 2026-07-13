@@ -16,7 +16,7 @@ describe("audioPersistence", () => {
     expect(manager.emitError).not.toHaveBeenCalled();
   });
 
-  it("safePaste returns false and emits error on failure", async () => {
+  it("safePaste returns false without duplicating the delivery error on failure", async () => {
     const pasteText = vi.fn(async () => {
       throw new Error("nope");
     });
@@ -24,14 +24,17 @@ describe("audioPersistence", () => {
 
     const manager: any = { emitError: vi.fn() };
     await expect(safePaste(manager, "hello", {})).resolves.toBe(false);
-    expect(manager.emitError).toHaveBeenCalledTimes(1);
+    expect(manager.emitError).not.toHaveBeenCalled();
   });
 
   it("saveTranscription returns ipc result on success", async () => {
     const save = vi.fn(async () => ({ success: true, id: 123 }));
     (window as any).electronAPI = { saveTranscription: save };
 
-    await expect(saveTranscription({ text: "hi" } as any)).resolves.toEqual({ success: true, id: 123 });
+    await expect(saveTranscription({ text: "hi" } as any)).resolves.toEqual({
+      success: true,
+      id: 123,
+    });
   });
 
   it("saveTranscription returns error result on throw", async () => {

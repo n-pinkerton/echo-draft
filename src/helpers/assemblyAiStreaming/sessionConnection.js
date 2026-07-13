@@ -113,7 +113,7 @@ function handleSessionMessage(self, data) {
               self.accumulatedText = update.accumulatedText;
               self.onFinalTranscript?.(self.accumulatedText);
               debugLogger.debug("AssemblyAI final transcript (end_of_turn)", {
-                text: String(message.transcript).slice(0, 100),
+                turnLength: String(message.transcript).length,
                 totalAccumulated: self.accumulatedText.length,
               });
             } else if (update.action === "replaced-previous") {
@@ -121,12 +121,12 @@ function handleSessionMessage(self, data) {
               self.accumulatedText = update.accumulatedText;
               self.onFinalTranscript?.(self.accumulatedText);
               debugLogger.debug("AssemblyAI formatted turn update applied", {
-                text: update.lastTurnText.slice(0, 100),
+                turnLength: update.lastTurnText.length,
                 totalAccumulated: self.accumulatedText.length,
               });
             } else if (update.action === "ignored-duplicate") {
               debugLogger.debug("AssemblyAI duplicate turn ignored", {
-                text: String(message.transcript).slice(0, 100),
+                turnLength: String(message.transcript).length,
               });
             }
           } else {
@@ -146,6 +146,7 @@ function handleSessionMessage(self, data) {
             audioDuration: message.audio_duration_seconds,
             text: self.accumulatedText,
             audioStats,
+            terminationConfirmed: true,
           });
           self.terminationResolve = null;
         }
@@ -153,6 +154,7 @@ function handleSessionMessage(self, data) {
           audioDuration: message.audio_duration_seconds,
           text: self.accumulatedText,
           audioStats,
+          terminationConfirmed: true,
         });
         self.cleanup();
         break;
@@ -203,30 +205,39 @@ function forceEndpoint(self) {
 }
 
 async function disconnectSession(self, terminate = true) {
-  if (!self.ws) return { text: self.accumulatedText };
+  const buildUnconfirmedResult = (extra = {}) => ({
+    text: self.accumulatedText,
+    audioStats: self.getAudioStats(),
+    terminationConfirmed: false,
+    ...extra,
+  });
+
+  if (!self.ws) {
+    return buildUnconfirmedResult({ terminationUnavailable: true });
+  }
 
   self.isDisconnecting = true;
 
   if (terminate && self.ws.readyState === WebSocket.OPEN) {
     try {
-      self.ws.send(JSON.stringify({ type: "Terminate" }));
-
       let timeoutId;
-      const result = await Promise.race([
-        new Promise((resolve) => {
-          self.terminationResolve = resolve;
-        }),
-        new Promise((resolve) => {
-          timeoutId = setTimeout(() => {
-            debugLogger.debug("AssemblyAI termination timeout, using accumulated text");
-            resolve({
-              text: self.accumulatedText,
-              audioStats: self.getAudioStats(),
-              terminationTimedOut: true,
-            });
-          }, TERMINATION_TIMEOUT_MS);
-        }),
-      ]);
+      const result = await new Promise((resolve) => {
+        self.terminationResolve = resolve;
+        timeoutId = setTimeout(() => {
+          self.terminationResolve = null;
+          debugLogger.debug("AssemblyAI termination timeout; accumulated text is unconfirmed");
+          resolve(buildUnconfirmedResult({ terminationTimedOut: true }));
+        }, TERMINATION_TIMEOUT_MS);
+
+        try {
+          self.ws.send(JSON.stringify({ type: "Terminate" }));
+        } catch (error) {
+          clearTimeout(timeoutId);
+          self.terminationResolve = null;
+          debugLogger.debug("AssemblyAI terminate send failed", { error: error.message });
+          resolve(buildUnconfirmedResult({ terminationUnavailable: true }));
+        }
+      });
       clearTimeout(timeoutId);
 
       self.terminationResolve = null;
@@ -234,14 +245,11 @@ async function disconnectSession(self, terminate = true) {
       self.isDisconnecting = false;
       return result;
     } catch (err) {
-      debugLogger.debug("AssemblyAI terminate send failed", { error: err.message });
+      debugLogger.debug("AssemblyAI terminate failed", { error: err.message });
     }
   }
 
-  const result = {
-    text: self.accumulatedText,
-    audioStats: self.getAudioStats(),
-  };
+  const result = buildUnconfirmedResult({ terminationUnavailable: terminate });
   self.cleanup();
   self.isDisconnecting = false;
   return result;
@@ -298,4 +306,3 @@ module.exports = {
   handleSessionMessage,
   sendAudioChunk,
 };
-

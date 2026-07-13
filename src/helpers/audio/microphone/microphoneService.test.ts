@@ -26,9 +26,49 @@ describe("MicrophoneService", () => {
     const logger = { debug: vi.fn() };
     const service = new MicrophoneService({ logger, isBuiltInMicrophoneFn: vi.fn() as any });
     service.cachedMicDeviceId = "device-123";
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: {
+        enumerateDevices: vi.fn(async () => [
+          { kind: "audioinput", deviceId: "device-123", label: "Built-in Microphone" },
+        ]),
+      },
+      configurable: true,
+    });
 
     const constraints = await service.getAudioConstraints();
     expect(constraints.audio.deviceId.exact).toBe("device-123");
+  });
+
+  it("drops an unplugged cached built-in device and falls back to the system default", async () => {
+    const logger = { debug: vi.fn() };
+    const service = new MicrophoneService({ logger, isBuiltInMicrophoneFn: vi.fn(() => false) });
+    service.cachedMicDeviceId = "unplugged-device";
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: { enumerateDevices: vi.fn(async () => []) },
+      configurable: true,
+    });
+
+    const constraints = await service.getAudioConstraints();
+    expect(constraints.audio.deviceId).toBeUndefined();
+    expect(service.cachedMicDeviceId).toBeNull();
+  });
+
+  it("does not classify generated labels for unnamed microphones as built-in", async () => {
+    const logger = { debug: vi.fn() };
+    const enumerateDevices = vi.fn(async () => [
+      { kind: "audioinput", deviceId: "usb-mic", label: "" },
+      { kind: "audioinput", deviceId: "unknown-mic", label: "" },
+    ]);
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: { enumerateDevices },
+      configurable: true,
+    });
+    const service = new MicrophoneService({ logger });
+
+    const constraints = await service.getAudioConstraints();
+    expect(constraints.audio.deviceId).toBeUndefined();
+    await service.cacheMicrophoneDeviceId();
+    expect(service.cachedMicDeviceId).toBeNull();
   });
 
   it("getAudioConstraints enumerates devices and caches built-in mic", async () => {
@@ -130,4 +170,3 @@ describe("MicrophoneService", () => {
     expect(getUserMedia).toHaveBeenCalledTimes(1);
   });
 });
-

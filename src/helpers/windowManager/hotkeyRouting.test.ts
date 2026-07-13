@@ -45,7 +45,9 @@ describe("hotkeyRouting", () => {
   });
 
   it("creates deterministic session payloads with injected clock/uuid", () => {
-    expect(createSessionPayload("clipboard", { now: () => 123, randomUUID: () => "uuid-1" })).toEqual({
+    expect(
+      createSessionPayload("clipboard", { now: () => 123, randomUUID: () => "uuid-1" })
+    ).toEqual({
       outputMode: "clipboard",
       sessionId: "uuid-1",
       triggeredAt: 123,
@@ -91,6 +93,42 @@ describe("hotkeyRouting", () => {
     expect(manager.sendToggleDictation).toHaveBeenCalledTimes(2);
   });
 
+  it("defers supported Windows tap hotkeys to the ready native repeat-safe route", () => {
+    setPlatform("win32");
+    const manager: any = {
+      hotkeyManager: { isInListeningMode: () => false },
+      getActivationMode: () => "tap",
+      shouldUseWindowsNativeListener: () => true,
+      isWindowsNativeListenerReady: (routeId: string) => routeId === "insert",
+      sendToggleDictation: vi.fn(),
+      createSessionPayload: vi.fn(),
+    };
+
+    const callback = createHotkeyCallback(manager, "insert", () => "F10");
+    callback();
+
+    expect(manager.sendToggleDictation).not.toHaveBeenCalled();
+    expect(manager.createSessionPayload).not.toHaveBeenCalled();
+  });
+
+  it("uses the global toggle fallback in push mode while the native route is unavailable", () => {
+    setPlatform("win32");
+    const payload = { outputMode: "clipboard", sessionId: "fallback-1", triggeredAt: 1000 };
+    const manager: any = {
+      hotkeyManager: { isInListeningMode: () => false },
+      getActivationMode: () => "push",
+      shouldUseWindowsNativeListener: () => true,
+      isWindowsNativeListenerReady: () => false,
+      sendToggleDictation: vi.fn(),
+      createSessionPayload: vi.fn(() => payload),
+    };
+
+    const callback = createHotkeyCallback(manager, "clipboard", () => "F9");
+    callback();
+
+    expect(manager.sendToggleDictation).toHaveBeenCalledWith(payload);
+  });
+
   it("starts macOS compound push-to-talk when activation mode is push", () => {
     setPlatform("darwin");
     vi.useFakeTimers();
@@ -128,4 +166,3 @@ describe("hotkeyRouting", () => {
     expect(manager.macCompoundPushState).toBe(null);
   });
 });
-

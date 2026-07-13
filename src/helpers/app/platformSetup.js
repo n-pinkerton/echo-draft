@@ -9,14 +9,13 @@ function configureChannelUserDataPath({ app, channel, env = process.env } = {}) 
     throw new Error("configureChannelUserDataPath requires an Electron app instance");
   }
 
-  if (channel === "production") {
+  const isE2e = isTruthyFlag(env.OPENWHISPR_E2E);
+  if (channel === "production" && !isE2e) {
     return;
   }
 
   const e2eRunId = (env.OPENWHISPR_E2E_RUN_ID || "").trim();
-  const e2eSuffix = isTruthyFlag(env.OPENWHISPR_E2E)
-    ? `-e2e${e2eRunId ? `-${e2eRunId}` : ""}`
-    : "";
+  const e2eSuffix = isE2e ? `-e2e${e2eRunId ? `-${e2eRunId}` : ""}` : "";
 
   const isolatedPath = path.join(app.getPath("appData"), `EchoDraft-${channel}${e2eSuffix}`);
   app.setPath("userData", isolatedPath);
@@ -53,7 +52,12 @@ function applyWindowsAppUserModelId({ app, channel } = {}) {
   app.setAppUserModelId(windowsAppId);
 }
 
-function applyPlatformPreReadySetup({ app, channel, env = process.env, platform = process.platform } = {}) {
+function applyPlatformPreReadySetup({
+  app,
+  channel,
+  env = process.env,
+  platform = process.platform,
+} = {}) {
   if (!app) {
     throw new Error("applyPlatformPreReadySetup requires an Electron app instance");
   }

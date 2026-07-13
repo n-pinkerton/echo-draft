@@ -44,7 +44,11 @@ class LocalReasoningService {
 
       debugLogger.logReasoning("LOCAL_BRIDGE_INFERENCE", {
         modelId,
-        config: inferenceConfig,
+        maxTokens: inferenceConfig.maxTokens,
+        temperature: inferenceConfig.temperature,
+        contextSize: inferenceConfig.contextSize,
+        threads: inferenceConfig.threads,
+        systemPromptLength: inferenceConfig.systemPrompt.length,
       });
 
       const result = await modelManager.runInference(modelId, text, inferenceConfig);
@@ -55,7 +59,6 @@ class LocalReasoningService {
         modelId,
         processingTimeMs: processingTime,
         resultLength: result.length,
-        resultPreview: result.substring(0, 100) + (result.length > 100 ? "..." : ""),
       });
 
       return result;

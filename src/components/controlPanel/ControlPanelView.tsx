@@ -12,6 +12,7 @@ import UpdateActionButton from "./UpdateActionButton";
 import ControlPanelBanners from "./ControlPanelBanners";
 import TranscriptionsHeader from "./TranscriptionsHeader";
 import HistoryPanel from "./HistoryPanel";
+import DictationQuickStart from "./DictationQuickStart";
 import type { AlertDialogState, ConfirmDialogState } from "../../hooks/useDialogs";
 
 type UpdateStatus = {
@@ -56,13 +57,21 @@ type Props = {
   providerOptions: string[];
   isLoading: boolean;
   hotkey: string;
+  clipboardHotkey: string;
+  activationMode: "tap" | "push";
+  cleanupModel: string;
+  cleanupManagedByCloud: boolean;
+  preferBuiltInMic: boolean;
+  selectedMicDeviceId: string;
+  setPreferBuiltInMic: (next: boolean) => void;
+  setSelectedMicDeviceId: (next: string) => void;
 
   searchQuery: string;
   setSearchQuery: (next: string) => void;
   modeFilter: "all" | "insert" | "clipboard" | "file";
   setModeFilter: (next: "all" | "insert" | "clipboard" | "file") => void;
-  statusFilter: "all" | "success" | "error" | "cancelled";
-  setStatusFilter: (next: "all" | "success" | "error" | "cancelled") => void;
+  statusFilter: "all" | "success" | "delivery_issue" | "error" | "cancelled";
+  setStatusFilter: (next: "all" | "success" | "delivery_issue" | "error" | "cancelled") => void;
   providerFilter: string;
   setProviderFilter: (next: string) => void;
 
@@ -76,7 +85,10 @@ type Props = {
   exportTranscriptions: (format: "csv" | "json") => Promise<void>;
   isExporting: boolean;
 
-  copyToClipboard: (text: string, options?: { title?: string; description?: string }) => Promise<void>;
+  copyToClipboard: (
+    text: string,
+    options?: { title?: string; description?: string }
+  ) => Promise<void>;
   copyDiagnostics: (item: TranscriptionItemType) => Promise<void>;
   deleteTranscription: (id: number) => Promise<void>;
 };
@@ -113,6 +125,14 @@ export default function ControlPanelView(props: Props) {
     providerOptions,
     isLoading,
     hotkey,
+    clipboardHotkey,
+    activationMode,
+    cleanupModel,
+    cleanupManagedByCloud,
+    preferBuiltInMic,
+    selectedMicDeviceId,
+    setPreferBuiltInMic,
+    setSelectedMicDeviceId,
     searchQuery,
     setSearchQuery,
     modeFilter,
@@ -237,6 +257,32 @@ export default function ControlPanelView(props: Props) {
               setAiCTADismissed(true);
             }}
             onEnableAiEnhancement={() => {
+              setSettingsSection("aiModels");
+              setShowSettings(true);
+            }}
+          />
+
+          <DictationQuickStart
+            insertHotkey={hotkey}
+            clipboardHotkey={clipboardHotkey}
+            activationMode={activationMode}
+            cleanupEnabled={useReasoningModel}
+            cleanupModel={cleanupModel}
+            cleanupManagedByCloud={cleanupManagedByCloud}
+            preferBuiltInMic={preferBuiltInMic}
+            selectedMicDeviceId={selectedMicDeviceId}
+            onPreferBuiltInChange={setPreferBuiltInMic}
+            onDeviceSelect={setSelectedMicDeviceId}
+            latestCleanup={
+              history[0]?.meta?.cleanup && typeof history[0].meta.cleanup === "object"
+                ? history[0].meta.cleanup
+                : null
+            }
+            onOpenHotkeySettings={() => {
+              setSettingsSection("hotkeys");
+              setShowSettings(true);
+            }}
+            onOpenCleanupSettings={() => {
               setSettingsSection("aiModels");
               setShowSettings(true);
             }}

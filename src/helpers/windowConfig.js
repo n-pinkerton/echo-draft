@@ -2,6 +2,7 @@ const path = require("path");
 
 const WINDOW_SIZES = {
   BASE: { width: 96, height: 96 },
+  RECORDING_INDICATOR: { width: 210, height: 64 },
   WITH_STATUS: { width: 280, height: 182 },
   WITH_MENU: { width: 280, height: 310 },
   WITH_COMPACT_TOAST: { width: 300, height: 250 },
@@ -26,11 +27,11 @@ const MAIN_WINDOW_CONFIG = {
   transparent: true,
   show: false, // Start hidden, show after setup
   skipTaskbar: false, // Keep visible in Dock/taskbar so app stays discoverable
-  focusable: true,
+  focusable: false,
   visibleOnAllWorkspaces: process.platform !== "win32",
   fullScreenable: false,
   hasShadow: false, // Remove shadow for cleaner look
-  acceptsFirstMouse: true, // Accept clicks even when not focused
+  acceptsFirstMouse: false,
   type: process.platform === "darwin" ? "panel" : "normal", // Panel on macOS preserves floating behavior
 };
 
@@ -83,8 +84,8 @@ class WindowPositionUtil {
     return { x, y, width, height };
   }
 
-  static setupAlwaysOnTop(window) {
-    if (process.platform === "darwin") {
+  static setupAlwaysOnTop(window, platform = process.platform) {
+    if (platform === "darwin") {
       // macOS: Use panel level for proper floating behavior
       // This ensures the window stays on top across spaces and fullscreen apps
       window.setAlwaysOnTop(true, "floating", 1);
@@ -98,7 +99,7 @@ class WindowPositionUtil {
       if (window.isVisible()) {
         window.setAlwaysOnTop(true, "floating", 1);
       }
-    } else if (process.platform === "win32") {
+    } else if (platform === "win32") {
       window.setAlwaysOnTop(true, "pop-up-menu");
     } else {
       // Linux and other platforms

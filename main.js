@@ -1,4 +1,12 @@
-const { app, globalShortcut, BrowserWindow, dialog, ipcMain, session } = require("electron");
+const {
+  app,
+  globalShortcut,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  powerMonitor,
+  session,
+} = require("electron");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
@@ -10,13 +18,27 @@ const {
 } = require("./src/helpers/app/appConfig");
 const { applyPlatformPreReadySetup } = require("./src/helpers/app/platformSetup");
 const { migrateUserDataProfile } = require("./src/helpers/app/userDataProfileMigration");
-const { startAuthBridgeServer, DEFAULT_AUTH_BRIDGE_HOST, DEFAULT_AUTH_BRIDGE_PATH } = require("./src/helpers/app/authBridgeServer");
-const { handleOAuthDeepLink, navigateControlPanelWithVerifier } = require("./src/helpers/app/oauthDeepLink");
+const {
+  startAuthBridgeServer,
+  DEFAULT_AUTH_BRIDGE_HOST,
+  DEFAULT_AUTH_BRIDGE_PATH,
+} = require("./src/helpers/app/authBridgeServer");
+const {
+  handleOAuthDeepLink,
+  navigateControlPanelWithVerifier,
+} = require("./src/helpers/app/oauthDeepLink");
 const { bootstrapManagers } = require("./src/helpers/app/managerBootstrap");
 const { installNeonAuthOriginFix } = require("./src/helpers/app/neonAuthOriginFix");
 const { isLiveWindow } = require("./src/helpers/app/windowUtils");
-const { registerMacOsGlobeHotkeys } = require("./src/helpers/app/platformHotkeys/macosGlobeHotkeys");
-const { registerWindowsPushToTalk } = require("./src/helpers/app/platformHotkeys/windowsPushToTalk");
+const {
+  registerMacOsGlobeHotkeys,
+} = require("./src/helpers/app/platformHotkeys/macosGlobeHotkeys");
+const {
+  registerWindowsPushToTalk,
+} = require("./src/helpers/app/platformHotkeys/windowsPushToTalk");
+const {
+  registerWindowsHotkeyRecovery,
+} = require("./src/helpers/app/platformHotkeys/windowsHotkeyRecovery");
 
 const APP_CHANNEL = resolveAppChannel();
 process.env.OPENWHISPR_CHANNEL = APP_CHANNEL;
@@ -82,6 +104,8 @@ let updateManager = null;
 let globeKeyManager = null;
 let windowsKeyManager = null;
 let authBridgeServer = null;
+let windowsHotkeyController = null;
+let disposeWindowsHotkeyRecovery = null;
 
 const AUTH_BRIDGE_HOST = DEFAULT_AUTH_BRIDGE_HOST;
 const AUTH_BRIDGE_PORT = parseAuthBridgePort();
@@ -227,11 +251,17 @@ async function startApp() {
   updateManager.checkForUpdatesOnStartup();
 
   registerMacOsGlobeHotkeys({ ipcMain, windowManager, hotkeyManager, globeKeyManager });
-  registerWindowsPushToTalk({
+  windowsHotkeyController = registerWindowsPushToTalk({
     ipcMain,
     windowManager,
     hotkeyManager,
     windowsKeyManager,
+    debugLogger,
+  });
+  disposeWindowsHotkeyRecovery = registerWindowsHotkeyRecovery({
+    powerMonitor,
+    windowManager,
+    windowsHotkeyController,
     debugLogger,
   });
 }
@@ -280,22 +310,25 @@ if (gotSingleInstanceLock) {
     }
   });
 
-  app.whenReady().then(() => {
-    // On Linux, --enable-transparent-visuals requires a short delay before creating
-    // windows to allow the compositor to set up the ARGB visual correctly.
-    // Without this delay, transparent windows flicker on both X11 and Wayland.
-    const delay = process.platform === "linux" ? 300 : 0;
-    return new Promise((resolve) => setTimeout(resolve, delay));
-  }).then(() => {
-    startApp().catch((error) => {
-      console.error("Failed to start app:", error);
-      dialog.showErrorBox(
-        "EchoDraft Startup Error",
-        `Failed to start the application:\n\n${error.message}\n\nPlease report this issue.`
-      );
-      app.exit(1);
+  app
+    .whenReady()
+    .then(() => {
+      // On Linux, --enable-transparent-visuals requires a short delay before creating
+      // windows to allow the compositor to set up the ARGB visual correctly.
+      // Without this delay, transparent windows flicker on both X11 and Wayland.
+      const delay = process.platform === "linux" ? 300 : 0;
+      return new Promise((resolve) => setTimeout(resolve, delay));
+    })
+    .then(() => {
+      startApp().catch((error) => {
+        console.error("Failed to start app:", error);
+        dialog.showErrorBox(
+          "EchoDraft Startup Error",
+          `Failed to start the application:\n\n${error.message}\n\nPlease report this issue.`
+        );
+        app.exit(1);
+      });
     });
-  });
 
   app.on("window-all-closed", () => {
     // Don't quit on macOS when all windows are closed
@@ -351,6 +384,10 @@ if (gotSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    disposeWindowsHotkeyRecovery?.();
+    disposeWindowsHotkeyRecovery = null;
+    windowsHotkeyController?.dispose?.();
+    windowsHotkeyController = null;
     if (authBridgeServer) {
       authBridgeServer.close();
       authBridgeServer = null;

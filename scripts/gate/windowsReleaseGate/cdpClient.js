@@ -3,9 +3,10 @@ const WebSocket = require("ws");
 const { sleep } = require("./utils");
 
 class CdpClient {
-  constructor(wsUrl, { WebSocketImpl = WebSocket } = {}) {
+  constructor(wsUrl, { WebSocketImpl = WebSocket, commandTimeoutMs = 45000 } = {}) {
     this.wsUrl = wsUrl;
     this.WebSocketImpl = WebSocketImpl;
+    this.commandTimeoutMs = commandTimeoutMs;
     this.ws = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -22,8 +23,9 @@ class CdpClient {
     this.ws.on("message", (data) => {
       const message = JSON.parse(data.toString());
       if (message.id && this.pending.has(message.id)) {
-        const { resolve, reject } = this.pending.get(message.id);
+        const { resolve, reject, timer } = this.pending.get(message.id);
         this.pending.delete(message.id);
+        clearTimeout(timer);
         if (message.error) {
           reject(new Error(message.error.message || "CDP error"));
         } else {
@@ -31,25 +33,54 @@ class CdpClient {
         }
       }
     });
+    this.ws.on("close", () => {
+      this.rejectPending(new Error("CDP connection closed before the command completed"));
+    });
 
     await this.send("Runtime.enable");
     await this.send("Page.enable");
   }
 
   async send(method, params = {}) {
+    if (!this.ws) {
+      throw new Error(`CDP command ${method} cannot run before connect()`);
+    }
+
     const id = this.nextId++;
     const payload = { id, method, params };
     const text = JSON.stringify(payload);
 
     return await new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.ws.send(text, (error) => {
-        if (error) {
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        reject(new Error(`CDP command ${method} timed out after ${this.commandTimeoutMs}ms`));
+      }, this.commandTimeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
+      try {
+        this.ws.send(text, (error) => {
+          if (error && this.pending.has(id)) {
+            this.pending.delete(id);
+            clearTimeout(timer);
+            reject(error);
+          }
+        });
+      } catch (error) {
+        if (this.pending.has(id)) {
           this.pending.delete(id);
-          reject(error);
+          clearTimeout(timer);
         }
-      });
+        reject(error);
+      }
     });
+  }
+
+  rejectPending(error) {
+    for (const { reject, timer } of this.pending.values()) {
+      clearTimeout(timer);
+      reject(error);
+    }
+    this.pending.clear();
   }
 
   async eval(expression) {
@@ -128,6 +159,7 @@ class CdpClient {
     const ws = this.ws;
     this.ws = null;
     if (!ws) return;
+    this.rejectPending(new Error("CDP client closed before the command completed"));
 
     await new Promise((resolve) => {
       let resolved = false;
@@ -163,4 +195,3 @@ class CdpClient {
 module.exports = {
   CdpClient,
 };
-

@@ -1,11 +1,24 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import AudioManager from "../helpers/audioManager";
-import { playCompletionCue, playStartCue, playStopCue } from "../utils/dictationCues";
+import {
+  playCancelCue,
+  playCompletionCue,
+  playErrorCue,
+  playStartCue,
+  playStopCue,
+} from "../utils/dictationCues";
 import { INITIAL_PROGRESS } from "./audioRecording/stages";
-import { createSessionId as createSessionIdBase, normalizeTriggerPayload as normalizeTriggerPayloadBase } from "./audioRecording/triggerPayload";
+import {
+  createSessionId as createSessionIdBase,
+  normalizeTriggerPayload as normalizeTriggerPayloadBase,
+} from "./audioRecording/triggerPayload";
 import { createAudioManagerCallbacks } from "./audioRecording/audioManagerCallbacks";
 import { installE2EHelpers } from "./audioRecording/e2eHelpers";
-import { createStartRecordingHandler, createStopRecordingHandler } from "./audioRecording/recordingHandlers";
+import {
+  createRecordingOperationQueue,
+  createStartRecordingHandler,
+  createStopRecordingHandler,
+} from "./audioRecording/recordingHandlers";
 import { createStageUpdater } from "./audioRecording/stageUpdater";
 import { createTranscriptionCompleteHandler } from "./audioRecording/transcriptionCompleteHandler";
 
@@ -27,6 +40,10 @@ export const useAudioRecording = (toast, options = {}) => {
   const sessionStartedAtRef = useRef(null);
   const recordingStartedAtRef = useRef(null);
   const progressResetTimerRef = useRef(null);
+  const recordingOperationQueueRef = useRef(null);
+  if (!recordingOperationQueueRef.current) {
+    recordingOperationQueueRef.current = createRecordingOperationQueue();
+  }
   const { onToggle } = options;
 
   const clearProgressResetTimer = useCallback(() => {
@@ -47,12 +64,9 @@ export const useAudioRecording = (toast, options = {}) => {
     setProgress(INITIAL_PROGRESS);
   }, [clearProgressResetTimer]);
 
-  const normalizeTriggerPayload = useCallback(
-    (payload = {}) => {
-      return normalizeTriggerPayloadBase(payload, { createSessionId: createSessionIdBase });
-    },
-    []
-  );
+  const normalizeTriggerPayload = useCallback((payload = {}) => {
+    return normalizeTriggerPayloadBase(payload, { createSessionId: createSessionIdBase });
+  }, []);
 
   const getNextJobId = useCallback(() => {
     nextJobIdRef.current += 1;
@@ -128,9 +142,31 @@ export const useAudioRecording = (toast, options = {}) => {
         normalizeTriggerPayload,
         recordingSessionIdRef,
         upsertJob,
-        playStopCue,
       }),
     [normalizeTriggerPayload, upsertJob]
+  );
+
+  const startRecording = useCallback(
+    (payload = {}) => recordingOperationQueueRef.current.run(() => performStartRecording(payload)),
+    [performStartRecording]
+  );
+
+  const stopRecording = useCallback(
+    (payload = {}) => recordingOperationQueueRef.current.run(() => performStopRecording(payload)),
+    [performStopRecording]
+  );
+
+  const toggleRecording = useCallback(
+    (payload = {}) =>
+      recordingOperationQueueRef.current.run(async () => {
+        if (!audioManagerRef.current) return false;
+        const currentState = audioManagerRef.current.getState();
+        if (!currentState.isRecording) {
+          return await performStartRecording(payload);
+        }
+        return await performStopRecording(payload);
+      }),
+    [performStartRecording, performStopRecording]
   );
 
   useEffect(() => {
@@ -160,6 +196,7 @@ export const useAudioRecording = (toast, options = {}) => {
       updateStage,
       upsertJob,
       playCompletionCue,
+      playErrorCue,
     });
 
     audioManagerRef.current.setCallbacks(
@@ -177,6 +214,8 @@ export const useAudioRecording = (toast, options = {}) => {
         updateStage,
         upsertJob,
         onTranscriptionComplete: handleTranscriptionComplete,
+        playErrorCue,
+        playStopCue,
       })
     );
 
@@ -192,42 +231,24 @@ export const useAudioRecording = (toast, options = {}) => {
 
     audioManagerRef.current.warmupStreamingConnection();
 
-    const handleToggle = async (payload = {}) => {
-      if (!audioManagerRef.current) return;
-      const currentState = audioManagerRef.current.getState();
-
-      if (!currentState.isRecording) {
-        await performStartRecording(payload);
-      } else {
-        await performStopRecording(payload);
-      }
-    };
-
-    const handleStart = async (payload = {}) => {
-      await performStartRecording(payload);
-    };
-
-    const handleStop = async (payload = {}) => {
-      await performStopRecording(payload);
-    };
-
     const disposeToggle = window.electronAPI.onToggleDictation((payload) => {
-      handleToggle(payload);
+      void toggleRecording(payload);
       onToggle?.();
     });
 
     const disposeStart = window.electronAPI.onStartDictation?.((payload) => {
-      handleStart(payload);
+      void startRecording(payload);
       onToggle?.();
     });
 
     const disposeStop = window.electronAPI.onStopDictation?.((payload) => {
-      handleStop(payload);
+      void stopRecording(payload);
       onToggle?.();
     });
 
     const handleNoAudioDetected = () => {
       updateStage("error", { message: "No audio detected" });
+      void playErrorCue();
       toast({
         title: "No Audio Detected",
         description: "The recording contained no detectable audio. Please try again.",
@@ -252,10 +273,11 @@ export const useAudioRecording = (toast, options = {}) => {
     clearProgressResetTimer,
     normalizeTriggerPayload,
     onToggle,
-    performStartRecording,
-    performStopRecording,
     removeJob,
+    startRecording,
+    stopRecording,
     toast,
+    toggleRecording,
     upsertJob,
     updateStage,
   ]);
@@ -289,15 +311,11 @@ export const useAudioRecording = (toast, options = {}) => {
     return () => clearInterval(timer);
   }, [progress.stage]);
 
-  const startRecording = async (payload = {}) => {
-    return performStartRecording(payload);
-  };
-
-  const stopRecording = async (payload = {}) => {
-    return performStopRecording(payload);
-  };
-
   const cancelRecording = async () => {
+    if (audioManagerRef.current?.getState().isStreaming) {
+      return await stopRecording({ stopReason: "manual", stopSource: "cancel-control" });
+    }
+
     const sessionId = recordingSessionIdRef.current || activeSessionRef.current?.sessionId || null;
     activeSessionRef.current = null;
     recordingSessionIdRef.current = null;
@@ -307,11 +325,11 @@ export const useAudioRecording = (toast, options = {}) => {
     }
     updateStage("cancelled", { message: "Recording cancelled" });
     if (audioManagerRef.current) {
-      const state = audioManagerRef.current.getState();
-      if (state.isStreaming) {
-        return await audioManagerRef.current.stopStreamingRecording();
+      const cancelled = audioManagerRef.current.cancelRecording();
+      if (cancelled) {
+        void playCancelCue();
       }
-      return audioManagerRef.current.cancelRecording();
+      return cancelled;
     }
     return false;
   };
@@ -323,7 +341,11 @@ export const useAudioRecording = (toast, options = {}) => {
     setJobs([]);
     updateStage("cancelled", { message: "Processing cancelled" });
     if (audioManagerRef.current) {
-      return audioManagerRef.current.cancelProcessing();
+      const cancelled = audioManagerRef.current.cancelProcessing();
+      if (cancelled) {
+        void playCancelCue();
+      }
+      return cancelled;
     }
     return false;
   };
@@ -331,9 +353,9 @@ export const useAudioRecording = (toast, options = {}) => {
   const toggleListening = async (payload = {}) => {
     const outputMode = payload?.outputMode === "clipboard" ? "clipboard" : "insert";
     if (!isRecording && (!isProcessing || outputMode === "clipboard")) {
-      await startRecording(payload);
+      await toggleRecording(payload);
     } else if (isRecording) {
-      await stopRecording(payload);
+      await toggleRecording(payload);
     }
   };
 

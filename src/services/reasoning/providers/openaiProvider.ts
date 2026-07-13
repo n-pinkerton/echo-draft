@@ -7,6 +7,26 @@ import type { ReasoningConfig } from "../../BaseReasoningService";
 export type OpenAiEndpointCandidate = { url: string; type: "responses" | "chat" };
 
 const OPENAI_CLEANUP_TEXT_VERBOSITY = "medium";
+const OPENAI_CLEANUP_MIN_OUTPUT_TOKENS = 2048;
+const OPENAI_CLEANUP_MAX_OUTPUT_TOKENS = 32768;
+
+export const calculateCleanupMaxOutputTokens = (
+  inputTextLength: number,
+  configuredMaxTokens?: number
+): number => {
+  if (typeof configuredMaxTokens === "number" && configuredMaxTokens > 0) {
+    return Math.round(configuredMaxTokens);
+  }
+
+  const preservationBudget = Math.ceil(Math.max(0, inputTextLength) / 2) + 512;
+  return Math.max(
+    OPENAI_CLEANUP_MIN_OUTPUT_TOKENS,
+    Math.min(OPENAI_CLEANUP_MAX_OUTPUT_TOKENS, preservationBudget)
+  );
+};
+
+const getCleanupRequestTimeoutMs = (inputTextLength: number): number =>
+  Math.max(60_000, Math.min(180_000, 45_000 + Math.max(0, inputTextLength)));
 
 export async function processWithOpenAiProvider({
   text,
@@ -61,17 +81,16 @@ export async function processWithOpenAiProvider({
       { role: "user", content: userPrompt },
     ];
 
-    const maxOutputTokens =
-      config.maxTokens ||
-      Math.max(
-        4096,
-        calculateMaxTokens(
-          text.length,
-          TOKEN_LIMITS.MIN_TOKENS,
-          TOKEN_LIMITS.MAX_TOKENS,
-          TOKEN_LIMITS.TOKEN_MULTIPLIER
-        )
-      );
+    const legacyCalculatedMaxTokens = calculateMaxTokens(
+      text.length,
+      TOKEN_LIMITS.MIN_TOKENS,
+      TOKEN_LIMITS.MAX_TOKENS,
+      TOKEN_LIMITS.TOKEN_MULTIPLIER
+    );
+    const maxOutputTokens = config.maxTokens
+      ? calculateCleanupMaxOutputTokens(text.length, config.maxTokens)
+      : Math.max(legacyCalculatedMaxTokens, calculateCleanupMaxOutputTokens(text.length));
+    const requestTimeoutMs = getCleanupRequestTimeoutMs(text.length);
 
     const isOlderModel = model && (model.startsWith("gpt-4") || model.startsWith("gpt-3"));
     const isCustomEndpoint = openAiBase !== API_ENDPOINTS.OPENAI_BASE;
@@ -89,7 +108,6 @@ export async function processWithOpenAiProvider({
         model,
         textLength: text.length,
         hasApiKey: Boolean(apiKey),
-        apiKeyPreview: apiKey ? `${apiKey.substring(0, 8)}...` : "(none)",
       });
     }
 
@@ -98,7 +116,7 @@ export async function processWithOpenAiProvider({
 
       for (const { url: endpoint, type } of endpointCandidates) {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
+        const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
         try {
           const requestBody: any = { model };
           const usesOpenAiReasoningControls =
@@ -109,7 +127,7 @@ export async function processWithOpenAiProvider({
             requestBody.store = false;
             requestBody.max_output_tokens = maxOutputTokens;
             if (usesOpenAiReasoningControls) {
-              requestBody.reasoning = { effort: "low" };
+              requestBody.reasoning = { effort: "none" };
               requestBody.text = { verbosity: OPENAI_CLEANUP_TEXT_VERBOSITY };
               requestBody.truncation = "disabled";
             }
@@ -125,7 +143,7 @@ export async function processWithOpenAiProvider({
               requestBody.max_tokens = maxOutputTokens;
             }
             if (usesOpenAiReasoningControls) {
-              requestBody.reasoning_effort = "low";
+              requestBody.reasoning_effort = "none";
             }
           }
 
@@ -155,37 +173,44 @@ export async function processWithOpenAiProvider({
             const errorData = await res.json().catch(() => ({ error: res.statusText }));
             const errorMessage =
               errorData.error?.message || errorData.message || `OpenAI API error: ${res.status}`;
+            const errorCode = errorData.error?.code || errorData.code || null;
 
             const isUnsupportedEndpoint =
-              (res.status === 404 || res.status === 405) && type === "responses";
+              type === "responses" &&
+              (res.status === 405 ||
+                (res.status === 404 &&
+                  errorCode !== "model_not_found" &&
+                  errorCode !== "invalid_model"));
 
             if (isUnsupportedEndpoint) {
               lastError = new Error(errorMessage);
               rememberOpenAiPreference(openAiBase, "chat");
               logger.logReasoning("OPENAI_ENDPOINT_FALLBACK", {
                 attemptedEndpoint: endpoint,
-                error: errorMessage,
+                status: res.status,
+                errorCode,
               });
               continue;
             }
 
-            throw new Error(errorMessage);
+            const apiError = new Error(errorMessage) as Error & {
+              status?: number;
+              response?: { status: number };
+              code?: string | null;
+            };
+            apiError.status = res.status;
+            apiError.response = { status: res.status };
+            apiError.code = errorCode;
+            throw apiError;
           }
 
           rememberOpenAiPreference(openAiBase, type);
           return await res.json();
         } catch (error) {
           if ((error as Error).name === "AbortError") {
-            throw new Error("Request timed out after 30s");
+            throw new Error(`Request timed out after ${Math.round(requestTimeoutMs / 1000)}s`);
           }
           lastError = error as Error;
-          if (type === "responses") {
-            logger.logReasoning("OPENAI_ENDPOINT_FALLBACK", {
-              attemptedEndpoint: endpoint,
-              error: (error as Error).message,
-            });
-            continue;
-          }
           throw error;
         } finally {
           clearTimeout(timeoutId);
@@ -294,8 +319,8 @@ export async function processWithOpenAiProvider({
       typeof response?.incomplete_details?.reason === "string"
         ? response.incomplete_details.reason
         : null;
-    if (status === "incomplete" && incompleteReason === "max_output_tokens") {
-      logger.logReasoning("OPENAI_OUTPUT_TRUNCATED", {
+    if (isResponsesApi && status && status !== "completed") {
+      logger.logReasoning("OPENAI_OUTPUT_INCOMPLETE", {
         model,
         status,
         incompleteReason,
@@ -303,16 +328,18 @@ export async function processWithOpenAiProvider({
         maxOutputTokens,
       });
       logger.warn(
-        "OpenAI cleanup truncated output (Responses API)",
+        "OpenAI cleanup returned a non-complete response (Responses API)",
         { model, status, incompleteReason, responseLength: responseText.length, maxOutputTokens },
         "reasoning"
       );
       throw new Error(
-        "OpenAI truncated the response due to max output tokens. Try a shorter input or increase max tokens."
+        incompleteReason === "max_output_tokens"
+          ? "OpenAI truncated the response due to max output tokens."
+          : `OpenAI returned a non-complete cleanup response (${status}).`
       );
     }
 
-    if (chatFinishReason === "length") {
+    if (chatFinishReason && chatFinishReason !== "stop") {
       logger.logReasoning("OPENAI_OUTPUT_TRUNCATED", {
         model,
         finishReason: chatFinishReason,
@@ -330,17 +357,19 @@ export async function processWithOpenAiProvider({
         "reasoning"
       );
       throw new Error(
-        "OpenAI truncated the response due to token limits. Try a shorter input or increase max tokens."
+        chatFinishReason === "length"
+          ? "OpenAI truncated the response due to token limits."
+          : "OpenAI returned an incomplete cleanup response."
       );
     }
 
     if (!responseText) {
-      logger.logReasoning("OPENAI_EMPTY_RESPONSE_FALLBACK", {
+      logger.logReasoning("OPENAI_EMPTY_RESPONSE", {
         model,
         originalTextLength: text.length,
         reason: "Empty response from API",
       });
-      return text;
+      throw new Error("OpenAI returned an empty cleanup response.");
     }
 
     return responseText;

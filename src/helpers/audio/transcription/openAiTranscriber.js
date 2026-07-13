@@ -94,7 +94,6 @@ export class OpenAiTranscriber {
           provider,
           hasKey: !!apiKey,
           keyLength: apiKey?.length || 0,
-          keyPreview: apiKey ? `${apiKey.substring(0, 8)}...` : "(none)",
         },
         "transcription"
       );
@@ -213,7 +212,9 @@ export class OpenAiTranscriber {
           : "openai";
 
       const model =
-        typeof localStorage !== "undefined" ? localStorage.getItem("cloudTranscriptionModel") || "" : "";
+        typeof localStorage !== "undefined"
+          ? localStorage.getItem("cloudTranscriptionModel") || ""
+          : "";
 
       const trimmedModel = model.trim();
 
@@ -245,13 +246,16 @@ export class OpenAiTranscriber {
         ? localStorage.getItem("cloudTranscriptionProvider") || "openai"
         : "openai";
     const currentBaseUrl =
-      typeof localStorage !== "undefined" ? localStorage.getItem("cloudTranscriptionBaseUrl") || "" : "";
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("cloudTranscriptionBaseUrl") || ""
+        : "";
 
     const isCustomEndpoint = currentProvider === "custom";
 
     if (
       this.cachedTranscriptionEndpoint &&
-      (this.cachedEndpointProvider !== currentProvider || this.cachedEndpointBaseUrl !== currentBaseUrl)
+      (this.cachedEndpointProvider !== currentProvider ||
+        this.cachedEndpointBaseUrl !== currentBaseUrl)
     ) {
       this.logger?.debug?.(
         "STT endpoint cache invalidated",

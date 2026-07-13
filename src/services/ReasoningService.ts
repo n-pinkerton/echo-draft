@@ -2,7 +2,11 @@ import { getModelProvider } from "../models/ModelRegistry";
 import { BaseReasoningService, ReasoningConfig } from "./BaseReasoningService";
 import { SecureCache } from "../utils/SecureCache";
 import { API_ENDPOINTS, buildApiUrl } from "../config/constants";
-import { LEGACY_PROMPTS, sanitizeProcessedText, stripUntrustedTranscriptionWrapper } from "../config/prompts";
+import {
+  LEGACY_PROMPTS,
+  sanitizeProcessedText,
+  stripUntrustedTranscriptionWrapper,
+} from "../config/prompts";
 import logger from "../utils/logger";
 import { processWithOpenAiProvider } from "./reasoning/providers/openaiProvider";
 import { getReasoningApiKey } from "./reasoning/apiKeys";
@@ -109,7 +113,6 @@ class ReasoningService extends BaseReasoningService {
         model,
         processingTimeMs: processingTime,
         resultLength: result.length,
-        resultPreview: result.substring(0, 100) + (result.length > 100 ? "..." : ""),
       });
 
       return result;
@@ -144,7 +147,10 @@ class ReasoningService extends BaseReasoningService {
     try {
       const storage = typeof window !== "undefined" ? window.localStorage : undefined;
       const openAiBase = this.openAiEndpointResolver.getConfiguredBase(storage);
-      const endpointCandidates = this.openAiEndpointResolver.getEndpointCandidates(openAiBase, storage);
+      const endpointCandidates = this.openAiEndpointResolver.getEndpointCandidates(
+        openAiBase,
+        storage
+      );
       return await processWithOpenAiProvider({
         text,
         model,
@@ -154,10 +160,12 @@ class ReasoningService extends BaseReasoningService {
         isCustomProvider,
         openAiBase,
         endpointCandidates,
-        getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
+        getSystemPrompt: (value, selectedModel) =>
+          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
-        getStoredOpenAiPreference: (base) => this.openAiEndpointResolver.getStoredPreference(base, storage),
+        getStoredOpenAiPreference: (base) =>
+          this.openAiEndpointResolver.getStoredPreference(base, storage),
         rememberOpenAiPreference: (base, preference) =>
           this.openAiEndpointResolver.rememberPreference(base, preference, storage),
       });
@@ -192,7 +200,8 @@ class ReasoningService extends BaseReasoningService {
       model,
       agentName,
       config,
-      getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
+      getSystemPrompt: (value, selectedModel) =>
+        this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
       ipcCall: (userPrompt, modelName, agent, options) =>
         window.electronAPI.processAnthropicReasoning(userPrompt, modelName, agent, options),
     });
@@ -217,7 +226,8 @@ class ReasoningService extends BaseReasoningService {
       model,
       agentName,
       config,
-      getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
+      getSystemPrompt: (value, selectedModel) =>
+        this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
       ipcCall: (userPrompt, modelName, agent, options) =>
         window.electronAPI.processLocalReasoning(userPrompt, modelName, agent, options),
     });
@@ -244,7 +254,8 @@ class ReasoningService extends BaseReasoningService {
         agentName,
         config,
         apiKey,
-        getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
+        getSystemPrompt: (value, selectedModel) =>
+          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
       });
@@ -272,27 +283,28 @@ class ReasoningService extends BaseReasoningService {
       throw new Error("Already processing a request");
     }
 
-      const apiKey = await this.getApiKey("groq");
-      this.isProcessing = true;
+    const apiKey = await this.getApiKey("groq");
+    this.isProcessing = true;
 
-      try {
-        const endpoint = buildApiUrl(API_ENDPOINTS.GROQ_BASE, "/chat/completions");
-        return await callChatCompletionsApi({
-          endpoint,
-          apiKey,
-          model,
-          text,
-          agentName,
-          config,
-          providerName: "Groq",
-          getSystemPrompt: (value, selectedModel) => this.getSystemPrompt(value, selectedModel),
-          calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
-            this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
-        });
-      } catch (error) {
-        logger.logReasoning("GROQ_ERROR", {
-          model,
-          error: (error as Error).message,
+    try {
+      const endpoint = buildApiUrl(API_ENDPOINTS.GROQ_BASE, "/chat/completions");
+      return await callChatCompletionsApi({
+        endpoint,
+        apiKey,
+        model,
+        text,
+        agentName,
+        config,
+        providerName: "Groq",
+        getSystemPrompt: (value, selectedModel) =>
+          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
+        calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
+          this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
+      });
+    } catch (error) {
+      logger.logReasoning("GROQ_ERROR", {
+        model,
+        error: (error as Error).message,
         errorType: (error as Error).name,
       });
       throw error;
@@ -338,8 +350,8 @@ class ReasoningService extends BaseReasoningService {
     }
   }
 
-  async isAvailable(): Promise<boolean> {
-    return await checkReasoningAvailability(window.electronAPI);
+  async isAvailable(provider: string = "auto"): Promise<boolean> {
+    return await checkReasoningAvailability(window.electronAPI, provider);
   }
 
   clearApiKeyCache(

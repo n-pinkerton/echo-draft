@@ -35,13 +35,16 @@ try { $processName = (Get-Process -Id $pid -ErrorAction Stop).ProcessName } catc
 
   const result = await psJson(script);
   assert(result.code === 0, `getForegroundWindowInfo failed: ${result.stderr}`);
-  assert(result.parsed?.success, `getForegroundWindowInfo returned failure: ${result.stdout} ${result.stderr}`);
+  assert(
+    result.parsed?.success,
+    `getForegroundWindowInfo returned failure: ${result.stdout} ${result.stderr}`
+  );
   return result.parsed;
 }
 
-async function setForegroundWindow(hwnd) {
+async function setForegroundWindow(hwnd, focusHwnd = null) {
   const script = `
-param([Int64]$TargetHwnd)
+param([Int64]$TargetHwnd, [Int64]$FocusHwnd)
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -50,6 +53,11 @@ public static class WinApiActivate2 {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
 }
 "@
 $target = [IntPtr]$TargetHwnd
@@ -57,8 +65,32 @@ if (-not [WinApiActivate2]::IsWindow($target)) {
   [pscustomobject]@{ success = $false; reason = "window_not_found"; targetHwnd = $TargetHwnd } | ConvertTo-Json -Compress
   exit 0
 }
-[void][WinApiActivate2]::ShowWindowAsync($target, 9)
-$setResult = [WinApiActivate2]::SetForegroundWindow($target)
+$foreground = [WinApiActivate2]::GetForegroundWindow()
+$currentThread = [WinApiActivate2]::GetCurrentThreadId()
+$foregroundThread = [WinApiActivate2]::GetWindowThreadProcessId($foreground, [IntPtr]::Zero)
+$targetThread = [WinApiActivate2]::GetWindowThreadProcessId($target, [IntPtr]::Zero)
+$attachedForeground = $false
+$attachedTarget = $false
+try {
+  if ($foregroundThread -ne 0 -and $foregroundThread -ne $currentThread) {
+    $attachedForeground = [WinApiActivate2]::AttachThreadInput($currentThread, $foregroundThread, $true)
+  }
+  if ($targetThread -ne 0 -and $targetThread -ne $currentThread) {
+    $attachedTarget = [WinApiActivate2]::AttachThreadInput($currentThread, $targetThread, $true)
+  }
+  [void][WinApiActivate2]::ShowWindowAsync($target, 9)
+  [void][WinApiActivate2]::BringWindowToTop($target)
+  $setResult = [WinApiActivate2]::SetForegroundWindow($target)
+  $focusTarget = $(if ($FocusHwnd -ne 0 -and [WinApiActivate2]::IsWindow([IntPtr]$FocusHwnd)) { [IntPtr]$FocusHwnd } else { $target })
+  [void][WinApiActivate2]::SetFocus($focusTarget)
+} finally {
+  if ($attachedTarget) {
+    [void][WinApiActivate2]::AttachThreadInput($currentThread, $targetThread, $false)
+  }
+  if ($attachedForeground) {
+    [void][WinApiActivate2]::AttachThreadInput($currentThread, $foregroundThread, $false)
+  }
+}
 Start-Sleep -Milliseconds 140
 $active = [Int64][WinApiActivate2]::GetForegroundWindow()
 [pscustomobject]@{
@@ -69,15 +101,15 @@ $active = [Int64][WinApiActivate2]::GetForegroundWindow()
 } | ConvertTo-Json -Compress
 `.trim();
 
-  const result = await psJson(script, [String(hwnd)]);
+  const result = await psJson(script, [String(hwnd), String(focusHwnd || 0)]);
   assert(result.code === 0, `setForegroundWindow failed: ${result.stderr}`);
   return result.parsed;
 }
 
-async function ensureForegroundWindow(hwnd, label = "target", attempts = 6) {
+async function ensureForegroundWindow(hwnd, label = "target", attempts = 6, focusHwnd = null) {
   let last = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    last = await setForegroundWindow(hwnd);
+    last = await setForegroundWindow(hwnd, focusHwnd);
     if (last?.success) {
       return { success: true, attempt, details: last };
     }
@@ -118,7 +150,10 @@ $sb = New-Object System.Text.StringBuilder ($len + 1)
 
   const result = await psJson(script, [String(editHwnd)]);
   assert(result.code === 0, `readEditText failed: ${result.stderr}`);
-  assert(result.parsed?.success, `readEditText returned failure: ${result.stdout} ${result.stderr}`);
+  assert(
+    result.parsed?.success,
+    `readEditText returned failure: ${result.stdout} ${result.stderr}`
+  );
   return safeString(result.parsed.text);
 }
 
@@ -128,4 +163,3 @@ module.exports = {
   readEditText,
   setForegroundWindow,
 };
-

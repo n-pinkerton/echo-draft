@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { HotkeyInput } from "../../../ui/HotkeyInput";
 import { ActivationModeSelector } from "../../../ui/ActivationModeSelector";
@@ -25,6 +25,7 @@ export default function HotkeysSection(props: Props) {
     setDictationKeyClipboard,
   } = useSettings();
   const [isUsingGnomeHotkeys, setIsUsingGnomeHotkeys] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   const { registerHotkey, isRegistering: isHotkeyRegistering } = useHotkeyRegistration({
     onSuccess: (registeredHotkey) => {
@@ -97,11 +98,18 @@ export default function HotkeysSection(props: Props) {
     checkHotkeyMode();
   }, [setActivationMode]);
 
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
+
   return (
     <div>
       <SectionHeader
-        title="Dictation Hotkey"
-        description="The key combination that starts and stops voice dictation"
+        headingRef={headingRef}
+        headingId="dictation-hotkeys-heading"
+        headingTabIndex={-1}
+        title="Dictation Hotkeys"
+        description="Choose one shortcut to insert text and another to copy it"
       />
       <SettingsPanel>
         <SettingsPanelRow>
@@ -136,14 +144,19 @@ export default function HotkeysSection(props: Props) {
 
         {!isUsingGnomeHotkeys && (
           <SettingsPanelRow>
-            <p className="text-[11px] font-medium text-muted-foreground/80 mb-2">
-              Activation Mode
-            </p>
+            <p className="text-[11px] font-medium text-muted-foreground/80 mb-2">Activation Mode</p>
             <ActivationModeSelector value={activationMode} onChange={setActivationMode} />
+          </SettingsPanelRow>
+        )}
+        {getPlatform() === "win32" && (
+          <SettingsPanelRow>
+            <p className="text-[11px] text-muted-foreground">
+              EchoDraft ignores Windows key-repeat, so holding a tap shortcut cannot immediately
+              toggle recording off again.
+            </p>
           </SettingsPanelRow>
         )}
       </SettingsPanel>
     </div>
   );
 }
-

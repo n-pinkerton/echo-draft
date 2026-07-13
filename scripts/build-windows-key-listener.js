@@ -1,202 +1,86 @@
 #!/usr/bin/env node
 /**
- * Ensures the Windows key listener binary is available.
+ * Verifies the repository-managed Windows key listener before development or release builds.
  *
- * Strategy:
- * 1. If binary exists and is up-to-date, do nothing
- * 2. Try to download prebuilt binary from GitHub releases
- * 3. Fall back to local compilation if download fails
- *
- * This allows developers without a C compiler to still build the app.
+ * The executable is intentionally pinned by SHA-256 and bound to the reviewed C source. Builds
+ * fail if either artifact is absent or changed; they never download a mutable "latest" asset.
  */
 
-const { spawnSync } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const isWindows = process.platform === "win32";
-if (!isWindows) {
-  // Only needed on Windows
-  process.exit(0);
-}
-
 const projectRoot = path.resolve(__dirname, "..");
-const cSource = path.join(projectRoot, "resources", "windows-key-listener.c");
-const outputDir = path.join(projectRoot, "resources", "bin");
-const outputBinary = path.join(outputDir, "windows-key-listener.exe");
+const sourcePath = path.join(projectRoot, "resources", "windows-key-listener.c");
+const binaryPath = path.join(projectRoot, "resources", "bin", "windows-key-listener.exe");
+const manifestPath = path.join(projectRoot, "resources", "windows-key-listener.integrity.json");
 
-function log(message) {
-  console.log(`[windows-key-listener] ${message}`);
+function sha256(content) {
+  return crypto.createHash("sha256").update(content).digest("hex").toUpperCase();
 }
 
-function ensureDir(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
+function verifyPinnedArtifacts({ manifest, sourceBuffer, binaryBuffer } = {}) {
+  if (!manifest?.version || !manifest?.sourceSha256 || !manifest?.binarySha256) {
+    throw new Error("Windows key listener integrity manifest is incomplete.");
   }
+  if (!sourceBuffer) {
+    throw new Error("Windows key listener source is missing.");
+  }
+  if (!binaryBuffer) {
+    throw new Error("Pinned Windows key listener executable is missing.");
+  }
+
+  const sourceHash = sha256(sourceBuffer);
+  const binaryHash = sha256(binaryBuffer);
+  if (sourceHash !== String(manifest.sourceSha256).toUpperCase()) {
+    throw new Error(
+      `Windows key listener source hash mismatch: expected ${manifest.sourceSha256}, received ${sourceHash}.`
+    );
+  }
+  if (binaryHash !== String(manifest.binarySha256).toUpperCase()) {
+    throw new Error(
+      `Windows key listener executable hash mismatch: expected ${manifest.binarySha256}, received ${binaryHash}.`
+    );
+  }
+
+  return { version: manifest.version, sourceHash, binaryHash };
 }
 
-// Check if binary exists and is up-to-date
-function isBinaryUpToDate() {
-  if (!fs.existsSync(outputBinary)) {
-    return false;
+function verifyRepositoryArtifacts() {
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`Integrity manifest not found: ${manifestPath}`);
   }
-
-  // If source doesn't exist, can't check if rebuild needed - assume binary is good
-  if (!fs.existsSync(cSource)) {
-    return true;
-  }
-
-  try {
-    const binaryStat = fs.statSync(outputBinary);
-    const sourceStat = fs.statSync(cSource);
-    return binaryStat.mtimeMs >= sourceStat.mtimeMs;
-  } catch {
-    return false;
-  }
-}
-
-// Try to download prebuilt binary
-async function tryDownload() {
-  log("Attempting to download prebuilt binary...");
-
-  const downloadScript = path.join(__dirname, "download-windows-key-listener.js");
-  if (!fs.existsSync(downloadScript)) {
-    log("Download script not found, skipping download");
-    return false;
-  }
-
-  const result = spawnSync(process.execPath, [downloadScript, "--force"], {
-    stdio: "inherit",
-    cwd: projectRoot,
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  return verifyPinnedArtifacts({
+    manifest,
+    sourceBuffer: fs.existsSync(sourcePath) ? fs.readFileSync(sourcePath) : null,
+    binaryBuffer: fs.existsSync(binaryPath) ? fs.readFileSync(binaryPath) : null,
   });
-
-  if (result.status === 0 && fs.existsSync(outputBinary)) {
-    log("Successfully downloaded prebuilt binary");
-    return true;
-  }
-
-  log("Download failed or binary not found after download");
-  return false;
 }
 
-/**
- * Quote a path for use in shell commands on Windows.
- * @param {string} p - Path to quote
- * @returns {string} - Quoted path safe for shell use
- */
-function quotePath(p) {
-  // Use double quotes and escape any existing quotes
-  return `"${p.replace(/"/g, '\\"')}"`;
-}
-
-// Try to compile locally
-function tryCompile() {
-  if (!fs.existsSync(cSource)) {
-    log("C source not found, cannot compile locally");
-    return false;
-  }
-
-  log("Attempting local compilation...");
-
-  // For MSVC, we need to use a command string because /Fe: doesn't work well with spawn args
-  // For GCC/Clang, we can use shell: false with proper args array
-  const compilers = [
-    // MSVC (Visual Studio) - uses command string due to /Fe: syntax
-    {
-      name: "MSVC",
-      check: { command: "cl", args: [] },
-      useShell: true,
-      getCommand: () =>
-        `cl /O2 /nologo ${quotePath(cSource)} /Fe:${quotePath(outputBinary)} user32.lib`,
-    },
-    // MinGW-w64 - can use shell: false
-    {
-      name: "MinGW-w64",
-      check: { command: "gcc", args: ["--version"] },
-      useShell: false,
-      command: "gcc",
-      args: ["-O2", "-mwindows", cSource, "-o", outputBinary, "-luser32"],
-    },
-    // Clang (LLVM) - can use shell: false
-    {
-      name: "Clang",
-      check: { command: "clang", args: ["--version"] },
-      useShell: false,
-      command: "clang",
-      args: ["-O2", cSource, "-o", outputBinary, "-luser32"],
-    },
-  ];
-
-  for (const compiler of compilers) {
-    log(`Trying ${compiler.name}...`);
-
-    // Check if compiler is available
-    const checkResult = spawnSync(compiler.check.command, compiler.check.args, {
-      stdio: "pipe",
-      shell: true,
-    });
-
-    if (checkResult.status !== 0 && checkResult.error) {
-      log(`${compiler.name} not found, trying next...`);
-      continue;
-    }
-
-    let result;
-    if (compiler.useShell) {
-      const cmd = compiler.getCommand();
-      log(`Compiling with: ${cmd}`);
-      result = spawnSync(cmd, [], {
-        stdio: "inherit",
-        cwd: projectRoot,
-        shell: true,
-      });
-    } else {
-      log(`Compiling with: ${compiler.command} ${compiler.args.join(" ")}`);
-      result = spawnSync(compiler.command, compiler.args, {
-        stdio: "inherit",
-        cwd: projectRoot,
-        shell: false,
-      });
-    }
-
-    if (result.status === 0 && fs.existsSync(outputBinary)) {
-      log(`Successfully built with ${compiler.name}`);
-      return true;
-    }
-
-    log(`${compiler.name} compilation failed, trying next...`);
-  }
-
-  return false;
-}
-
-async function main() {
-  ensureDir(outputDir);
-
-  // Check if rebuild is needed
-  if (isBinaryUpToDate()) {
-    log("Binary is up to date, skipping build");
+function main() {
+  if (process.platform !== "win32") {
     return;
   }
-
-  // Try download first, then compile
-  const downloaded = await tryDownload();
-  if (downloaded) {
-    return;
-  }
-
-  const compiled = tryCompile();
-  if (compiled) {
-    return;
-  }
-
-  // Neither worked - warn but don't fail
-  console.warn("[windows-key-listener] Could not obtain Windows key listener binary.");
-  console.warn("[windows-key-listener] Push-to-Talk on Windows will use fallback mode.");
-  console.warn("[windows-key-listener] To compile locally, install Visual Studio Build Tools or MinGW-w64.");
+  const result = verifyRepositoryArtifacts();
+  console.log(
+    `[windows-key-listener] Verified ${result.version} ` +
+      `(binary SHA-256 ${result.binaryHash}, source SHA-256 ${result.sourceHash})`
+  );
 }
 
-main().catch((error) => {
-  console.error("[windows-key-listener] Unexpected error:", error);
-  // Don't fail the build
-});
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`[windows-key-listener] Release-blocking integrity failure: ${error.message}`);
+    process.exitCode = 1;
+  }
+}
+
+module.exports = {
+  main,
+  sha256,
+  verifyPinnedArtifacts,
+  verifyRepositoryArtifacts,
+};

@@ -263,7 +263,6 @@ class ParakeetWsServer {
           elapsed,
           code,
           resultLength: result.length,
-          resultPreview: result.slice(0, 200),
         });
 
         try {

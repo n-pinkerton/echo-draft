@@ -8,7 +8,10 @@ type ElectronAPI = {
   checkLocalReasoningAvailable?: () => Promise<boolean | undefined>;
 };
 
-export async function checkReasoningAvailability(electronAPI?: ElectronAPI): Promise<boolean> {
+export async function checkReasoningAvailability(
+  electronAPI?: ElectronAPI,
+  provider: string = "auto"
+): Promise<boolean> {
   try {
     const openaiKey = await electronAPI?.getOpenAIKey?.();
     const anthropicKey = await electronAPI?.getAnthropicKey?.();
@@ -24,7 +27,23 @@ export async function checkReasoningAvailability(electronAPI?: ElectronAPI): Pro
       hasLocal: !!localAvailable,
     });
 
-    return !!(openaiKey || anthropicKey || geminiKey || groqKey || localAvailable);
+    switch (provider) {
+      case "openai":
+        return Boolean(openaiKey);
+      case "anthropic":
+        return Boolean(anthropicKey);
+      case "gemini":
+        return Boolean(geminiKey);
+      case "groq":
+        return Boolean(groqKey);
+      case "local":
+        return Boolean(localAvailable);
+      case "custom":
+        // Custom OpenAI-compatible endpoints may intentionally allow unauthenticated local access.
+        return true;
+      default:
+        return !!(openaiKey || anthropicKey || geminiKey || groqKey || localAvailable);
+    }
   } catch (error) {
     logger.logReasoning("API_KEY_CHECK_ERROR", {
       error: (error as Error).message,
@@ -34,4 +53,3 @@ export async function checkReasoningAvailability(electronAPI?: ElectronAPI): Pro
     return false;
   }
 }
-

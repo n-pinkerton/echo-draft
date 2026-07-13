@@ -43,6 +43,25 @@ describe("hotkeySetupShortcuts", () => {
     expect(deps.globalShortcut.register).not.toHaveBeenCalled();
   });
 
+  it("forces OS re-registration during recovery even when the accelerator appears registered", () => {
+    const manager: any = { currentHotkey: "F10" };
+    const callback = vi.fn();
+    const deps = createDeps({
+      forceRefresh: true,
+      globalShortcut: {
+        isRegistered: vi.fn(() => true),
+        unregister: vi.fn(),
+        register: vi.fn(() => true),
+      },
+    });
+
+    const result = setupShortcuts(manager, "F10", callback, deps);
+
+    expect(deps.globalShortcut.unregister).toHaveBeenCalledWith("F10");
+    expect(deps.globalShortcut.register).toHaveBeenCalledWith("F10", callback);
+    expect(result).toEqual({ success: true, hotkey: "F10" });
+  });
+
   it("uses native listeners for right-side modifiers and modifier-only combos on Windows", () => {
     const callback = vi.fn();
 

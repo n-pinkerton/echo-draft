@@ -3,10 +3,21 @@ import "./index.css";
 import { useToast } from "./components/ui/toastContext";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useAuth } from "./hooks/useAuth";
+import { useLocalStorage } from "./hooks/useLocalStorage";
+import RecordingIndicator from "./components/ui/RecordingIndicator";
+import { DICTATION_FEEDBACK_STORAGE_KEYS } from "./utils/dictationCues";
+
+const serializeBoolean = (value) => String(value);
+const deserializeBoolean = (value) => value !== "false";
 
 export default function App() {
   const { toast } = useToast();
   const { isSignedIn } = useAuth();
+  const [recordingIndicatorEnabled] = useLocalStorage(
+    DICTATION_FEEDBACK_STORAGE_KEYS.recordingIndicatorEnabled,
+    true,
+    { serialize: serializeBoolean, deserialize: deserializeBoolean }
+  );
 
   useEffect(() => {
     const unsubscribeFallback = window.electronAPI?.onHotkeyFallbackUsed?.((data) => {
@@ -97,10 +108,10 @@ export default function App() {
       message: progress?.message || "",
       recordedMs: typeof progress?.recordedMs === "number" ? progress.recordedMs : null,
       elapsedMs: typeof progress?.elapsedMs === "number" ? progress.elapsedMs : null,
-      generatedWords:
-        typeof progress?.generatedWords === "number" ? progress.generatedWords : null,
+      generatedWords: typeof progress?.generatedWords === "number" ? progress.generatedWords : null,
       jobCount: visibleJobs.length,
       hasTranscript: Boolean(transcriptToCopy && transcriptToCopy.trim()),
+      transcriptToCopy: typeof transcriptToCopy === "string" ? transcriptToCopy : "",
       outputMode: progress?.outputMode === "clipboard" ? "clipboard" : "insert",
       provider: progress?.provider || "",
       model: progress?.model || "",
@@ -113,15 +124,32 @@ export default function App() {
     window.electronAPI?.updateTrayStatus?.(trayStatus);
   }, [trayStatus]);
 
+  const shouldShowRecordingIndicator =
+    recordingIndicatorEnabled && progress?.stage === "listening";
+
+  useEffect(() => {
+    if (shouldShowRecordingIndicator) {
+      void window.electronAPI?.showRecordingIndicator?.();
+      return;
+    }
+
+    void window.electronAPI?.hideWindow?.();
+  }, [shouldShowRecordingIndicator]);
+
   useEffect(() => {
     return () => {
       window.electronAPI?.updateTrayStatus?.({
         stage: "idle",
         stageLabel: "Ready",
         message: "",
+        transcriptToCopy: "",
       });
     };
   }, []);
 
-  return null;
+  if (!shouldShowRecordingIndicator) {
+    return null;
+  }
+
+  return <RecordingIndicator recordedMs={progress?.recordedMs || 0} />;
 }

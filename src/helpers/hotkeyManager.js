@@ -300,6 +300,28 @@ class HotkeyManager {
     return this.currentHotkey;
   }
 
+  refreshCurrentHotkey(callback = this.hotkeyCallback) {
+    const hotkey = this.currentHotkey;
+    if (!hotkey || !callback) {
+      return { success: false, error: "No active hotkey registration to refresh." };
+    }
+
+    if (
+      hotkey === "GLOBE" ||
+      isRightSideModifier(hotkey) ||
+      (process.platform === "win32" && isModifierOnlyHotkey(hotkey))
+    ) {
+      return { success: true, hotkey, nativeOnly: true };
+    }
+
+    return setupShortcutsImpl(this, hotkey, callback, {
+      globalShortcut,
+      debugLogger,
+      platform: process.platform,
+      forceRefresh: true,
+    });
+  }
+
   unregisterAll() {
     if (this.gnomeManager) {
       this.gnomeManager.unregisterKeybinding().catch((err) => {

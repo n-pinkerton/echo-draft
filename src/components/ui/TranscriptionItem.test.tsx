@@ -1,0 +1,69 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import TranscriptionItem from "./TranscriptionItem";
+
+const makeItem = (rawText: string | null | undefined, meta: Record<string, unknown> = {}) => ({
+  id: 1,
+  text: "Finished text",
+  raw_text: rawText,
+  timestamp: "2026-07-12T00:00:00",
+  created_at: "2026-07-12T00:00:00",
+  meta,
+});
+
+describe("TranscriptionItem", () => {
+  it.each([null, undefined, "   "])(
+    "never substitutes finished text for an unavailable raw transcript (%s)",
+    (rawText) => {
+      const onCopyClean = vi.fn();
+      const onCopyRaw = vi.fn();
+      render(
+        <TranscriptionItem
+          item={makeItem(rawText) as any}
+          index={0}
+          total={1}
+          onCopyClean={onCopyClean}
+          onCopyRaw={onCopyRaw}
+          onCopyDiagnostics={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      );
+
+      const rawButton = screen.getByRole("button", {
+        name: "Raw transcript unavailable for this item",
+      });
+      expect(rawButton).toBeDisabled();
+      fireEvent.click(rawButton);
+      expect(onCopyRaw).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+      expect(onCopyClean).toHaveBeenCalledWith("Finished text");
+    }
+  );
+
+  it("copies stored raw text and explains a clipboard delivery fallback", () => {
+    const onCopyRaw = vi.fn();
+    render(
+      <TranscriptionItem
+        item={
+          makeItem("Original raw text", {
+            status: "delivery_issue",
+            delivery: { status: "clipboard_fallback", succeeded: false },
+          }) as any
+        }
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={onCopyRaw}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Delivery issue")).toBeInTheDocument();
+    expect(screen.getByText("Kept in clipboard")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy raw transcript" }));
+    expect(onCopyRaw).toHaveBeenCalledWith("Original raw text");
+  });
+});

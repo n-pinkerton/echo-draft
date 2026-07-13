@@ -7,7 +7,7 @@ import { formatHotkeyLabel } from "../../utils/hotkeys";
 import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
 
 type ModeFilter = "all" | "insert" | "clipboard" | "file";
-type StatusFilter = "all" | "success" | "error" | "cancelled";
+type StatusFilter = "all" | "success" | "delivery_issue" | "error" | "cancelled";
 
 type Props = {
   history: TranscriptionItemType[];
@@ -28,7 +28,10 @@ type Props = {
   exportTranscriptions: (format: "csv" | "json") => Promise<void>;
   isExporting: boolean;
 
-  copyToClipboard: (text: string, options?: { title?: string; description?: string }) => Promise<void>;
+  copyToClipboard: (
+    text: string,
+    options?: { title?: string; description?: string }
+  ) => Promise<void>;
   copyDiagnostics: (item: TranscriptionItemType) => Promise<void>;
   deleteTranscription: (id: number) => Promise<void>;
 };
@@ -58,16 +61,18 @@ export default function HistoryPanel(props: Props) {
   return (
     <div className="rounded-lg border border-border bg-card/50 dark:bg-card/30 backdrop-blur-sm">
       <div className="border-b border-border/50 p-3 space-y-2">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
           <Input
             data-testid="history-search"
+            aria-label="Search dictation history"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search text, provider, model…"
-            className="h-8 text-xs"
+            placeholder="Search dictations…"
+            className="h-8 text-xs md:col-span-2"
           />
           <select
             data-testid="history-filter-mode"
+            aria-label="Filter by output mode"
             value={modeFilter}
             onChange={(event) => setModeFilter(event.target.value as ModeFilter)}
             className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
@@ -79,17 +84,20 @@ export default function HistoryPanel(props: Props) {
           </select>
           <select
             data-testid="history-filter-status"
+            aria-label="Filter by status"
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
             className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
           >
             <option value="all">All statuses</option>
             <option value="success">Success</option>
+            <option value="delivery_issue">Delivery issue</option>
             <option value="error">Error</option>
             <option value="cancelled">Cancelled</option>
           </select>
           <select
             data-testid="history-filter-provider"
+            aria-label="Filter by provider"
             value={providerFilter}
             onChange={(event) => setProviderFilter(event.target.value)}
             className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
@@ -105,7 +113,7 @@ export default function HistoryPanel(props: Props) {
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[11px] text-muted-foreground">
-            Workspace view with raw/clean copy and per-session diagnostics.
+            Search your dictations, compare the original, or copy the finished text.
           </p>
           <div className="flex items-center gap-1.5">
             <Button
@@ -169,7 +177,7 @@ export default function HistoryPanel(props: Props) {
           </Button>
         </div>
       ) : (
-        <div className="divide-y divide-border/50 max-h-[calc(100vh-240px)] overflow-y-auto">
+        <div className="max-h-[calc(100vh-320px)] min-h-[120px] divide-y divide-border/50 overflow-y-auto">
           {filteredHistory.map((item, index) => (
             <TranscriptionItem
               key={item.id}
@@ -192,4 +200,3 @@ export default function HistoryPanel(props: Props) {
     </div>
   );
 }
-

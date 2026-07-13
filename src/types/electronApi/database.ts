@@ -31,14 +31,26 @@ export interface ElectronAPIDatabase {
     error?: string;
   }>;
   e2eGetHotkeyStatus?: () => Promise<{
+    userDataPath: string;
     activationMode: "tap" | "push" | string;
     insertHotkey: string | null;
     clipboardHotkey: string | null;
     insertUsesNativeListener: boolean;
     clipboardUsesNativeListener: boolean;
+    insertNativeReady: boolean;
+    clipboardNativeReady: boolean;
     insertGlobalRegistered: boolean;
     clipboardGlobalRegistered: boolean;
     windowsPushToTalkAvailable: boolean;
+  }>;
+  e2eGetTrayStatus?: () => Promise<{
+    stage?: string;
+    stageLabel?: string;
+    statusLabel?: string;
+    message?: string;
+    recordedMs?: number | null;
+    elapsedMs?: number | null;
+    generatedWords?: number | null;
   }>;
   clearTranscriptions: () => Promise<{ cleared: number; success: boolean }>;
   deleteTranscription: (id: number) => Promise<{ success: boolean }>;
@@ -49,4 +61,3 @@ export interface ElectronAPIDatabase {
   onTranscriptionDeleted?: (callback: (payload: { id: number }) => void) => () => void;
   onTranscriptionsCleared?: (callback: (payload: { cleared: number }) => void) => () => void;
 }
-

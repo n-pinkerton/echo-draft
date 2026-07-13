@@ -41,8 +41,9 @@ rsync -a --delete \
 ```
 
 Notes:
+
 - Excluding `resources/bin` keeps previously-downloaded helper binaries in the Windows build folder (faster builds, fewer network calls).
-- If this is your **first** build on a new machine/folder, you may want to *not* exclude `resources/bin` (or copy it from a known-good location) so the downloads don’t have to start from scratch.
+- If this is your **first** build on a new machine/folder, you may want to _not_ exclude `resources/bin` (or copy it from a known-good location) so the downloads don’t have to start from scratch.
 
 ### 2) Build in PowerShell (on Windows)
 
@@ -70,9 +71,11 @@ npm run build:win
 During this session, `scripts/download-whisper-cpp.js` initially failed with an HTTP 404 when trying to fetch releases from `EchoDraft/whisper.cpp`.
 
 What we changed:
+
 - `scripts/download-whisper-cpp.js` now **skips the download** if `resources/bin/whisper-server-win32-x64.exe` already exists (unless you pass `--force`).
 
 If you hit download failures on a fresh machine:
+
 1. Check whether the binary exists:
    - `resources/bin/whisper-server-win32-x64.exe`
 2. If it’s missing, populate it from a known-good source (for example, from a previously built app under `...\EchoDraft\resources\bin\`) and re-run the build.
@@ -84,13 +87,15 @@ npm run download:whisper-cpp -- --force
 
 Also consider setting `GITHUB_TOKEN`/`GH_TOKEN` if you are hitting GitHub API rate limits.
 
-### `windows-key-listener` download/compile messages are confusing
+### `windows-key-listener` integrity failure
 
-The Windows push-to-talk key listener build script can attempt:
-- download of a prebuilt `windows-key-listener.exe`, or
-- local compilation if download fails.
+The reviewed Windows push-to-talk helper is repository-managed. Before development and release
+builds, `npm run compile:winkeys` verifies both the C source and executable against
+`resources/windows-key-listener.integrity.json`.
 
-If it cannot obtain the binary, the app still builds, but Windows push-to-talk may fall back to a less capable mode. Installing **Visual Studio Build Tools** (or MinGW-w64) enables local compilation.
+The build now fails if the helper is missing, stale, or changed. It never downloads a mutable
+`latest` release. Restore the reviewed files from source control; if the source legitimately
+changes, rebuild and adversarially review the helper, then update both pinned hashes together.
 
 ### electron-builder warning: “cannot find path for dependency name=undefined reference=undefined”
 
@@ -107,6 +112,8 @@ $env:CSC_IDENTITY_AUTO_DISCOVERY="false"
 npm run build:win
 ```
 
+`npm run build:win` can also complete with unsigned artifacts when no Windows certificate is configured. Before distributing an installer, verify it explicitly with `Get-AuthenticodeSignature`; a local `NotSigned` result is suitable only for a trusted personal install, not a public release.
+
 ## Validating the installer
 
 1. Run the NSIS installer from `dist/` (or `Downloads/` if copied).
@@ -119,8 +126,10 @@ npm run build:win
 
 If a transcription looks “cut off”, there are two different failure modes:
 
-1) The **audio recording stopped early** (e.g. hotkey pressed again, push-to-talk released, mic device ended).
-2) The audio is long, but the **transcription result is incomplete** (API/provider issue).
+1. The **audio recording stopped early** (e.g. hotkey pressed again, push-to-talk released, mic device ended).
+2. The audio is long, but the **transcription result is incomplete** (API/provider issue).
+
+Current OpenAI streaming builds require an explicit completion event. If a stream closes early, EchoDraft rejects the partial text and retries once through the complete non-streaming path rather than storing the fragment.
 
 ### Source of truth: DB + debug logs
 
@@ -142,8 +151,13 @@ Newer builds persist extra fields into `meta_json.timings` to make this debuggab
 
 - `stopReason` / `stopSource` (e.g. `manual`, `released`, `track-ended`)
 - `audioSizeBytes`, `audioFormat`, `chunksCount`
+- `transcriptionRecovery` when an incomplete stream was recovered through the complete-response retry
 - Recording start timing breakdown:
   - `hotkeyToStartCallMs`, `hotkeyToRecorderStartMs`
   - `startConstraintsMs`, `startGetUserMediaMs`, `startMediaRecorderInitMs`, `startMediaRecorderStartMs`, `startTotalMs`
 
 If something fails again, grab the matching JSONL session logs and the `.webm` from `logs/audio/` (if debug was enabled) and we can replay/transcribe the exact captured audio to confirm whether the recording itself stopped early vs. transcription truncation.
+
+### Windows hotkey recovery
+
+Current builds route ordinary Windows tap shortcuts through the native listener when available, suppress key-repeat events, and restart listeners after resume, unlock, or an unexpected helper exit. The Electron shortcut remains a fallback when a native route cannot start. For packaged verification, use `scripts/gate/windows_release_gate.js` and confirm both configured routes report ready. The gate defaults to a non-interactive smoke mode that keeps app windows hidden, will not take foreground, and will not type into a window. Visual screenshots, target capture, automatic insertion, and clipboard-image restoration are reserved for `--allow-foreground-automation` on a dedicated idle test desktop.

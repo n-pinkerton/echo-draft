@@ -2,7 +2,7 @@ import type { TranscriptionItem as TranscriptionItemType } from "../../types/ele
 import { normalizeEchoDraftSource } from "../../utils/branding";
 
 export type ModeFilter = "all" | "insert" | "clipboard" | "file";
-export type StatusFilter = "all" | "success" | "error" | "cancelled";
+export type StatusFilter = "all" | "success" | "delivery_issue" | "error" | "cancelled";
 
 export type HistoryFilters = {
   searchQuery: string;
@@ -32,7 +32,9 @@ export function filterHistory(
 
   return history.filter((item) => {
     const meta = item.meta || {};
-    const provider = String(normalizeEchoDraftSource(meta.provider || meta.source || "")).toLowerCase();
+    const provider = String(
+      normalizeEchoDraftSource(meta.provider || meta.source || "")
+    ).toLowerCase();
     const model = String(normalizeEchoDraftSource(meta.model || "")).toLowerCase();
     const outputMode = String(meta.outputMode || "insert").toLowerCase();
     const status = String(meta.status || "success").toLowerCase();

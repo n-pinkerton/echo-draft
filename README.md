@@ -32,7 +32,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 🤖 **Multi-Provider AI Cleanup**: Choose between OpenAI, Anthropic Claude, Google Gemini, or local models
 - 🎯 **Agent Naming**: Personalize the cleanup assistant shown in trusted AI prompts
 - 🧠 **Multi-Provider AI**:
-  - **OpenAI cleanup**: GPT-5.5 Mini, GPT-5.5, and GPT-5.3 Codex Spark
+  - **OpenAI cleanup**: GPT-5.6 Terra (balanced default), GPT-5.6 Luna (fast), and GPT-5.6 Sol (highest quality)
   - **Anthropic**: Claude Opus 4.5, Claude Sonnet 4.5
   - **Google**: Gemini 2.5 Pro/Flash/Flash-Lite
   - **Groq**: Ultra-fast inference with Llama and Mixtral models
@@ -49,6 +49,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - ⚡ **Automatic Pasting**: Transcribed text automatically pastes at your cursor location
 - 🧭 **Tray-First Interface**: Use the system tray icon for dictation status, last-copy actions, settings, and app access
 - 🔄 **OpenAI Responses API**: Using the latest Responses API for improved performance
+- 🛡️ **Preservation-First Cleanup**: Suspicious compression, changed polarity, missing literals, or assistant-style execution triggers a literal retry and safely falls back to the original text
 - 🌐 **Globe Key Toggle (macOS)**: Optional Fn/Globe key listener for a hardware-level dictation trigger
 - ⌨️ **Compound Hotkeys**: Support for multi-key combinations like `Cmd+Shift+K`
 - 🎙️ **Push-to-Talk (Windows)**: Native low-level keyboard hook for true push-to-talk with compound hotkey support
@@ -285,9 +286,9 @@ On GNOME Wayland, Electron's standard global shortcuts don't work due to Wayland
 For maintainers who need to distribute signed builds:
 
 ```bash
-# Requires code signing certificates and notarization setup
+# Configured certificates are required for signed distribution artifacts
 npm run build:mac    # macOS (requires Apple Developer account)
-npm run build:win    # Windows (requires code signing cert)
+npm run build:win    # Windows (unsigned unless a code signing cert is configured)
 npm run build:linux  # Linux
 ```
 
@@ -314,9 +315,9 @@ npm run build:linux  # Linux
 ### Basic Dictation
 
 1. **Start the app** - EchoDraft loads a persistent system tray icon
-2. **Press your hotkey** (default: backtick `) - Start dictating (the tray icon and tooltip show recording status)
-3. **Press your hotkey again** - Stop dictation and begin transcription (the tray icon and tooltip show processing status)
-4. **Text appears** - Transcribed text is automatically pasted at your cursor location
+2. **Press your hotkey** (default: backtick `) - A rising cue confirms recording and a click-through `REC` timer remains visible while the microphone is live
+3. **Press your hotkey again** - A lower falling cue confirms recording has stopped and processing has begun
+4. **Text appears** - Transcribed text is automatically pasted at your cursor location, followed by a distinct completion chime
 5. **Use tray actions** - Click the tray icon to start clipboard dictation, copy the last dictation, open the Control Panel, or quit
 
 ### Control Panel
@@ -326,7 +327,7 @@ npm run build:linux  # Linux
 - **History**: View, copy, and delete past transcriptions
 - **Models**: Download and manage local Whisper models
 - **Storage Cleanup**: Remove downloaded Whisper models from cache to reclaim space
-- **Settings**: Configure API keys, customize hotkeys, and manage permissions
+- **Settings**: Configure API keys, customize hotkeys, select the microphone, preview or adjust dictation sounds, and manage permissions
 
 ### Uninstall & Cache Cleanup
 
@@ -335,20 +336,21 @@ npm run build:linux  # Linux
 - **Linux Packages**: `deb`/`rpm` post-uninstall scripts also remove cached models.
 - **macOS**: If you uninstall manually, remove `~/Library/Caches` or `~/.cache/echodraft/whisper-models` if desired.
 
-### Agent Naming & AI Processing
+### Agent Naming & AI Cleanup
 
-Once you've named your agent during setup, you can interact with it using multiple AI providers:
+The optional agent name personalizes the trusted cleanup prompt. Cleanup is an editing transform only: dictated questions and requests remain text and are never answered or executed.
 
-**🎯 Agent Commands** (for AI assistance):
+**🛡️ Cleanup contract**:
 
-- "Hey [AgentName], make this more professional"
-- "Hey [AgentName], format this as a list"
-- "Hey [AgentName], write a thank you email"
-- "Hey [AgentName], convert this to bullet points"
+- Adds punctuation, capitalization, quotation marks, and clear formatting
+- Corrects spelling, grammar, obvious recognition artifacts, and unambiguous self-corrections
+- May consolidate or rewrite locally for clarity while preserving every substantive point
+- Keeps questions, requests, caveats, examples, names, numbers, qualifiers, uncertainty, and polarity
+- Retries suspicious output conservatively and keeps the original transcript if preservation cannot be verified
 
 **🤖 AI Provider Options**:
 
-- **OpenAI cleanup**: GPT-5.5 Mini, GPT-5.5, and GPT-5.3 Codex Spark
+- **OpenAI cleanup**: GPT-5.6 Terra, GPT-5.6 Luna, and GPT-5.6 Sol
 - **Anthropic**: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5
 - **Google**: Gemini 2.5 Pro/Flash/Flash-Lite
 - **Groq**: Ultra-fast Llama and Mixtral inference
@@ -360,7 +362,7 @@ Once you've named your agent during setup, you can interact with it using multip
 - "Meeting notes: John mentioned the quarterly report"
 - "Dear Sarah, thank you for your help"
 
-The AI automatically detects when you're giving it commands versus dictating regular text, and removes agent name references from the final output.
+All dictated text is treated as untrusted content to edit. EchoDraft does not use a dictated agent name or instruction as permission to perform a task.
 
 ### Custom Dictionary
 
@@ -460,7 +462,7 @@ Key docs:
 
 - Debug logging (daily JSONL logs + analysis): see `DEBUG.md`
 - Windows installer build / in-place upgrade: see **Building → Windows Install / In-Place Upgrade** (and **Building the Windows Installer from WSL**)
-- Windows packaged runtime release gate: `scripts/gate/windows_release_gate.js` (requires `OPENWHISPR_E2E=1`)
+- Windows packaged runtime release gate: `scripts/gate/windows_release_gate.js` (safe non-interactive mode by default; use `--allow-foreground-automation` only on an idle test desktop)
 - Windows-specific gotchas: `WINDOWS_TROUBLESHOOTING.md`
 - General troubleshooting: `TROUBLESHOOTING.md`
 
@@ -482,12 +484,12 @@ Important stability notes (to keep Windows in-place upgrades working):
 - `npm run download:sherpa-onnx` - Download sherpa-onnx for Parakeet local transcription
 - `npm run download:sherpa-onnx:all` - Download sherpa-onnx for all platforms
 - `npm run compile:native` - Compile native helpers (Globe key listener for macOS, key listener for Windows)
-- `npm run build` - Full build with signing (requires certificates)
-- `npm run build:mac` - macOS build with signing
-- `npm run build:win` - Windows build with signing
+- `npm run build` - Full package build; signs only when certificates are configured
+- `npm run build:mac` - macOS package build (distribution requires signing/notarization)
+- `npm run build:win` - Windows installer/portable build (verify Authenticode before distribution)
 - `npm run build:linux` - Linux build
 - `npm run pack` - Build without signing (for personal use)
-- `npm run dist` - Build and package with signing
+- `npm run dist` - Build and package; signs only when certificates are configured
 - `npm run lint` - Run ESLint
 - `npm run format` - Format code with Prettier
 - `npm run clean` - Clean build artifacts
@@ -783,7 +785,7 @@ A: EchoDraft supports 58 languages including English, Spanish, French, German, C
 
 ## Project Status
 
-EchoDraft is actively maintained and ready for production use. Current version: 1.4.5
+EchoDraft is actively maintained and ready for production use. Current version: 1.4.8
 
 - ✅ Core functionality complete
 - ✅ Cross-platform support (macOS, Windows, Linux)

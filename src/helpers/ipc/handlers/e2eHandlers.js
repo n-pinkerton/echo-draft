@@ -1,9 +1,17 @@
-const { dedupeDictionaryWords, parseDictionaryWords, stripDictionaryHeader } = require("../utils/dictionaryUtils");
+const {
+  dedupeDictionaryWords,
+  parseDictionaryWords,
+  stripDictionaryHeader,
+} = require("../utils/dictionaryUtils");
 const { isPathWithin } = require("../utils/pathUtils");
+const {
+  flattenTranscriptionRow,
+  serializeTranscriptionCsv,
+} = require("../utils/transcriptionExport");
 
 function registerE2eHandlers(
   { ipcMain, app, fs, path, globalShortcut },
-  { databaseManager, windowManager }
+  { databaseManager, windowManager, trayManager }
 ) {
   const e2eBaseDir = path.join(app.getPath("temp"), "echodraft-e2e");
   const resolveE2eFilePath = (filePath) => {
@@ -25,30 +33,7 @@ function registerE2eHandlers(
     const outputPath = resolveE2eFilePath(payload?.filePath || "");
 
     const rows = databaseManager.getAllTranscriptions();
-    const flattened = rows.map((row) => {
-      const meta = row?.meta || {};
-      const timings = meta?.timings || {};
-      return {
-        id: row.id,
-        timestamp: row.timestamp,
-        text: row.text || "",
-        rawText: row.raw_text || "",
-        outputMode: meta.outputMode || "",
-        status: meta.status || "",
-        provider: meta.provider || meta.source || "",
-        model: meta.model || "",
-        source: meta.source || "",
-        pasteSucceeded:
-          meta.pasteSucceeded === true ? "true" : meta.pasteSucceeded === false ? "false" : "",
-        error: meta.error || "",
-        recordMs: timings.recordDurationMs ?? timings.recordMs ?? "",
-        transcribeMs: timings.transcriptionProcessingDurationMs ?? timings.transcribeDurationMs ?? "",
-        cleanupMs: timings.reasoningProcessingDurationMs ?? timings.cleanupDurationMs ?? "",
-        pasteMs: timings.pasteDurationMs ?? "",
-        saveMs: timings.saveDurationMs ?? "",
-        totalMs: timings.totalDurationMs ?? "",
-      };
-    });
+    const flattened = rows.map((row) => flattenTranscriptionRow(row));
 
     if (exportFormat === "json") {
       fs.writeFileSync(outputPath, JSON.stringify(flattened, null, 2), "utf8");
@@ -60,20 +45,7 @@ function registerE2eHandlers(
       };
     }
 
-    const headers = Object.keys(flattened[0] || { id: "", timestamp: "", text: "" });
-    const escapeCsvValue = (value) => {
-      const raw = value === null || value === undefined ? "" : String(value);
-      if (!/[",\n]/.test(raw)) {
-        return raw;
-      }
-      return `"${raw.replace(/"/g, '""')}"`;
-    };
-
-    const csvRows = [headers.join(",")];
-    for (const row of flattened) {
-      csvRows.push(headers.map((header) => escapeCsvValue(row[header])).join(","));
-    }
-    fs.writeFileSync(outputPath, csvRows.join("\n"), "utf8");
+    fs.writeFileSync(outputPath, serializeTranscriptionCsv(flattened), "utf8");
 
     return {
       success: true,
@@ -144,8 +116,8 @@ function registerE2eHandlers(
       windowManager?.shouldUseWindowsNativeListener?.(clipboardHotkey, activationMode)
     );
 
-    const safeIsRegistered = (accelerator, usesNativeListener) => {
-      if (!accelerator || usesNativeListener) {
+    const safeIsRegistered = (accelerator) => {
+      if (!accelerator) {
         return false;
       }
       try {
@@ -156,14 +128,39 @@ function registerE2eHandlers(
     };
 
     return {
+      userDataPath: app.getPath("userData"),
       activationMode,
       insertHotkey,
       clipboardHotkey,
       insertUsesNativeListener,
       clipboardUsesNativeListener,
-      insertGlobalRegistered: safeIsRegistered(insertAccelerator, insertUsesNativeListener),
-      clipboardGlobalRegistered: safeIsRegistered(clipboardAccelerator, clipboardUsesNativeListener),
+      insertNativeReady: Boolean(windowManager?.isWindowsNativeListenerReady?.("insert")),
+      clipboardNativeReady: Boolean(windowManager?.isWindowsNativeListenerReady?.("clipboard")),
+      insertGlobalRegistered: safeIsRegistered(insertAccelerator),
+      clipboardGlobalRegistered: safeIsRegistered(clipboardAccelerator),
       windowsPushToTalkAvailable: Boolean(windowManager?.windowsPushToTalkAvailable),
+    };
+  });
+
+  ipcMain.handle("e2e-get-tray-status", async () => ({
+    ...(trayManager?.dictationStatus || {}),
+    statusLabel: trayManager?.getStatusLabel?.(false) || "",
+  }));
+
+  ipcMain.handle("e2e-get-main-window-state", async () => {
+    const mainWindow = windowManager?.mainWindow;
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { available: false };
+    }
+
+    return {
+      available: true,
+      visible: mainWindow.isVisible(),
+      focused: mainWindow.isFocused(),
+      focusable: mainWindow.isFocusable?.() ?? null,
+      alwaysOnTop: mainWindow.isAlwaysOnTop(),
+      interactive: Boolean(windowManager?.isMainWindowInteractive),
+      bounds: mainWindow.getBounds(),
     };
   });
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ECHO_DRAFT_BYOK_REASONED_SOURCE,
   ECHO_DRAFT_CLOUD_MODE,
+  ECHO_DRAFT_CLOUD_SOURCE,
   ECHO_DRAFT_REASONED_SOURCE,
 } from "../../../utils/branding";
 import { CloudTranscriber } from "./cloudTranscriber";
@@ -92,7 +93,13 @@ describe("CloudTranscriber", () => {
       logger: createLogger(),
       emitProgress,
       withSessionRefresh: async (fn: any) => await fn(),
-      reasoningCleanupService: { processWithReasoningModel: vi.fn() },
+      reasoningCleanupService: {
+        processWithReasoningModel: vi.fn(),
+        validateCleanupCandidate: (_raw: string, text: string) => ({
+          text,
+          assessment: { metrics: {} },
+        }),
+      },
       getCleanupEnabledOverride: () => null,
     });
 
@@ -108,6 +115,110 @@ describe("CloudTranscriber", () => {
     expect(result.source).toBe(ECHO_DRAFT_REASONED_SOURCE);
     expect(result.timings?.transcriptionProcessingDurationMs).toEqual(expect.any(Number));
     expect(result.timings?.reasoningProcessingDurationMs).toEqual(expect.any(Number));
+  });
+
+  it("preserves raw cloud text when cleanup fails fidelity validation", async () => {
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("cloudReasoningMode", ECHO_DRAFT_CLOUD_MODE);
+
+    (window as any).electronAPI.cloudTranscribe.mockResolvedValue({
+      success: true,
+      text: "Keep the Friday deadline, budget caveat, and reference 42.",
+    });
+    (window as any).electronAPI.cloudReason.mockResolvedValue({
+      success: true,
+      text: "Release summary.",
+    });
+    const fidelityError = Object.assign(new Error("changed too much"), {
+      code: "CLEANUP_FIDELITY_REJECTED",
+      assessment: { metrics: { wordRatio: 0.2 } },
+    });
+    const transcriber = new CloudTranscriber({
+      logger: createLogger(),
+      withSessionRefresh: async (fn: any) => await fn(),
+      reasoningCleanupService: {
+        validateCleanupCandidate: vi.fn(() => {
+          throw fidelityError;
+        }),
+      },
+    });
+
+    const result = await transcriber.processWithEchoDraftCloud({
+      arrayBuffer: vi.fn(async () => new ArrayBuffer(4)),
+    } as any);
+
+    expect(result.text).toBe("Keep the Friday deadline, budget caveat, and reference 42.");
+    expect(result.cleanup).toMatchObject({
+      status: "fallback",
+      fallbackReason: "fidelity_rejected",
+      applied: false,
+    });
+  });
+
+  it("does not accept text from an unsuccessful managed cleanup response", async () => {
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("cloudReasoningMode", ECHO_DRAFT_CLOUD_MODE);
+
+    (window as any).electronAPI.cloudTranscribe.mockResolvedValue({
+      success: true,
+      text: "Keep the complete original transcript.",
+    });
+    (window as any).electronAPI.cloudReason.mockResolvedValue({
+      success: false,
+      text: "Partial provider output.",
+    });
+    const validateCleanupCandidate = vi.fn();
+    const transcriber = new CloudTranscriber({
+      logger: createLogger(),
+      withSessionRefresh: async (fn: any) => await fn(),
+      reasoningCleanupService: { validateCleanupCandidate },
+    });
+
+    const result = await transcriber.processWithEchoDraftCloud({
+      arrayBuffer: vi.fn(async () => new ArrayBuffer(4)),
+    } as any);
+
+    expect(result.text).toBe("Keep the complete original transcript.");
+    expect(validateCleanupCandidate).not.toHaveBeenCalled();
+    expect(result.cleanup).toMatchObject({
+      status: "fallback",
+      fallbackReason: "provider_error",
+      applied: false,
+      model: null,
+      provider: ECHO_DRAFT_CLOUD_SOURCE,
+    });
+  });
+
+  it("reports the configured provider and model for BYOK cleanup failures", async () => {
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("cloudReasoningMode", "byok");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("reasoningModel", "gpt-5.6-terra");
+    (window as any).electronAPI.cloudTranscribe.mockResolvedValue({
+      success: true,
+      text: "Keep the complete original transcript.",
+    });
+
+    const transcriber = new CloudTranscriber({
+      logger: createLogger(),
+      withSessionRefresh: async (fn: any) => await fn(),
+      reasoningCleanupService: {
+        processTranscriptionWithOutcome: vi.fn(async () => {
+          throw new Error("provider unavailable");
+        }),
+      },
+    });
+
+    const result = await transcriber.processWithEchoDraftCloud({
+      arrayBuffer: vi.fn(async () => new ArrayBuffer(4)),
+    } as any);
+
+    expect(result.text).toBe("Keep the complete original transcript.");
+    expect(result.cleanup).toMatchObject({
+      status: "fallback",
+      model: "gpt-5.6-terra",
+      provider: "openai",
+    });
   });
 
   it("applies BYOK reasoning when configured", async () => {

@@ -24,7 +24,12 @@ export class CloudTranscriber {
    *   emitProgress?: (payload: any) => void,
    *   withSessionRefresh: (fn: () => Promise<any>) => Promise<any>,
    *   getCleanupEnabledOverride?: () => boolean | null,
-   *   reasoningCleanupService?: { processWithReasoningModel: Function },
+   *   reasoningCleanupService?: {
+   *     processTranscriptionWithOutcome?: Function,
+   *     processWithReasoningModel?: Function,
+   *     processWithReasoningModelResult?: Function,
+   *     validateCleanupCandidate?: Function,
+   *   },
    * }} deps
    */
   constructor(deps = {}) {
@@ -81,6 +86,7 @@ export class CloudTranscriber {
     const useReasoningModel =
       override !== null ? override : localStorage.getItem("useReasoningModel") === "true";
     let source = ECHO_DRAFT_CLOUD_SOURCE;
+    let cleanup = null;
 
     if (useReasoningModel && processedText) {
       this.emitProgress?.({
@@ -110,25 +116,111 @@ export class CloudTranscriber {
             return res;
           });
 
-          if (reasonResult.success && reasonResult.text) {
-            processedText = reasonResult.text;
-            source = ECHO_DRAFT_REASONED_SOURCE;
+          if (!reasonResult.success) {
+            throw new Error("Cloud reasoning did not complete successfully.");
           }
+          if (!reasonResult.text || !reasonResult.text.trim()) {
+            throw new Error("Cloud reasoning returned an empty cleanup response.");
+          }
+
+          if (typeof this.reasoningCleanupService?.validateCleanupCandidate !== "function") {
+            throw new Error("Cleanup preservation validation is unavailable.");
+          }
+
+          const validated = this.reasoningCleanupService.validateCleanupCandidate(
+            rawText,
+            reasonResult.text
+          );
+          processedText = validated.text;
+          cleanup = {
+            requested: true,
+            attempted: true,
+            applied: true,
+            status: processedText === rawText ? "unchanged" : "applied",
+            fallbackReason: null,
+            model: reasonResult.model || null,
+            provider: ECHO_DRAFT_CLOUD_SOURCE,
+            retryCount: 0,
+            metrics: validated.assessment.metrics,
+          };
+          source = ECHO_DRAFT_REASONED_SOURCE;
         } else {
           const reasoningModel = localStorage.getItem("reasoningModel") || "";
-          if (reasoningModel) {
-            const result = await this.reasoningCleanupService.processWithReasoningModel(
-              processedText,
-              reasoningModel,
-              agentName
+          if (typeof this.reasoningCleanupService?.processTranscriptionWithOutcome === "function") {
+            const result = await this.reasoningCleanupService.processTranscriptionWithOutcome(
+              rawText,
+              ECHO_DRAFT_CLOUD_SOURCE,
+              override
             );
-            if (result) {
-              processedText = result;
-              source = ECHO_DRAFT_BYOK_REASONED_SOURCE;
+            processedText = result.text || rawText;
+            cleanup = result.cleanup;
+          } else if (reasoningModel) {
+            const result =
+              typeof this.reasoningCleanupService?.processWithReasoningModelResult === "function"
+                ? await this.reasoningCleanupService.processWithReasoningModelResult(
+                    rawText,
+                    reasoningModel,
+                    agentName
+                  )
+                : {
+                    text: await this.reasoningCleanupService.processWithReasoningModel(
+                      rawText,
+                      reasoningModel,
+                      agentName
+                    ),
+                    retryCount: 0,
+                    assessment: { metrics: {} },
+                  };
+            if (!result.text) {
+              throw new Error("BYOK reasoning returned an empty cleanup response.");
             }
+            processedText = result.text;
+            cleanup = {
+              requested: true,
+              attempted: true,
+              applied: true,
+              status: processedText === rawText ? "unchanged" : "applied",
+              fallbackReason: null,
+              model: reasoningModel,
+              provider: localStorage.getItem("reasoningProvider") || "auto",
+              retryCount: result.retryCount,
+              metrics: result.assessment?.metrics || {},
+            };
+          } else {
+            cleanup = {
+              requested: true,
+              attempted: false,
+              applied: false,
+              status: "fallback",
+              fallbackReason: "not_configured",
+              model: null,
+              provider: localStorage.getItem("reasoningProvider") || "auto",
+              retryCount: 0,
+            };
+          }
+          if (cleanup?.applied) {
+            source = ECHO_DRAFT_BYOK_REASONED_SOURCE;
           }
         }
       } catch (reasonError) {
+        processedText = rawText;
+        const managedCleanup = cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE;
+        cleanup = {
+          requested: true,
+          attempted: true,
+          applied: false,
+          status: "fallback",
+          fallbackReason:
+            reasonError?.code === "CLEANUP_FIDELITY_REJECTED"
+              ? "fidelity_rejected"
+              : "provider_error",
+          model: managedCleanup ? null : localStorage.getItem("reasoningModel") || null,
+          provider: managedCleanup
+            ? ECHO_DRAFT_CLOUD_SOURCE
+            : localStorage.getItem("reasoningProvider") || "auto",
+          retryCount: reasonError?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
+          ...(reasonError?.assessment?.metrics ? { metrics: reasonError.assessment.metrics } : {}),
+        };
         this.logger?.error?.(
           "Cloud reasoning failed, using raw text",
           { error: reasonError?.message || String(reasonError), cloudReasoningMode },
@@ -148,6 +240,7 @@ export class CloudTranscriber {
       limitReached: result.limitReached,
       wordsUsed: result.wordsUsed,
       wordsRemaining: result.wordsRemaining,
+      ...(cleanup ? { cleanup } : {}),
     };
   }
 }

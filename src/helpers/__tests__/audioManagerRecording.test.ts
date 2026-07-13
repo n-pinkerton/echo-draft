@@ -125,6 +125,112 @@ describe("AudioManager (non-streaming recording contract)", () => {
     manager.cleanup();
   });
 
+  it("announces listening only after MediaRecorder starts successfully", async () => {
+    class FailingMediaRecorder extends FakeMediaRecorder {
+      start() {
+        throw new Error("recorder start failed");
+      }
+    }
+    (globalThis as any).MediaRecorder = FailingMediaRecorder;
+
+    const fakeTrack = {
+      label: "Fake Mic",
+      stop: vi.fn(),
+      getSettings: () => ({ deviceId: "fake", sampleRate: 48000, channelCount: 1 }),
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: {
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [fakeTrack],
+          getAudioTracks: () => [fakeTrack],
+        })),
+      },
+      configurable: true,
+    });
+
+    const manager = new AudioManager();
+    const onProgress = vi.fn();
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError: vi.fn(),
+      onTranscriptionComplete: vi.fn(),
+      onPartialTranscript: vi.fn(),
+      onProgress,
+    });
+
+    await expect(manager.startRecording({ sessionId: "failed-start" })).resolves.toBe(false);
+    expect(onProgress).not.toHaveBeenCalledWith(expect.objectContaining({ stage: "listening" }));
+    expect(manager.getState().isRecording).toBe(false);
+    expect(fakeTrack.stop).toHaveBeenCalledTimes(1);
+    expect((manager as any).mediaRecorder).toBeNull();
+
+    manager.cleanup();
+  });
+
+  it("emits one recording-closed transition after repeated delayed stop requests", async () => {
+    class DelayedStopMediaRecorder extends FakeMediaRecorder {
+      static latest: DelayedStopMediaRecorder | null = null;
+      stopCalls = 0;
+
+      constructor(stream: any) {
+        super(stream);
+        DelayedStopMediaRecorder.latest = this;
+      }
+
+      stop() {
+        this.stopCalls += 1;
+      }
+
+      async completeStop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob([], { type: this.mimeType }) });
+        await this.onstop?.();
+      }
+    }
+    (globalThis as any).MediaRecorder = DelayedStopMediaRecorder;
+
+    const fakeTrack = {
+      label: "Fake Mic",
+      stop: vi.fn(),
+      getSettings: () => ({ deviceId: "fake", sampleRate: 48000, channelCount: 1 }),
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: {
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [fakeTrack],
+          getAudioTracks: () => [fakeTrack],
+        })),
+      },
+      configurable: true,
+    });
+
+    const manager = new AudioManager();
+    const onProgress = vi.fn();
+    (manager as any).enqueueProcessingJob = vi.fn();
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError: vi.fn(),
+      onTranscriptionComplete: vi.fn(),
+      onPartialTranscript: vi.fn(),
+      onProgress,
+    });
+
+    await manager.startRecording({ sessionId: "delayed-stop" });
+    expect(manager.stopRecording({ reason: "manual" })).toBe(true);
+    expect(manager.stopRecording({ reason: "manual" })).toBe(true);
+    expect(DelayedStopMediaRecorder.latest?.stopCalls).toBe(1);
+    expect(onProgress).not.toHaveBeenCalledWith(expect.objectContaining({ recordingClosed: true }));
+
+    const completedStop = DelayedStopMediaRecorder.latest?.completeStop();
+    await vi.runAllTimersAsync();
+    await completedStop;
+    expect(onProgress.mock.calls.filter(([event]) => event?.recordingClosed === true)).toHaveLength(
+      1
+    );
+
+    manager.cleanup();
+  });
+
   it("uses track-ended stop reason when MediaRecorder stops after stream ends", async () => {
     const manager = new AudioManager();
 

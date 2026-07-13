@@ -212,6 +212,9 @@ Settings stored in localStorage with these keys:
 - `hotkey`: Custom hotkey configuration
 - `hasCompletedOnboarding`: Onboarding completion flag
 - `customDictionary`: JSON array of words/phrases for improved transcription accuracy
+- `dictationSoundsEnabled`: Enables state-specific dictation cues
+- `dictationSoundVolume`: Dictation cue volume from 0 to 100
+- `recordingIndicatorEnabled`: Shows the click-through recording timer while the microphone is live
 
 Environment variables persisted to `.env` (via `saveAllKeysToEnvFile()`):
 - `LOCAL_TRANSCRIPTION_PROVIDER`: Transcription engine (`nvidia` for Parakeet)

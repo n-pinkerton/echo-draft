@@ -208,6 +208,7 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
           {/* Custom Setup model picker — shown when Custom Setup is active or not signed in */}
           {(isCustomMode || !isSignedIn) && (
             <ReasoningModelSelector
+              showEnableToggle={false}
               useReasoningModel={useReasoningModel}
               setUseReasoningModel={setUseReasoningModel}
               reasoningModel={reasoningModel}

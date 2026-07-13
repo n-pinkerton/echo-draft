@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createStartRecordingHandler, createStopRecordingHandler } from "./recordingHandlers";
+import {
+  createRecordingOperationQueue,
+  createStartRecordingHandler,
+  createStopRecordingHandler,
+} from "./recordingHandlers";
 
 describe("recordingHandlers", () => {
   it("sets stage to starting before awaiting audio start", async () => {
@@ -67,14 +71,16 @@ describe("recordingHandlers", () => {
     );
     expect(playStartCue).toHaveBeenCalled();
 
-    const startingIndex = calls.findIndex((c) => c.name === "updateStage" && c.args[0] === "starting");
+    const startingIndex = calls.findIndex(
+      (c) => c.name === "updateStage" && c.args[0] === "starting"
+    );
     const startRecordingIndex = calls.findIndex((c) => c.name === "startRecording");
     expect(startingIndex).toBeGreaterThanOrEqual(0);
     expect(startRecordingIndex).toBeGreaterThanOrEqual(0);
     expect(startingIndex).toBeLessThan(startRecordingIndex);
   });
 
-  it("stops streaming recording and plays stop cue", async () => {
+  it("stops streaming recording while lifecycle progress owns the stop cue", async () => {
     const audioManager = {
       getState: () => ({ isRecording: true, isStreaming: true, isProcessing: false }),
       stopStreamingRecording: vi.fn(async () => true),
@@ -95,8 +101,6 @@ describe("recordingHandlers", () => {
       stopReason: payload?.stopReason || null,
       stopSource: payload?.stopSource || null,
     });
-    const playStopCue = vi.fn();
-
     const stop = createStopRecordingHandler({
       activeSessionRef,
       audioManagerRef,
@@ -104,13 +108,138 @@ describe("recordingHandlers", () => {
       normalizeTriggerPayload,
       recordingSessionIdRef,
       upsertJob,
-      playStopCue,
     });
 
     await stop({ sessionId: "s-1" });
 
     expect(audioManager.stopStreamingRecording).toHaveBeenCalled();
-    expect(playStopCue).toHaveBeenCalled();
+  });
+
+  it("preserves the active session when a tap stop payload has a fresh ID", async () => {
+    const stopRecording = vi.fn(() => true);
+    const audioManager = {
+      getState: () => ({ isRecording: true, isStreaming: false, isProcessing: false }),
+      stopStreamingRecording: vi.fn(),
+      stopRecording,
+    };
+    const activeSessionRef = {
+      current: {
+        sessionId: "active-session",
+        outputMode: "clipboard",
+        triggeredAt: 10,
+        insertionTarget: null,
+      } as any,
+    };
+    const normalizeTriggerPayload = (payload: any) => ({
+      outputMode: payload.outputMode,
+      sessionId: payload.sessionId,
+      triggeredAt: payload.triggeredAt,
+      startedAt: null,
+      releasedAt: null,
+      insertionTarget: null,
+      stopReason: null,
+      stopSource: null,
+    });
+    const stop = createStopRecordingHandler({
+      activeSessionRef,
+      audioManagerRef: { current: audioManager },
+      latestProgressRef: { current: {} },
+      normalizeTriggerPayload,
+      recordingSessionIdRef: { current: "active-session" },
+      upsertJob: vi.fn(),
+    });
+
+    await stop({ sessionId: "new-toggle-id", outputMode: "insert", triggeredAt: 99 });
+
+    expect(activeSessionRef.current.sessionId).toBe("active-session");
+    expect(activeSessionRef.current.outputMode).toBe("clipboard");
+    expect(stopRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "active-session", outputMode: "clipboard" })
+    );
+  });
+
+  it("serializes a forced stop behind delayed target capture and microphone startup", async () => {
+    let resolveCapture!: (value: any) => void;
+    let resolveStart!: (value: boolean) => void;
+    const capture = new Promise((resolve) => {
+      resolveCapture = resolve;
+    });
+    const microphoneStart = new Promise<boolean>((resolve) => {
+      resolveStart = resolve;
+    });
+    let state = { isRecording: false, isStreaming: false, isProcessing: false };
+    const stopRecording = vi.fn(() => {
+      state = { ...state, isRecording: false };
+      return true;
+    });
+    const audioManager = {
+      getState: () => state,
+      shouldUseStreaming: () => false,
+      startRecording: vi.fn(async () => {
+        const didStart = await microphoneStart;
+        if (didStart) state = { ...state, isRecording: true };
+        return didStart;
+      }),
+      startStreamingRecording: vi.fn(),
+      stopStreamingRecording: vi.fn(),
+      stopRecording,
+    };
+    const activeSessionRef = { current: null as any };
+    const recordingSessionIdRef = { current: null as string | null };
+    const normalizeTriggerPayload = (payload: any) => ({
+      outputMode: "insert",
+      sessionId: payload.sessionId,
+      triggeredAt: 1,
+      stopReason: payload.stopReason || null,
+      stopSource: payload.stopSource || null,
+    });
+    const common = {
+      activeSessionRef,
+      audioManagerRef: { current: audioManager },
+      normalizeTriggerPayload,
+      recordingSessionIdRef,
+      upsertJob: vi.fn(() => ({ jobId: 1 })),
+    };
+    const start = createStartRecordingHandler({
+      ...common,
+      recordingStartedAtRef: { current: null },
+      removeJob: vi.fn(),
+      sessionStartedAtRef: { current: null },
+      sessionsByIdRef: { current: new Map() },
+      updateStage: vi.fn(),
+      playStartCue: vi.fn(),
+      electronAPI: { captureInsertionTarget: vi.fn(() => capture) },
+    });
+    const stop = createStopRecordingHandler({
+      ...common,
+      latestProgressRef: { current: {} },
+    });
+    const queue = createRecordingOperationQueue();
+
+    const startPromise = queue.run(() => start({ sessionId: "pending-session" }));
+    const stopPromise = queue.run(() =>
+      stop({
+        sessionId: "pending-session",
+        stopReason: "listener-exit",
+        stopSource: "windows-native-listener",
+      })
+    );
+
+    await Promise.resolve();
+    expect(stopRecording).not.toHaveBeenCalled();
+    resolveCapture({ success: false });
+    await Promise.resolve();
+    expect(audioManager.startRecording).toHaveBeenCalled();
+    resolveStart(true);
+
+    await Promise.all([startPromise, stopPromise]);
+    expect(stopRecording).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "pending-session",
+        reason: "listener-exit",
+        source: "windows-native-listener",
+      })
+    );
+    expect(state.isRecording).toBe(false);
   });
 });
-

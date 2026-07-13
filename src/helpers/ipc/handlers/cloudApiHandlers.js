@@ -95,8 +95,8 @@ function registerCloudApiHandlers(
               try {
                 const parsed = JSON.parse(responseData);
                 resolve({ statusCode: res.statusCode, data: parsed });
-              } catch (e) {
-                reject(new Error(`Invalid JSON response: ${responseData.slice(0, 200)}`));
+              } catch {
+                reject(new Error(`Invalid JSON response (${responseData.length} bytes)`));
               }
             });
           }
@@ -276,4 +276,3 @@ function registerCloudApiHandlers(
 }
 
 module.exports = { registerCloudApiHandlers };
-

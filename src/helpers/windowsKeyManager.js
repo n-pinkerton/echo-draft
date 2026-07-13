@@ -12,8 +12,9 @@ const fs = require("fs");
 const debugLogger = require("./debugLogger");
 
 class WindowsKeyManager extends EventEmitter {
-  constructor() {
+  constructor({ spawnFn = spawn } = {}) {
     super();
+    this.spawnProcess = spawnFn;
     this.listenerProcesses = new Map();
     this.isSupported = process.platform === "win32";
     this.hasReportedError = false;
@@ -55,7 +56,7 @@ class WindowsKeyManager extends EventEmitter {
 
     let listenerProcess = null;
     try {
-      listenerProcess = spawn(listenerPath, [key], {
+      listenerProcess = this.spawnProcess(listenerPath, [key], {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -65,14 +66,20 @@ class WindowsKeyManager extends EventEmitter {
       return;
     }
 
-    this.listenerProcesses.set(hotkeyId, {
+    const listener = {
       process: listenerProcess,
       key,
       isReady: false,
-    });
+      stdoutHandler: null,
+      stderrHandler: null,
+    };
+    this.listenerProcesses.set(hotkeyId, listener);
+    const isCurrentListener = () =>
+      this.listenerProcesses.get(hotkeyId)?.process === listenerProcess;
 
     listenerProcess.stdout.setEncoding("utf8");
-    listenerProcess.stdout.on("data", (chunk) => {
+    listener.stdoutHandler = (chunk) => {
+      if (!isCurrentListener()) return;
       chunk
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -80,10 +87,7 @@ class WindowsKeyManager extends EventEmitter {
         .forEach((line) => {
           if (line === "READY") {
             debugLogger.debug("[WindowsKeyManager] Listener ready", { hotkeyId, key });
-            const listener = this.listenerProcesses.get(hotkeyId);
-            if (listener) {
-              listener.isReady = true;
-            }
+            listener.isReady = true;
             this.emit("ready", { hotkeyId, key });
           } else if (line === "KEY_DOWN") {
             debugLogger.debug("[WindowsKeyManager] KEY_DOWN detected", { hotkeyId, key });
@@ -96,28 +100,31 @@ class WindowsKeyManager extends EventEmitter {
             debugLogger.debug("[WindowsKeyManager] Unknown output", { line });
           }
         });
-    });
+    };
+    listenerProcess.stdout.on("data", listener.stdoutHandler);
 
     listenerProcess.stderr.setEncoding("utf8");
-    listenerProcess.stderr.on("data", (data) => {
+    listener.stderrHandler = (data) => {
+      if (!isCurrentListener()) return;
       const message = data.toString().trim();
       if (message.length > 0) {
         // Native binary logs to stderr for info messages, don't treat as error
         debugLogger.debug("[WindowsKeyManager] Native stderr", { message });
       }
-    });
+    };
+    listenerProcess.stderr.on("data", listener.stderrHandler);
 
     listenerProcess.on("error", (error) => {
+      if (!isCurrentListener()) return;
+      this.detachListenerOutput(listener);
+      this.listenerProcesses.delete(hotkeyId);
       this.reportError(error);
-      const currentListener = this.listenerProcesses.get(hotkeyId);
-      if (currentListener?.process === listenerProcess) {
-        this.listenerProcesses.delete(hotkeyId);
-      }
     });
 
     listenerProcess.on("exit", (code, signal) => {
-      const currentListener = this.listenerProcesses.get(hotkeyId);
-      if (currentListener?.process === listenerProcess) {
+      const wasCurrentListener = isCurrentListener();
+      if (wasCurrentListener) {
+        this.detachListenerOutput(listener);
         this.listenerProcesses.delete(hotkeyId);
       }
 
@@ -126,6 +133,15 @@ class WindowsKeyManager extends EventEmitter {
         this.stoppingPids.delete(pid);
         return;
       }
+      if (!wasCurrentListener) return;
+
+      this.emit("route-stopped", {
+        hotkeyId,
+        key,
+        reason: "exit",
+        code,
+        signal,
+      });
 
       if (code !== 0) {
         const error = new Error(
@@ -144,6 +160,7 @@ class WindowsKeyManager extends EventEmitter {
       const listener = this.listenerProcesses.get(hotkeyId);
       if (listener?.process) {
         debugLogger.debug("[WindowsKeyManager] Stopping key listener", { hotkeyId });
+        this.detachListenerOutput(listener);
         if (listener.process.pid) {
           this.stoppingPids.add(listener.process.pid);
         }
@@ -154,12 +171,20 @@ class WindowsKeyManager extends EventEmitter {
         }
       }
       this.listenerProcesses.delete(hotkeyId);
+      if (listener) {
+        this.emit("route-stopped", {
+          hotkeyId,
+          key: listener.key,
+          reason: "stopped",
+        });
+      }
       return;
     }
 
     for (const [id, listener] of this.listenerProcesses.entries()) {
       if (listener?.process) {
         debugLogger.debug("[WindowsKeyManager] Stopping key listener", { hotkeyId: id });
+        this.detachListenerOutput(listener);
         if (listener.process.pid) {
           this.stoppingPids.add(listener.process.pid);
         }
@@ -169,8 +194,24 @@ class WindowsKeyManager extends EventEmitter {
           // Ignore kill errors
         }
       }
+      this.emit("route-stopped", {
+        hotkeyId: id,
+        key: listener?.key,
+        reason: "stopped",
+      });
     }
     this.listenerProcesses.clear();
+  }
+
+  detachListenerOutput(listener) {
+    if (listener?.stdoutHandler) {
+      listener.process?.stdout?.removeListener?.("data", listener.stdoutHandler);
+      listener.stdoutHandler = null;
+    }
+    if (listener?.stderrHandler) {
+      listener.process?.stderr?.removeListener?.("data", listener.stderrHandler);
+      listener.stderrHandler = null;
+    }
   }
 
   /**
@@ -190,6 +231,7 @@ class WindowsKeyManager extends EventEmitter {
     this.hasReportedError = true;
 
     for (const listener of this.listenerProcesses.values()) {
+      this.detachListenerOutput(listener);
       try {
         listener?.process?.kill();
       } catch {

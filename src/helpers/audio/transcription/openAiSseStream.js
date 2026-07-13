@@ -33,6 +33,7 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
   let buffer = "";
   let collectedText = "";
   let finalText = null;
+  let completionMarkerReceived = false;
   let eventCount = 0;
   const eventTypes = {};
 
@@ -49,7 +50,7 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
       if (trace) {
         logger?.trace?.(
           "OpenAI stream delta",
-          { delta: payload.delta, deltaLength: payload.delta.length, eventNumber: eventCount },
+          { deltaLength: payload.delta.length, eventNumber: eventCount },
           "transcription"
         );
       }
@@ -65,7 +66,7 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
       if (trace) {
         logger?.trace?.(
           "OpenAI stream segment",
-          { text: payload.text, textLength: payload.text.length, eventNumber: eventCount },
+          { textLength: payload.text.length, eventNumber: eventCount },
           "transcription"
         );
       }
@@ -79,6 +80,7 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
 
     if (type === "transcript.text.done" && typeof payload.text === "string") {
       finalText = payload.text;
+      completionMarkerReceived = true;
       logger?.debug?.(
         "Final transcript received",
         {
@@ -90,17 +92,71 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
       if (trace) {
         logger?.trace?.(
           "OpenAI stream done",
-          { text: payload.text, textLength: payload.text.length, eventNumber: eventCount },
+          { textLength: payload.text.length, eventNumber: eventCount },
           "transcription"
         );
       }
     }
   };
 
+  const handleSseLine = (line) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) {
+      return true;
+    }
+
+    let data = "";
+    if (trimmedLine.startsWith("data: ")) {
+      data = trimmedLine.slice(6);
+    } else if (trimmedLine.startsWith("data:")) {
+      data = trimmedLine.slice(5).trim();
+    } else {
+      return true;
+    }
+
+    if (data === "[DONE]") {
+      completionMarkerReceived = true;
+      if (trace) {
+        logger?.trace?.(
+          "OpenAI stream done marker received",
+          { eventNumber: eventCount, collectedTextLength: collectedText.length },
+          "transcription"
+        );
+      }
+      finalText = finalText ?? collectedText;
+      return true;
+    }
+
+    try {
+      handleEvent(JSON.parse(data));
+      return true;
+    } catch (error) {
+      if (trace) {
+        logger?.trace?.(
+          "OpenAI stream JSON parse deferred",
+          {
+            error: error?.message || String(error),
+            dataLength: data.length,
+          },
+          "transcription"
+        );
+      }
+      return false;
+    }
+  };
+
   logger?.debug?.("Starting to read transcription stream", {}, "transcription");
 
   while (true) {
-    const { value, done } = await reader.read();
+    let readResult;
+    try {
+      readResult = await reader.read();
+    } catch (cause) {
+      const error = new Error("Transcription stream ended before completion.", { cause });
+      error.code = "TRANSCRIPTION_STREAM_INCOMPLETE";
+      throw error;
+    }
+    const { value, done } = readResult;
     if (done) {
       logger?.debug?.(
         "Stream reading complete",
@@ -124,7 +180,6 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
         "First stream chunk received",
         {
           chunkLength: chunk.length,
-          chunkPreview: chunk.substring(0, 500),
         },
         "transcription"
       );
@@ -135,49 +190,26 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
     buffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      const trimmedLine = line.trim();
-      if (!trimmedLine) {
-        continue;
-      }
-
-      let data = "";
-      if (trimmedLine.startsWith("data: ")) {
-        data = trimmedLine.slice(6);
-      } else if (trimmedLine.startsWith("data:")) {
-        data = trimmedLine.slice(5).trim();
-      } else {
-        continue;
-      }
-
-      if (data === "[DONE]") {
-        if (trace) {
-          logger?.trace?.(
-            "OpenAI stream done marker received",
-            { eventNumber: eventCount, collectedTextLength: collectedText.length },
-            "transcription"
-          );
-        }
-        finalText = finalText ?? collectedText;
-        continue;
-      }
-
-      try {
-        const parsed = JSON.parse(data);
-        handleEvent(parsed);
-      } catch (error) {
-        if (trace) {
-          logger?.trace?.(
-            "OpenAI stream JSON parse deferred",
-            {
-              error: error?.message || String(error),
-              dataPreview: data.substring(0, 500),
-            },
-            "transcription"
-          );
-        }
+      if (!handleSseLine(line)) {
         buffer = line + "\n" + buffer;
       }
     }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    handleSseLine(buffer);
+  }
+
+  if (!completionMarkerReceived) {
+    logger?.warn?.(
+      "OpenAI transcription stream closed without a completion marker",
+      { collectedTextLength: collectedText.length, eventCount, eventTypes },
+      "transcription"
+    );
+    const error = new Error("Transcription stream ended before completion.");
+    error.code = "TRANSCRIPTION_STREAM_INCOMPLETE";
+    throw error;
   }
 
   const collectedTextLength = collectedText.length;
@@ -186,7 +218,12 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
   const result = shouldUseFinalText ? finalText : collectedText;
   const lengthMismatch = Boolean(finalText) && finalTextLength !== collectedTextLength;
 
-  if (!shouldUseFinalText && finalText && finalTextLength > 0 && finalTextLength < collectedTextLength) {
+  if (
+    !shouldUseFinalText &&
+    finalText &&
+    finalTextLength > 0 &&
+    finalTextLength < collectedTextLength
+  ) {
     logger?.warn?.(
       "OpenAI stream final text shorter than collected deltas; using collected text",
       {
@@ -217,7 +254,6 @@ export async function readOpenAiTranscriptionStream(response, options = {}) {
     logger?.trace?.(
       "OpenAI stream result",
       {
-        text: result,
         resultLength: result.length,
         collectedTextLength,
         finalTextLength,

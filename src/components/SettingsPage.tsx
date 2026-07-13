@@ -18,6 +18,7 @@ import AiModelsSection from "./settings/sections/AiModelsSection";
 import DeveloperToolsSection from "./settings/sections/DeveloperToolsSection";
 import DictionarySection from "./settings/sections/DictionarySection";
 import GeneralSection from "./settings/sections/GeneralSection";
+import HotkeysSection from "./settings/sections/general/HotkeysSection";
 import PermissionsSection from "./settings/sections/PermissionsSection";
 import PrivacySection from "./settings/sections/PrivacySection";
 import PromptsSection from "./settings/sections/PromptsSection";
@@ -110,6 +111,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
         return (
           <GeneralSection showAlertDialog={showAlertDialog} showConfirmDialog={showConfirmDialog} />
         );
+
+      case "hotkeys":
+        return <HotkeysSection showAlertDialog={showAlertDialog} />;
 
       case "transcription":
         return (
@@ -220,7 +224,10 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
 
       case "developer":
         return (
-          <DeveloperToolsSection showConfirmDialog={showConfirmDialog} showAlertDialog={showAlertDialog} />
+          <DeveloperToolsSection
+            showConfirmDialog={showConfirmDialog}
+            showAlertDialog={showAlertDialog}
+          />
         );
 
       default:

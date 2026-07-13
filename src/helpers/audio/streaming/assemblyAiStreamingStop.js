@@ -2,7 +2,6 @@ import logger from "../../../utils/logger";
 import {
   ECHO_DRAFT_CLOUD_MODE,
   ECHO_DRAFT_CLOUD_SOURCE,
-  getRendererLogLevel,
   isEchoDraftCloudMode,
 } from "../../../utils/branding";
 import { getCustomDictionaryArray } from "../transcription/customDictionary";
@@ -11,7 +10,46 @@ import { cleanupStreamingListeners } from "./assemblyAiStreamingCleanup";
 const STREAMING_WORKLET_FLUSH_TIMEOUT_MS = 1000;
 const STREAMING_POST_FLUSH_GRACE_MS = 150;
 
-export async function stopStreamingRecording(manager) {
+const settleStreamingState = (manager) => {
+  manager.isProcessing = false;
+  manager.streamingContext = null;
+  if (manager.processingQueue.length > 0) {
+    manager.startQueuedProcessingIfPossible();
+  } else {
+    manager.emitStateChange({
+      isRecording: manager.isRecording,
+      isProcessing: false,
+      isStreaming: manager.isStreaming,
+    });
+  }
+
+  if (manager.shouldUseStreaming()) {
+    manager.warmupStreamingConnection().catch((error) => {
+      logger.debug("Background re-warm failed", { error: error.message }, "streaming");
+    });
+  }
+};
+
+export function stopStreamingRecording(manager) {
+  if (manager.streamingStopPromise) {
+    return manager.streamingStopPromise;
+  }
+
+  if (!manager.isStreaming) {
+    return Promise.resolve(false);
+  }
+
+  let guardedPromise;
+  guardedPromise = performStopStreamingRecording(manager).finally(() => {
+    if (manager.streamingStopPromise === guardedPromise) {
+      manager.streamingStopPromise = null;
+    }
+  });
+  manager.streamingStopPromise = guardedPromise;
+  return guardedPromise;
+}
+
+async function performStopStreamingRecording(manager) {
   if (!manager.isStreaming) return false;
 
   const durationSeconds = manager.recordingStartTime
@@ -28,12 +66,6 @@ export async function stopStreamingRecording(manager) {
   manager.isProcessing = true;
   manager.recordingStartTime = null;
   manager.emitStateChange({ isRecording: false, isProcessing: true, isStreaming: false });
-  manager.emitProgress({
-    stage: "transcribing",
-    stageLabel: "Transcribing",
-    message: "Finalizing stream",
-    context: manager.streamingContext,
-  });
 
   // 2. Stop the processor — it flushes its remaining buffer on "stop".
   //    We keep forwarding enabled until the worklet confirms the flush is posted.
@@ -62,6 +94,13 @@ export async function stopStreamingRecording(manager) {
     manager.streamingStream.getTracks().forEach((track) => track.stop());
     manager.streamingStream = null;
   }
+  manager.emitProgress({
+    stage: "transcribing",
+    stageLabel: "Transcribing",
+    message: "Finalizing stream",
+    context: manager.streamingContext,
+    recordingClosed: true,
+  });
   const tAudioCleanup = performance.now();
 
   // 3. Wait for flushed buffer to travel: port → main thread → IPC → WebSocket → server.
@@ -89,6 +128,37 @@ export async function stopStreamingRecording(manager) {
   });
   const tTerminate = performance.now();
 
+  const terminationConfirmed =
+    stopResult?.success === true && stopResult?.terminationConfirmed === true;
+  if (!terminationConfirmed) {
+    cleanupStreamingListeners(manager);
+    const error = new Error(
+      stopResult?.terminationTimedOut
+        ? "The streaming service did not confirm the end of the transcription."
+        : stopResult?.error || "The streaming service could not finalize the transcription."
+    );
+    error.code = "STREAMING_TRANSCRIPTION_INCOMPLETE";
+    logger.warn(
+      "Streaming transcription was not finalized; partial text will not be inserted",
+      {
+        terminationTimedOut: stopResult?.terminationTimedOut === true,
+        hasFinalText: Boolean(manager.streamingFinalText),
+        hasPartialText: Boolean(manager.streamingPartialText),
+      },
+      "streaming"
+    );
+    manager.emitError(
+      {
+        title: "Transcription incomplete",
+        description:
+          "EchoDraft could not confirm the end of this streaming transcription, so no partial text was inserted. Please dictate it again.",
+      },
+      error
+    );
+    settleStreamingState(manager);
+    return false;
+  }
+
   finalText = manager.streamingFinalText || "";
 
   if (!finalText && manager.streamingPartialText) {
@@ -96,7 +166,8 @@ export async function stopStreamingRecording(manager) {
     logger.debug("Using partial text as fallback", { textLength: finalText.length }, "streaming");
   }
 
-  const terminationText = stopResult && typeof stopResult.text === "string" ? stopResult.text : null;
+  const terminationText =
+    stopResult && typeof stopResult.text === "string" ? stopResult.text : null;
   if (terminationText) {
     if (!finalText || terminationText.length >= finalText.length) {
       finalText = terminationText;
@@ -120,7 +191,9 @@ export async function stopStreamingRecording(manager) {
   cleanupStreamingListeners(manager);
 
   const stopAudioStats =
-    stopResult && typeof stopResult === "object" && stopResult.audioStats ? stopResult.audioStats : null;
+    stopResult && typeof stopResult === "object" && stopResult.audioStats
+      ? stopResult.audioStats
+      : null;
 
   const timings = {
     recordDurationMs,
@@ -158,6 +231,7 @@ export async function stopStreamingRecording(manager) {
   );
 
   const rawText = finalText;
+  let cleanup = null;
 
   const useReasoningModel = localStorage.getItem("useReasoningModel") === "true";
   if (useReasoningModel && finalText) {
@@ -187,9 +261,33 @@ export async function stopStreamingRecording(manager) {
           return res;
         });
 
-        if (reasonResult.success && reasonResult.text) {
-          finalText = reasonResult.text;
+        if (!reasonResult.success) {
+          throw new Error("Cloud reasoning did not complete successfully.");
         }
+        if (!reasonResult.text || !reasonResult.text.trim()) {
+          throw new Error("Cloud reasoning returned an empty cleanup response.");
+        }
+
+        if (typeof manager.reasoningCleanupService?.validateCleanupCandidate !== "function") {
+          throw new Error("Cleanup preservation validation is unavailable.");
+        }
+
+        const validated = manager.reasoningCleanupService.validateCleanupCandidate(
+          rawText,
+          reasonResult.text
+        );
+        finalText = validated.text;
+        cleanup = {
+          requested: true,
+          attempted: true,
+          applied: true,
+          status: finalText === rawText ? "unchanged" : "applied",
+          fallbackReason: null,
+          model: reasonResult.model || null,
+          provider: ECHO_DRAFT_CLOUD_SOURCE,
+          retryCount: 0,
+          metrics: validated.assessment.metrics,
+        };
 
         const reasoningDurationMs = Math.round(performance.now() - reasoningStart);
         timings.reasoningProcessingDurationMs = reasoningDurationMs;
@@ -203,21 +301,83 @@ export async function stopStreamingRecording(manager) {
         );
       } else {
         const reasoningModel = localStorage.getItem("reasoningModel") || "";
-        if (reasoningModel) {
-          const result = await manager.reasoningCleanupService.processWithReasoningModel(
-            finalText,
-            reasoningModel,
-            agentName
+        if (
+          typeof manager.reasoningCleanupService?.processTranscriptionWithOutcome === "function"
+        ) {
+          const result = await manager.reasoningCleanupService.processTranscriptionWithOutcome(
+            rawText,
+            "assemblyai-streaming",
+            null
           );
-          if (result) {
-            finalText = result;
+          finalText = result.text || rawText;
+          cleanup = result.cleanup;
+        } else if (reasoningModel) {
+          const result =
+            typeof manager.reasoningCleanupService?.processWithReasoningModelResult === "function"
+              ? await manager.reasoningCleanupService.processWithReasoningModelResult(
+                  rawText,
+                  reasoningModel,
+                  agentName
+                )
+              : {
+                  text: await manager.reasoningCleanupService.processWithReasoningModel(
+                    rawText,
+                    reasoningModel,
+                    agentName
+                  ),
+                  retryCount: 0,
+                  assessment: { metrics: {} },
+                };
+          if (!result.text) {
+            throw new Error("BYOK reasoning returned an empty cleanup response.");
           }
-          const reasoningDurationMs = Math.round(performance.now() - reasoningStart);
-          timings.reasoningProcessingDurationMs = reasoningDurationMs;
-          logger.info("Streaming BYOK reasoning complete", { reasoningDurationMs }, "streaming");
+          finalText = result.text;
+          cleanup = {
+            requested: true,
+            attempted: true,
+            applied: true,
+            status: finalText === rawText ? "unchanged" : "applied",
+            fallbackReason: null,
+            model: reasoningModel,
+            provider: localStorage.getItem("reasoningProvider") || "auto",
+            retryCount: result.retryCount,
+            metrics: result.assessment?.metrics || {},
+          };
+        } else {
+          cleanup = {
+            requested: true,
+            attempted: false,
+            applied: false,
+            status: "fallback",
+            fallbackReason: "not_configured",
+            model: null,
+            provider: localStorage.getItem("reasoningProvider") || "auto",
+            retryCount: 0,
+          };
         }
+        const reasoningDurationMs = Math.round(performance.now() - reasoningStart);
+        timings.reasoningProcessingDurationMs = reasoningDurationMs;
+        logger.info("Streaming BYOK reasoning complete", { reasoningDurationMs }, "streaming");
       }
     } catch (reasonError) {
+      finalText = rawText;
+      const managedCleanup = isEchoDraftCloudMode(cloudReasoningMode);
+      cleanup = {
+        requested: true,
+        attempted: true,
+        applied: false,
+        status: "fallback",
+        fallbackReason:
+          reasonError?.code === "CLEANUP_FIDELITY_REJECTED"
+            ? "fidelity_rejected"
+            : "provider_error",
+        model: managedCleanup ? null : localStorage.getItem("reasoningModel") || null,
+        provider: managedCleanup
+          ? ECHO_DRAFT_CLOUD_SOURCE
+          : localStorage.getItem("reasoningProvider") || "auto",
+        retryCount: reasonError?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
+        ...(reasonError?.assessment?.metrics ? { metrics: reasonError.assessment.metrics } : {}),
+      };
       logger.error(
         "Streaming reasoning failed, using raw text",
         { error: reasonError.message },
@@ -238,18 +398,6 @@ export async function stopStreamingRecording(manager) {
       },
       "transcription"
     );
-    if (getRendererLogLevel() === "trace") {
-      logger.trace(
-        "Streaming transcript text",
-        {
-          context: manager.streamingContext,
-          source: "assemblyai-streaming",
-          rawText,
-          cleanedText: finalText,
-        },
-        "transcription"
-      );
-    }
     await Promise.resolve(
       manager.onTranscriptionComplete?.({
         success: true,
@@ -258,6 +406,7 @@ export async function stopStreamingRecording(manager) {
         source: "assemblyai-streaming",
         timings,
         context: manager.streamingContext,
+        ...(cleanup ? { cleanup } : {}),
       })
     );
 
@@ -271,23 +420,7 @@ export async function stopStreamingRecording(manager) {
     );
   }
 
-  manager.isProcessing = false;
-  manager.streamingContext = null;
-  if (manager.processingQueue.length > 0) {
-    manager.startQueuedProcessingIfPossible();
-  } else {
-    manager.emitStateChange({
-      isRecording: manager.isRecording,
-      isProcessing: false,
-      isStreaming: manager.isStreaming,
-    });
-  }
-
-  if (manager.shouldUseStreaming()) {
-    manager.warmupStreamingConnection().catch((e) => {
-      logger.debug("Background re-warm failed", { error: e.message }, "streaming");
-    });
-  }
+  settleStreamingState(manager);
 
   return true;
 }

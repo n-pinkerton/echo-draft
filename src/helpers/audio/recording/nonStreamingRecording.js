@@ -4,6 +4,7 @@ import { describeRecordingStartError } from "./nonStreamingRecordingErrors";
 import { waitForNonStreamingStopFlush } from "./nonStreamingStopFlush";
 
 export async function startNonStreamingRecording(manager, context = null) {
+  let acquiredStream = null;
   try {
     if (manager.isRecording || manager.mediaRecorder?.state === "recording" || manager.isStopping) {
       logger.debug(
@@ -29,6 +30,7 @@ export async function startNonStreamingRecording(manager, context = null) {
     const constraints = await manager.getAudioConstraints();
     const tConstraints = performance.now();
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    acquiredStream = stream;
     const tStream = performance.now();
     try {
       localStorage?.setItem?.("micPermissionGranted", "true");
@@ -75,8 +77,7 @@ export async function startNonStreamingRecording(manager, context = null) {
       logger.info(
         "Recording started with microphone",
         {
-          label: audioTrack.label,
-          deviceId: settings.deviceId?.slice(0, 20) + "...",
+          deviceSelected: Boolean(settings.deviceId),
           sampleRate: settings.sampleRate,
           channelCount: settings.channelCount,
           context: recordingContext,
@@ -109,12 +110,6 @@ export async function startNonStreamingRecording(manager, context = null) {
     manager.pendingStopContext = null;
     manager.isStopping = false;
     manager.recordingStartTime = recordingStartedAt;
-    manager.emitProgress({
-      stage: "listening",
-      stageLabel: "Listening",
-      stageProgress: null,
-      context: recordingContext,
-    });
 
     mediaRecorder.ondataavailable = (event) => {
       audioChunks.push(event.data);
@@ -191,7 +186,9 @@ export async function startNonStreamingRecording(manager, context = null) {
           stopSource: stopContext.source || null,
         });
 
-        const durationSeconds = recordingStartedAt ? (Date.now() - recordingStartedAt) / 1000 : null;
+        const durationSeconds = recordingStartedAt
+          ? (Date.now() - recordingStartedAt) / 1000
+          : null;
         manager.enqueueProcessingJob(
           audioBlob,
           {
@@ -208,12 +205,18 @@ export async function startNonStreamingRecording(manager, context = null) {
             chunksBeforeStopWait,
             chunksAfterStopWait,
             microphoneLabel,
-            microphoneDeviceId: microphoneSettings.deviceId || null,
             microphoneSampleRate: microphoneSettings.sampleRate ?? null,
             microphoneChannelCount: microphoneSettings.channelCount ?? null,
           },
           recordingContext
         );
+        manager.emitProgress({
+          stage: "transcribing",
+          stageLabel: "Transcribing",
+          message: "Recording stopped",
+          context: recordingContext,
+          recordingClosed: true,
+        });
         manager.pendingNonStreamingStopRequestedAt = null;
         manager.pendingNonStreamingStartTimings = null;
         manager.emitStateChange({
@@ -244,6 +247,12 @@ export async function startNonStreamingRecording(manager, context = null) {
       isProcessing: manager.isProcessing,
       isStreaming: false,
     });
+    manager.emitProgress({
+      stage: "listening",
+      stageLabel: "Listening",
+      stageProgress: null,
+      context: recordingContext,
+    });
 
     logger.info(
       "Non-streaming start timing",
@@ -262,6 +271,24 @@ export async function startNonStreamingRecording(manager, context = null) {
 
     return true;
   } catch (error) {
+    acquiredStream?.getTracks?.().forEach((track) => track.stop());
+    if (manager.mediaRecorder?.stream === acquiredStream) {
+      manager.mediaRecorder = null;
+    }
+    manager.audioChunks = [];
+    manager.recordingStartTime = null;
+    manager.pendingNonStreamingStartTimings = null;
+    manager.pendingNonStreamingStopContext = null;
+    manager.pendingNonStreamingStopRequestedAt = null;
+    manager.pendingStopContext = null;
+    manager.isStopping = false;
+    manager.isRecording = false;
+    manager.emitStateChange({
+      isRecording: false,
+      isProcessing: manager.isProcessing,
+      isStreaming: false,
+    });
+
     const errorInfo = describeRecordingStartError(error);
 
     logger.error(

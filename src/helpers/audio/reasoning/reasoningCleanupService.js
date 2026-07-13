@@ -1,39 +1,5 @@
-import {
-  DEFAULT_CLEANUP_MODEL_ID,
-  SUPPORTED_CLEANUP_MODEL_IDS,
-  sanitizeProcessedText,
-} from "../../../config/prompts";
-
-const RETIRED_OPENAI_CLEANUP_MODELS = new Set([
-  "gpt-5.2",
-  "gpt-5-mini",
-  "gpt-5-nano",
-  "gpt-4.1",
-  "gpt-4.1-mini",
-  "gpt-4.1-nano",
-]);
-
-function normalizeCleanupModel(model, provider) {
-  const normalizedModel = typeof model === "string" ? model.trim() : "";
-  const normalizedProvider = typeof provider === "string" ? provider.trim() : "";
-
-  if (
-    RETIRED_OPENAI_CLEANUP_MODELS.has(normalizedModel) &&
-    (normalizedProvider === "openai" || normalizedProvider === "auto" || !normalizedProvider)
-  ) {
-    return DEFAULT_CLEANUP_MODEL_ID;
-  }
-
-  if (
-    normalizedModel.startsWith("gpt-") &&
-    !SUPPORTED_CLEANUP_MODEL_IDS.includes(normalizedModel) &&
-    (normalizedProvider === "openai" || normalizedProvider === "auto")
-  ) {
-    return DEFAULT_CLEANUP_MODEL_ID;
-  }
-
-  return normalizedModel;
-}
+import { normalizeCleanupModelId, sanitizeProcessedText } from "../../../config/prompts";
+import { assessCleanupFidelity, CleanupFidelityError } from "./cleanupFidelity";
 
 /**
  * Shared cleanup/orchestration around `ReasoningService` for transcript post-processing.
@@ -70,9 +36,13 @@ export class ReasoningCleanupService {
     return localStorage.getItem("useReasoningModel") || "";
   }
 
-  _getPreferenceKey(cleanupEnabledOverride) {
+  _getPreferenceKey(cleanupEnabledOverride, provider = "auto") {
     const storedValue = this._getStoredEnabledValue();
-    return cleanupEnabledOverride === null ? `storage:${storedValue}` : `override:${cleanupEnabledOverride}`;
+    const enabledKey =
+      cleanupEnabledOverride === null
+        ? `storage:${storedValue}`
+        : `override:${cleanupEnabledOverride}`;
+    return `${enabledKey}:provider:${provider || "auto"}`;
   }
 
   _isReasoningEnabled(cleanupEnabledOverride) {
@@ -88,12 +58,12 @@ export class ReasoningCleanupService {
    * @param {boolean|null} cleanupEnabledOverride
    * @returns {Promise<boolean>}
    */
-  async isReasoningAvailable(cleanupEnabledOverride) {
+  async isReasoningAvailable(cleanupEnabledOverride, provider = "auto") {
     if (typeof window === "undefined" || !window.localStorage) {
       return false;
     }
 
-    const preferenceKey = this._getPreferenceKey(cleanupEnabledOverride);
+    const preferenceKey = this._getPreferenceKey(cleanupEnabledOverride, provider);
     const now = Date.now();
     const cacheValid =
       now < this.availabilityCache.expiresAt && this.cachedPreferenceKey === preferenceKey;
@@ -117,7 +87,7 @@ export class ReasoningCleanupService {
     }
 
     try {
-      const isAvailable = await this.reasoningService.isAvailable();
+      const isAvailable = await this.reasoningService.isAvailable(provider);
 
       this.logger?.logReasoning?.("REASONING_AVAILABILITY", {
         isAvailable,
@@ -144,9 +114,9 @@ export class ReasoningCleanupService {
    * @param {string} text
    * @param {string} model
    * @param {string|null} agentName
-   * @returns {Promise<string>}
+   * @returns {Promise<{text: string, assessment: any, retryCount: number}>}
    */
-  async processWithReasoningModel(text, model, agentName) {
+  async processWithReasoningModelResult(text, model, agentName) {
     this.logger?.logReasoning?.("CALLING_REASONING_SERVICE", {
       model,
       agentName,
@@ -155,17 +125,57 @@ export class ReasoningCleanupService {
 
     const startTime = Date.now();
     try {
-      const result = await this.reasoningService.processText(text, model, agentName);
+      const firstResult = sanitizeProcessedText(
+        await this.reasoningService.processText(text, model, agentName)
+      );
+      const firstAssessment = assessCleanupFidelity(text, firstResult);
+
+      if (firstAssessment.accepted) {
+        const processingTimeMs = Date.now() - startTime;
+        this.logger?.logReasoning?.("REASONING_SERVICE_COMPLETE", {
+          model,
+          processingTimeMs,
+          resultLength: firstResult.length,
+          retryCount: 0,
+          success: true,
+        });
+        return { text: firstResult, assessment: firstAssessment, retryCount: 0 };
+      }
+
+      this.logger?.logReasoning?.("REASONING_FIDELITY_RETRY", {
+        model,
+        reasons: firstAssessment.reasons,
+        metrics: firstAssessment.metrics,
+      });
+
+      const retryResult = sanitizeProcessedText(
+        await this.reasoningService.processText(text, model, agentName, {
+          cleanupPromptMode: "strict-preservation",
+        })
+      );
+      const retryAssessment = assessCleanupFidelity(text, retryResult);
       const processingTimeMs = Date.now() - startTime;
+
+      if (!retryAssessment.accepted) {
+        this.logger?.logReasoning?.("REASONING_FIDELITY_REJECTED", {
+          model,
+          processingTimeMs,
+          reasons: retryAssessment.reasons,
+          metrics: retryAssessment.metrics,
+          retryCount: 1,
+        });
+        throw new CleanupFidelityError(retryAssessment);
+      }
 
       this.logger?.logReasoning?.("REASONING_SERVICE_COMPLETE", {
         model,
         processingTimeMs,
-        resultLength: result.length,
+        resultLength: retryResult.length,
+        retryCount: 1,
         success: true,
       });
 
-      return sanitizeProcessedText(result);
+      return { text: retryResult, assessment: retryAssessment, retryCount: 1 };
     } catch (error) {
       const processingTimeMs = Date.now() - startTime;
       this.logger?.logReasoning?.("REASONING_SERVICE_ERROR", {
@@ -178,33 +188,65 @@ export class ReasoningCleanupService {
     }
   }
 
+  async processWithReasoningModel(text, model, agentName) {
+    const result = await this.processWithReasoningModelResult(text, model, agentName);
+    return result.text;
+  }
+
+  validateCleanupCandidate(originalText, candidateText) {
+    const text = sanitizeProcessedText(candidateText);
+    const assessment = assessCleanupFidelity(originalText, text);
+    if (!assessment.accepted) {
+      throw new CleanupFidelityError(assessment);
+    }
+    return { text, assessment };
+  }
+
   /**
    * @param {string} text
    * @param {string} source
    * @param {boolean|null} cleanupEnabledOverride
-   * @returns {Promise<string>}
+   * @returns {Promise<{text: string, cleanup: Record<string, any>}>}
    */
-  async processTranscription(text, source, cleanupEnabledOverride) {
+  async processTranscriptionWithOutcome(text, source, cleanupEnabledOverride) {
     const normalizedText = typeof text === "string" ? text.trim() : "";
 
     this.logger?.logReasoning?.("TRANSCRIPTION_RECEIVED", {
       source,
       textLength: normalizedText.length,
-      textPreview: normalizedText.substring(0, 100) + (normalizedText.length > 100 ? "..." : ""),
       timestamp: new Date().toISOString(),
     });
 
     const storedReasoningModel =
-      typeof window !== "undefined" && window.localStorage ? localStorage.getItem("reasoningModel") || "" : "";
+      typeof window !== "undefined" && window.localStorage
+        ? localStorage.getItem("reasoningModel") || ""
+        : "";
     const reasoningProvider =
       typeof window !== "undefined" && window.localStorage
         ? localStorage.getItem("reasoningProvider") || "auto"
         : "auto";
-    const reasoningModel = normalizeCleanupModel(storedReasoningModel, reasoningProvider);
+    const reasoningModel = normalizeCleanupModelId(storedReasoningModel, reasoningProvider);
     const agentName =
-      typeof window !== "undefined" && window.localStorage ? localStorage.getItem("agentName") || null : null;
+      typeof window !== "undefined" && window.localStorage
+        ? localStorage.getItem("agentName") || null
+        : null;
+    const requested = this._isReasoningEnabled(cleanupEnabledOverride);
+    const baseOutcome = {
+      requested,
+      attempted: false,
+      applied: false,
+      status: requested ? "fallback" : "disabled",
+      fallbackReason: requested ? null : "disabled",
+      model: reasoningModel || null,
+      provider: reasoningProvider || "auto",
+      retryCount: 0,
+    };
 
-    if (reasoningModel && reasoningModel !== storedReasoningModel && typeof window !== "undefined") {
+    if (
+      reasoningModel &&
+      reasoningModel !== storedReasoningModel &&
+      typeof window !== "undefined"
+    ) {
       localStorage.setItem("reasoningModel", reasoningModel);
       this.logger?.logReasoning?.("REASONING_MODEL_MIGRATED", {
         from: storedReasoningModel,
@@ -215,10 +257,17 @@ export class ReasoningCleanupService {
 
     if (!reasoningModel) {
       this.logger?.logReasoning?.("REASONING_SKIPPED", { reason: "No reasoning model selected" });
-      return normalizedText;
+      return {
+        text: normalizedText,
+        cleanup: {
+          ...baseOutcome,
+          status: requested ? "fallback" : "disabled",
+          fallbackReason: requested ? "not_configured" : "disabled",
+        },
+      };
     }
 
-    const useReasoning = await this.isReasoningAvailable(cleanupEnabledOverride);
+    const useReasoning = await this.isReasoningAvailable(cleanupEnabledOverride, reasoningProvider);
     this.logger?.logReasoning?.("REASONING_CHECK", {
       useReasoning,
       reasoningModel,
@@ -227,7 +276,14 @@ export class ReasoningCleanupService {
     });
 
     if (!useReasoning || !normalizedText) {
-      return normalizedText;
+      return {
+        text: normalizedText,
+        cleanup: {
+          ...baseOutcome,
+          status: !requested ? "disabled" : normalizedText ? "fallback" : "unchanged",
+          fallbackReason: !requested ? "disabled" : normalizedText ? "unavailable" : null,
+        },
+      };
     }
 
     try {
@@ -237,14 +293,30 @@ export class ReasoningCleanupService {
         provider: reasoningProvider,
       });
 
-      const result = await this.processWithReasoningModel(normalizedText, reasoningModel, agentName);
+      const result = await this.processWithReasoningModelResult(
+        normalizedText,
+        reasoningModel,
+        agentName
+      );
       this.logger?.logReasoning?.("REASONING_SUCCESS", {
-        resultLength: result.length,
-        resultPreview: result.substring(0, 100) + (result.length > 100 ? "..." : ""),
+        resultLength: result.text.length,
+        retryCount: result.retryCount,
         processingTime: new Date().toISOString(),
       });
 
-      return result;
+      const unchanged = result.text === normalizedText;
+      return {
+        text: result.text,
+        cleanup: {
+          ...baseOutcome,
+          attempted: true,
+          applied: true,
+          status: unchanged ? "unchanged" : "applied",
+          fallbackReason: null,
+          retryCount: result.retryCount,
+          metrics: result.assessment.metrics,
+        },
+      };
     } catch (error) {
       this.logger?.logReasoning?.("REASONING_FAILED", {
         error: error?.message || String(error),
@@ -252,7 +324,24 @@ export class ReasoningCleanupService {
         fallbackToCleanup: true,
       });
 
-      return sanitizeProcessedText(normalizedText);
+      return {
+        text: sanitizeProcessedText(normalizedText),
+        cleanup: {
+          ...baseOutcome,
+          attempted: true,
+          applied: false,
+          status: "fallback",
+          fallbackReason:
+            error?.code === "CLEANUP_FIDELITY_REJECTED" ? "fidelity_rejected" : "provider_error",
+          retryCount: error?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
+          ...(error?.assessment?.metrics ? { metrics: error.assessment.metrics } : {}),
+        },
+      };
     }
+  }
+
+  async processTranscription(text, source, cleanupEnabledOverride) {
+    const result = await this.processTranscriptionWithOutcome(text, source, cleanupEnabledOverride);
+    return result.text;
   }
 }

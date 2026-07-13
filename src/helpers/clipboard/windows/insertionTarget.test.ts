@@ -49,7 +49,7 @@ describe("insertionTarget", () => {
   });
 
   it("activateInsertionTarget does not use SW_RESTORE when refocusing the target window", async () => {
-    const runWindowsPowerShellScript = vi.fn(async () => ({
+    const runWindowsPowerShellScript = vi.fn(async (_script: string) => ({
       code: 0,
       stdout: '{"success":true,"targetHwnd":42,"activeHwnd":42,"setForegroundReturned":true}',
       stderr: "",

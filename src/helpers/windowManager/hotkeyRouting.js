@@ -1,6 +1,9 @@
 const crypto = require("crypto");
 
-function createSessionPayload(outputMode = "insert", { now = Date.now, randomUUID = crypto.randomUUID } = {}) {
+function createSessionPayload(
+  outputMode = "insert",
+  { now = Date.now, randomUUID = crypto.randomUUID } = {}
+) {
   return {
     outputMode,
     sessionId: randomUUID(),
@@ -180,7 +183,12 @@ function forceStopMacCompoundPush(manager, reason = "manual") {
   }
 }
 
-function createHotkeyCallback(manager, outputMode = "insert", hotkeyResolver = null, { logger } = {}) {
+function createHotkeyCallback(
+  manager,
+  outputMode = "insert",
+  hotkeyResolver = null,
+  { logger } = {}
+) {
   let lastToggleTime = 0;
   const DEBOUNCE_MS = 150;
 
@@ -207,11 +215,15 @@ function createHotkeyCallback(manager, outputMode = "insert", hotkeyResolver = n
       return;
     }
 
-    // Windows push mode: defer to windowsKeyManager if available, else fall through to toggle
-    if (process.platform === "win32" && manager.windowsPushToTalkAvailable) {
-      if (activationMode === "push") {
-        return;
-      }
+    // The native Windows route emits one key-down per physical press, preventing OS key-repeat
+    // from turning a held tap hotkey into a rapid start/stop sequence.
+    const windowsRouteId = outputMode === "clipboard" ? "clipboard" : "insert";
+    if (
+      process.platform === "win32" &&
+      manager.shouldUseWindowsNativeListener?.(resolvedHotkey, activationMode) &&
+      manager.isWindowsNativeListenerReady?.(windowsRouteId)
+    ) {
+      return;
     }
 
     const now = Date.now();
@@ -247,4 +259,3 @@ module.exports = {
   sendToggleDictation,
   startMacCompoundPushToTalk,
 };
-
