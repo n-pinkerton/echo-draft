@@ -134,10 +134,17 @@ class IPCHandlers {
     );
 
     registerClipboardHandlers({ ipcMain }, { clipboardManager: this.clipboardManager });
-    registerWhisperHandlers({ ipcMain }, { whisperManager: this.whisperManager });
+    registerWhisperHandlers(
+      { ipcMain },
+      { whisperManager: this.whisperManager, cancelableRequests: this.cancelableRequests }
+    );
     registerParakeetHandlers(
       { ipcMain },
-      { parakeetManager: this.parakeetManager, environmentManager: this.environmentManager }
+      {
+        parakeetManager: this.parakeetManager,
+        environmentManager: this.environmentManager,
+        cancelableRequests: this.cancelableRequests,
+      }
     );
 
     registerUtilityHandlers(

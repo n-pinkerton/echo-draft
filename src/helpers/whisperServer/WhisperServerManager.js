@@ -4,6 +4,12 @@ const path = require("path");
 const http = require("http");
 
 const debugLogger = require("../debugLogger");
+const {
+  abortableDelay,
+  createAbortError,
+  raceWithAbort,
+  throwIfAborted,
+} = require("../abortUtils");
 const { killProcess } = require("../../utils/process");
 const { convertToWav, getFFmpegPath } = require("../ffmpegUtils");
 const { getSafeTempDir } = require("../safeTempDir");
@@ -40,7 +46,9 @@ class WhisperServerManager {
   }
 
   async start(modelPath, options = {}) {
-    if (this.startupPromise) return this.startupPromise;
+    const signal = options?.signal || null;
+    throwIfAborted(signal);
+    if (this.startupPromise) return await raceWithAbort(this.startupPromise, signal);
     if (this.ready && this.modelPath === modelPath) return;
     if (this.process) {
       await this.stop();
@@ -55,11 +63,14 @@ class WhisperServerManager {
   }
 
   async _doStart(modelPath, options = {}) {
+    const signal = options?.signal || null;
+    throwIfAborted(signal);
     const serverBinary = this.getServerBinaryPath();
     if (!serverBinary) throw new Error("whisper-server binary not found");
     if (!fs.existsSync(modelPath)) throw new Error(`Model file not found: ${modelPath}`);
 
     this.port = await findAvailablePort();
+    throwIfAborted(signal);
     this.modelPath = modelPath;
 
     const ffmpegPath = getFFmpegPath();
@@ -103,6 +114,14 @@ class WhisperServerManager {
       env: spawnEnv,
       cwd: serverBinaryDir,
     });
+    const startedProcess = this.process;
+    const onAbort = () => {
+      if (this.process === startedProcess) {
+        this.ready = false;
+        killProcess(startedProcess, "SIGKILL");
+      }
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     let stderrBuffer = "";
     let exitCode = null;
@@ -129,8 +148,13 @@ class WhisperServerManager {
       this.stopHealthCheck();
     });
 
-    await this.waitForReady(() => ({ stderr: stderrBuffer, exitCode }));
-    this.startHealthCheck();
+    try {
+      await this.waitForReady(() => ({ stderr: stderrBuffer, exitCode }), signal);
+      throwIfAborted(signal);
+      this.startHealthCheck();
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
 
     debugLogger.info("whisper-server started successfully", {
       port: this.port,
@@ -138,12 +162,13 @@ class WhisperServerManager {
     });
   }
 
-  async waitForReady(getProcessInfo) {
+  async waitForReady(getProcessInfo, signal = null) {
     const startTime = Date.now();
     let pollCount = 0;
     const STARTUP_POLL_INTERVAL_MS = 100;
 
     while (Date.now() - startTime < STARTUP_TIMEOUT_MS) {
+      throwIfAborted(signal);
       if (!this.process || this.process.killed) {
         const info = getProcessInfo ? getProcessInfo() : {};
         const stderr = info.stderr ? info.stderr.trim().slice(0, 200) : "";
@@ -155,7 +180,7 @@ class WhisperServerManager {
 
       pollCount += 1;
       // eslint-disable-next-line no-await-in-loop
-      if (await this.checkHealth()) {
+      if (await this.checkHealth(signal)) {
         this.ready = true;
         debugLogger.debug("whisper-server ready", {
           startupTimeMs: Date.now() - startTime,
@@ -165,14 +190,22 @@ class WhisperServerManager {
       }
 
       // eslint-disable-next-line no-await-in-loop
-      await new Promise((resolve) => setTimeout(resolve, STARTUP_POLL_INTERVAL_MS));
+      await abortableDelay(STARTUP_POLL_INTERVAL_MS, signal);
     }
 
     throw new Error(`whisper-server failed to start within ${STARTUP_TIMEOUT_MS}ms`);
   }
 
-  checkHealth() {
-    return new Promise((resolve) => {
+  checkHealth(signal = null) {
+    throwIfAborted(signal);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        fn(value);
+      };
       const req = http.request(
         {
           hostname: "127.0.0.1",
@@ -182,15 +215,20 @@ class WhisperServerManager {
           timeout: HEALTH_CHECK_TIMEOUT_MS,
         },
         (res) => {
-          resolve(true);
+          finish(resolve, true);
           res.resume();
         }
       );
+      const onAbort = () => {
+        req.destroy();
+        finish(reject, createAbortError());
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
 
-      req.on("error", () => resolve(false));
+      req.on("error", () => finish(resolve, false));
       req.on("timeout", () => {
         req.destroy();
-        resolve(false);
+        finish(resolve, false);
       });
       req.end();
     });
@@ -218,6 +256,8 @@ class WhisperServerManager {
   }
 
   async transcribe(audioBuffer, options = {}) {
+    const signal = options?.signal || null;
+    throwIfAborted(signal);
     if (!this.ready || !this.process) {
       throw new Error("whisper-server is not running");
     }
@@ -243,7 +283,9 @@ class WhisperServerManager {
       audioBuffer,
       convertToWav,
       tempPrefix: "whisper",
+      signal,
     });
+    throwIfAborted(signal);
 
     const { boundary, body } = buildWhisperMultipartBody({
       audioBuffer: finalBuffer,
@@ -257,6 +299,13 @@ class WhisperServerManager {
 
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        fn(value);
+      };
       const req = http.request(
         {
           hostname: "127.0.0.1",
@@ -282,14 +331,15 @@ class WhisperServerManager {
             });
 
             if (res.statusCode !== 200) {
-              reject(new Error(`whisper-server returned status ${res.statusCode}`));
+              finish(reject, new Error(`whisper-server returned status ${res.statusCode}`));
               return;
             }
 
             try {
-              resolve(JSON.parse(data));
+              finish(resolve, JSON.parse(data));
             } catch (e) {
-              reject(
+              finish(
+                reject,
                 new Error(
                   `Failed to parse whisper-server response (${data.length} bytes): ${e.message}`
                 )
@@ -298,13 +348,18 @@ class WhisperServerManager {
           });
         }
       );
+      const onAbort = () => {
+        req.destroy();
+        finish(reject, createAbortError());
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
 
       req.on("error", (error) => {
-        reject(new Error(`whisper-server request failed: ${error.message}`));
+        finish(reject, new Error(`whisper-server request failed: ${error.message}`));
       });
       req.on("timeout", () => {
         req.destroy();
-        reject(new Error("whisper-server request timed out"));
+        finish(reject, new Error("whisper-server request timed out"));
       });
 
       req.write(body);

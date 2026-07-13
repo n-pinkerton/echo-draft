@@ -1,4 +1,5 @@
 import { getBaseLanguageCode, validateLanguageForModel } from "../../../utils/languageSupport";
+import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import { getCustomDictionaryPrompt } from "./customDictionary";
 import {
   createTranscriptionCancelledError,
@@ -82,7 +83,9 @@ export class LocalTranscriber {
       }
 
       const transcriptionStart = performance.now();
-      const result = await window.electronAPI.transcribeLocalWhisper(arrayBuffer, options);
+      const result = await invokeCancelableIpc(signal, (requestId) =>
+        window.electronAPI.transcribeLocalWhisper(arrayBuffer, options, requestId)
+      );
       throwIfTranscriptionCancelled(signal);
       timings.transcriptionProcessingDurationMs = Math.round(
         performance.now() - transcriptionStart
@@ -170,7 +173,9 @@ export class LocalTranscriber {
       }
 
       const transcriptionStart = performance.now();
-      const result = await window.electronAPI.transcribeLocalParakeet(arrayBuffer, options);
+      const result = await invokeCancelableIpc(signal, (requestId) =>
+        window.electronAPI.transcribeLocalParakeet(arrayBuffer, options, requestId)
+      );
       throwIfTranscriptionCancelled(signal);
       timings.transcriptionProcessingDurationMs = Math.round(
         performance.now() - transcriptionStart

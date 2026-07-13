@@ -1,6 +1,7 @@
 const fs = require("fs");
 
 const debugLogger = require("../debugLogger");
+const { throwIfAborted } = require("../abortUtils");
 const ParakeetServerManager = require("../parakeetServer");
 const { coerceAudioBlobToBuffer } = require("../audioBufferUtils");
 
@@ -115,7 +116,9 @@ class ParakeetManager {
       ? `✓ ${status.sherpaOnnx.path}`
       : "✗ Not found";
     const modelsStatus =
-      status.models.length > 0 ? status.models.map((m) => `${m.name}`).join(", ") : "None downloaded";
+      status.models.length > 0
+        ? status.models.map((m) => `${m.name}`).join(", ")
+        : "None downloaded";
 
     debugLogger.info(`[Parakeet] sherpa-onnx: ${binaryStatus}`);
     debugLogger.info(`[Parakeet] Models: ${modelsStatus}`);
@@ -147,7 +150,9 @@ class ParakeetManager {
     return this.serverManager.getServerStatus();
   }
 
-  async transcribeLocalParakeet(audioBlob, options = {}) {
+  async transcribeLocalParakeet(audioBlob, options = {}, runtime = {}) {
+    const signal = runtime?.signal || null;
+    throwIfAborted(signal);
     debugLogger.logSTTPipeline("transcribeLocalParakeet - start", {
       options,
       audioBlobType: audioBlob?.constructor?.name,
@@ -178,7 +183,11 @@ class ParakeetManager {
 
     const startTime = Date.now();
     const language = options.language || "auto";
-    const result = await this.serverManager.transcribe(audioBuffer, { modelName: model, language });
+    const result = await this.serverManager.transcribe(audioBuffer, {
+      modelName: model,
+      language,
+      ...(signal ? { signal } : {}),
+    });
     const elapsed = Date.now() - startTime;
 
     debugLogger.logSTTPipeline("transcribeLocalParakeet - completed", {
@@ -257,4 +266,3 @@ class ParakeetManager {
 }
 
 module.exports = ParakeetManager;
-

@@ -9,6 +9,7 @@ const convertBufferToWav = async ({
   sampleRate = 16000,
   channels = 1,
   tempPrefix = "whisper",
+  signal = null,
 } = {}) => {
   const tempDir = getSafeTempDir();
   const timestamp = Date.now();
@@ -17,7 +18,7 @@ const convertBufferToWav = async ({
 
   try {
     fs.writeFileSync(tempInputPath, audioBuffer);
-    await convertToWav(tempInputPath, tempWavPath, { sampleRate, channels });
+    await convertToWav(tempInputPath, tempWavPath, { sampleRate, channels, signal });
     return fs.readFileSync(tempWavPath);
   } finally {
     for (const filePath of [tempInputPath, tempWavPath]) {
@@ -31,4 +32,3 @@ const convertBufferToWav = async ({
 };
 
 module.exports = { convertBufferToWav };
-

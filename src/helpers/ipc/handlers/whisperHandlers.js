@@ -1,7 +1,8 @@
 const debugLogger = require("../../debugLogger");
 
-function registerWhisperHandlers({ ipcMain }, { whisperManager }) {
-  ipcMain.handle("transcribe-local-whisper", async (event, audioBlob, options = {}) => {
+function registerWhisperHandlers({ ipcMain }, { whisperManager, cancelableRequests }) {
+  ipcMain.handle("transcribe-local-whisper", async (event, audioBlob, options = {}, requestId) => {
+    let requestScope;
     debugLogger.log("transcribe-local-whisper called", {
       audioBlobType: typeof audioBlob,
       audioBlobSize: audioBlob?.byteLength || audioBlob?.length || 0,
@@ -9,7 +10,10 @@ function registerWhisperHandlers({ ipcMain }, { whisperManager }) {
     });
 
     try {
-      const result = await whisperManager.transcribeLocalWhisper(audioBlob, options);
+      requestScope = cancelableRequests.createScope(event, requestId);
+      const result = await whisperManager.transcribeLocalWhisper(audioBlob, options, {
+        signal: requestScope.signal,
+      });
 
       debugLogger.log("Whisper result", {
         success: result.success,
@@ -26,6 +30,9 @@ function registerWhisperHandlers({ ipcMain }, { whisperManager }) {
 
       return result;
     } catch (error) {
+      if (requestScope?.signal.aborted || error?.name === "AbortError") {
+        return { success: false, error: "Request cancelled", code: "REQUEST_CANCELLED" };
+      }
       debugLogger.error("Local Whisper transcription error", error);
       const errorMessage = error.message || "Unknown error";
 
@@ -54,7 +61,10 @@ function registerWhisperHandlers({ ipcMain }, { whisperManager }) {
           message: "Whisper binary is missing. Please reinstall the app.",
         };
       }
-      if (errorMessage.includes("Audio buffer is empty") || errorMessage.includes("Audio data too small")) {
+      if (
+        errorMessage.includes("Audio buffer is empty") ||
+        errorMessage.includes("Audio data too small")
+      ) {
         return {
           success: false,
           error: "no_audio_data",
@@ -70,6 +80,8 @@ function registerWhisperHandlers({ ipcMain }, { whisperManager }) {
       }
 
       throw error;
+    } finally {
+      requestScope?.finish();
     }
   });
 
@@ -126,4 +138,3 @@ function registerWhisperHandlers({ ipcMain }, { whisperManager }) {
 }
 
 module.exports = { registerWhisperHandlers };
-

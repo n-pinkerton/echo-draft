@@ -2,9 +2,10 @@ const debugLogger = require("../../debugLogger");
 
 function registerParakeetHandlers(
   { ipcMain },
-  { parakeetManager, environmentManager }
+  { parakeetManager, environmentManager, cancelableRequests }
 ) {
-  ipcMain.handle("transcribe-local-parakeet", async (event, audioBlob, options = {}) => {
+  ipcMain.handle("transcribe-local-parakeet", async (event, audioBlob, options = {}, requestId) => {
+    let requestScope;
     debugLogger.log("transcribe-local-parakeet called", {
       audioBlobType: typeof audioBlob,
       audioBlobSize: audioBlob?.byteLength || audioBlob?.length || 0,
@@ -12,7 +13,10 @@ function registerParakeetHandlers(
     });
 
     try {
-      const result = await parakeetManager.transcribeLocalParakeet(audioBlob, options);
+      requestScope = cancelableRequests.createScope(event, requestId);
+      const result = await parakeetManager.transcribeLocalParakeet(audioBlob, options, {
+        signal: requestScope.signal,
+      });
 
       debugLogger.log("Parakeet result", {
         success: result.success,
@@ -28,6 +32,9 @@ function registerParakeetHandlers(
 
       return result;
     } catch (error) {
+      if (requestScope?.signal.aborted || error?.name === "AbortError") {
+        return { success: false, error: "Request cancelled", code: "REQUEST_CANCELLED" };
+      }
       debugLogger.error("Local Parakeet transcription error", error);
       const errorMessage = error.message || "Unknown error";
 
@@ -47,6 +54,8 @@ function registerParakeetHandlers(
       }
 
       throw error;
+    } finally {
+      requestScope?.finish();
     }
   });
 
@@ -107,4 +116,3 @@ function registerParakeetHandlers(
 }
 
 module.exports = { registerParakeetHandlers };
-

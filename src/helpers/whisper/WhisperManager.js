@@ -1,6 +1,7 @@
 const fs = require("fs");
 
 const debugLogger = require("../debugLogger");
+const { throwIfAborted } = require("../abortUtils");
 const WhisperServerManager = require("../whisperServer");
 const { clearCache: clearFFmpegCache, getFFmpegPath } = require("../ffmpegUtils");
 const { coerceAudioBlobToBuffer } = require("../audioBufferUtils");
@@ -198,7 +199,9 @@ class WhisperManager {
     };
   }
 
-  async transcribeLocalWhisper(audioBlob, options = {}) {
+  async transcribeLocalWhisper(audioBlob, options = {}, runtime = {}) {
+    const signal = runtime?.signal || null;
+    throwIfAborted(signal);
     debugLogger.logWhisperPipeline("transcribeLocalWhisper - start", {
       options,
       audioBlobType: audioBlob?.constructor?.name,
@@ -219,19 +222,23 @@ class WhisperManager {
     const modelPath = this.getModelPath(model);
 
     if (!fs.existsSync(modelPath)) {
-      throw new Error(`Whisper model \"${model}\" not downloaded. Please download it from Settings.`);
+      throw new Error(
+        `Whisper model \"${model}\" not downloaded. Please download it from Settings.`
+      );
     }
 
-    return await this.transcribeViaServer(audioBlob, model, language, initialPrompt);
+    return await this.transcribeViaServer(audioBlob, model, language, initialPrompt, signal);
   }
 
-  async transcribeViaServer(audioBlob, model, language, initialPrompt = null) {
+  async transcribeViaServer(audioBlob, model, language, initialPrompt = null, signal = null) {
+    throwIfAborted(signal);
     debugLogger.info("Transcription mode: SERVER", { model, language: language || "auto" });
     const modelPath = this.getModelPath(model);
 
     if (!this.serverManager.ready || this.currentServerModel !== model) {
       debugLogger.debug("Starting/restarting whisper-server for model", { model });
-      await this.serverManager.start(modelPath);
+      await this.serverManager.start(modelPath, { signal });
+      throwIfAborted(signal);
       this.currentServerModel = model;
     }
 
@@ -245,7 +252,11 @@ class WhisperManager {
     });
 
     const startTime = Date.now();
-    const result = await this.serverManager.transcribe(audioBuffer, { language, initialPrompt });
+    const result = await this.serverManager.transcribe(audioBuffer, {
+      language,
+      initialPrompt,
+      ...(signal ? { signal } : {}),
+    });
     const elapsed = Date.now() - startTime;
 
     debugLogger.logWhisperPipeline("transcribeViaServer - completed", {
@@ -282,7 +293,10 @@ class WhisperManager {
 
   async checkFFmpegAvailability() {
     const now = Date.now();
-    if (this.ffmpegAvailabilityCache.result !== null && now < this.ffmpegAvailabilityCache.expiresAt) {
+    if (
+      this.ffmpegAvailabilityCache.result !== null &&
+      now < this.ffmpegAvailabilityCache.expiresAt
+    ) {
       return this.ffmpegAvailabilityCache.result;
     }
 
@@ -344,4 +358,3 @@ class WhisperManager {
 }
 
 module.exports = WhisperManager;
-

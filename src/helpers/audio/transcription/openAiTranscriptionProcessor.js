@@ -1243,7 +1243,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           options.language = language;
         }
 
-        const result = await window.electronAPI.transcribeLocalWhisper(arrayBuffer, options);
+        const result = await invokeCancelableIpc(externalSignal, (requestId) =>
+          window.electronAPI.transcribeLocalWhisper(arrayBuffer, options, requestId)
+        );
         throwIfTranscriptionCancelled(externalSignal);
         if (result.success && result.text) {
           const rawText = result.text;

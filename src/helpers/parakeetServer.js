@@ -5,6 +5,7 @@ const { getModelsDirForService } = require("./modelDirUtils");
 const { getFFmpegPath, isWavFormat, convertToWav, wavToFloat32Samples } = require("./ffmpegUtils");
 const { getSafeTempDir } = require("./safeTempDir");
 const ParakeetWsServer = require("./parakeetWsServer");
+const { throwIfAborted } = require("./abortUtils");
 
 class ParakeetServerManager {
   constructor() {
@@ -43,7 +44,8 @@ class ParakeetServerManager {
     return true;
   }
 
-  async _ensureWav(audioBuffer) {
+  async _ensureWav(audioBuffer, signal = null) {
+    throwIfAborted(signal);
     const isWav = isWavFormat(audioBuffer);
     if (isWav) return { wavBuffer: audioBuffer, filesToCleanup: [] };
 
@@ -64,7 +66,8 @@ class ParakeetServerManager {
     const inputStats = fs.statSync(tempInputPath);
     debugLogger.debug("Converting audio to WAV", { inputSize: inputStats.size });
 
-    await convertToWav(tempInputPath, tempWavPath, { sampleRate: 16000, channels: 1 });
+    await convertToWav(tempInputPath, tempWavPath, { sampleRate: 16000, channels: 1, signal });
+    throwIfAborted(signal);
 
     const outputStats = fs.statSync(tempWavPath);
     debugLogger.debug("FFmpeg conversion complete", { outputSize: outputStats.size });
@@ -74,7 +77,8 @@ class ParakeetServerManager {
   }
 
   async transcribe(audioBuffer, options = {}) {
-    const { modelName = "parakeet-tdt-0.6b-v3", language = "auto" } = options;
+    const { modelName = "parakeet-tdt-0.6b-v3", language = "auto", signal = null } = options;
+    throwIfAborted(signal);
 
     const modelDir = path.join(this.getModelsDir(), modelName);
     if (!this.isModelDownloaded(modelName)) {
@@ -88,13 +92,14 @@ class ParakeetServerManager {
       isWavFormat: isWavFormat(audioBuffer),
     });
 
-    const { wavBuffer, filesToCleanup } = await this._ensureWav(audioBuffer);
+    const { wavBuffer, filesToCleanup } = await this._ensureWav(audioBuffer, signal);
     try {
       if (!this.wsServer.ready || this.wsServer.modelName !== modelName) {
-        await this.wsServer.start(modelName, modelDir);
+        await this.wsServer.start(modelName, modelDir, { signal });
       }
+      throwIfAborted(signal);
       const samples = wavToFloat32Samples(wavBuffer);
-      const result = await this.wsServer.transcribe(samples, 16000);
+      const result = await this.wsServer.transcribe(samples, 16000, { signal });
       return { ...result, language };
     } finally {
       this._cleanupFiles(filesToCleanup);

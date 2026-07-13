@@ -10,6 +10,8 @@ const {
   gracefulStopProcess,
 } = require("../utils/serverUtils");
 const { getSafeTempDir } = require("./safeTempDir");
+const { createAbortError, raceWithAbort, throwIfAborted } = require("./abortUtils");
+const { killProcess } = require("../utils/process");
 
 const PORT_RANGE_START = 6006;
 const PORT_RANGE_END = 6029;
@@ -48,12 +50,14 @@ class ParakeetWsServer {
     return this.getWsBinaryPath() !== null;
   }
 
-  async start(modelName, modelDir) {
-    if (this.startupPromise) return this.startupPromise;
+  async start(modelName, modelDir, options = {}) {
+    const signal = options?.signal || null;
+    throwIfAborted(signal);
+    if (this.startupPromise) return await raceWithAbort(this.startupPromise, signal);
     if (this.ready && this.modelName === modelName) return;
     if (this.process) await this.stop();
 
-    this.startupPromise = this._doStart(modelName, modelDir);
+    this.startupPromise = this._doStart(modelName, modelDir, options);
     try {
       await this.startupPromise;
     } finally {
@@ -61,12 +65,15 @@ class ParakeetWsServer {
     }
   }
 
-  async _doStart(modelName, modelDir) {
+  async _doStart(modelName, modelDir, options = {}) {
+    const signal = options?.signal || null;
+    throwIfAborted(signal);
     const wsBinary = this.getWsBinaryPath();
     if (!wsBinary) throw new Error("sherpa-onnx WS server binary not found");
     if (!fs.existsSync(modelDir)) throw new Error(`Model directory not found: ${modelDir}`);
 
     this.port = await findAvailablePort(PORT_RANGE_START, PORT_RANGE_END);
+    throwIfAborted(signal);
     this.modelName = modelName;
     this.modelDir = modelDir;
 
@@ -86,6 +93,14 @@ class ParakeetWsServer {
       windowsHide: true,
       cwd: getSafeTempDir(),
     });
+    const startedProcess = this.process;
+    const onAbort = () => {
+      if (this.process === startedProcess) {
+        this.ready = false;
+        killProcess(startedProcess, "SIGKILL");
+      }
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     let stderrBuffer = "";
     let exitCode = null;
@@ -121,42 +136,60 @@ class ParakeetWsServer {
       readyResolve(false);
     });
 
-    await this._waitForReady(readyFromStderr, () => ({ stderr: stderrBuffer, exitCode }));
-    this._startHealthCheck();
+    try {
+      await this._waitForReady(readyFromStderr, () => ({ stderr: stderrBuffer, exitCode }), signal);
+      throwIfAborted(signal);
+      this._startHealthCheck();
 
-    debugLogger.info("parakeet-ws server started successfully", {
-      port: this.port,
-      model: modelName,
-    });
+      debugLogger.info("parakeet-ws server started successfully", {
+        port: this.port,
+        model: modelName,
+      });
 
-    await this._warmUp();
+      await this._warmUp(signal);
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
   }
 
-  async _warmUp() {
+  async _warmUp(signal = null) {
     try {
+      throwIfAborted(signal);
       const sampleRate = 16000;
       const numSamples = sampleRate;
       const silentSamples = Buffer.alloc(numSamples * 4);
-      await this.transcribe(silentSamples, sampleRate);
+      await this.transcribe(silentSamples, sampleRate, { signal });
       debugLogger.debug("parakeet-ws warm-up inference complete");
     } catch (err) {
+      if (signal?.aborted || err?.name === "AbortError") throw err;
       debugLogger.warn("parakeet-ws warm-up failed (non-fatal)", {
         error: err.message,
       });
     }
   }
 
-  async _waitForReady(readySignal, getProcessInfo) {
+  async _waitForReady(readySignal, getProcessInfo, signal = null) {
+    throwIfAborted(signal);
     const startTime = Date.now();
 
+    let timeoutId;
+    let onAbort;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(
+      timeoutId = setTimeout(
         () => reject(new Error(`parakeet-ws failed to start within ${STARTUP_TIMEOUT_MS}ms`)),
         STARTUP_TIMEOUT_MS
       );
+      onAbort = () => reject(createAbortError());
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
 
-    const ready = await Promise.race([readySignal, timeoutPromise]);
+    let ready;
+    try {
+      ready = await Promise.race([readySignal, timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+    }
 
     if (!ready) {
       const info = getProcessInfo ? getProcessInfo() : {};
@@ -203,7 +236,9 @@ class ParakeetWsServer {
     }
   }
 
-  transcribe(samplesBuffer, sampleRate) {
+  transcribe(samplesBuffer, sampleRate, options = {}) {
+    const signal = options?.signal || null;
+    throwIfAborted(signal);
     if (!this.ready || !this.process) {
       throw new Error("parakeet-ws server is not running");
     }
@@ -214,10 +249,15 @@ class ParakeetWsServer {
       const startTime = Date.now();
       let result = "";
 
+      let settled = false;
       const done =
         (fn) =>
         (...args) => {
+          if (settled) return;
+          settled = true;
           this.transcribing = false;
+          clearTimeout(timeout);
+          signal?.removeEventListener("abort", onAbort);
           fn(...args);
         };
 
@@ -229,6 +269,13 @@ class ParakeetWsServer {
       }, TRANSCRIPTION_TIMEOUT_MS);
 
       const ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
+      const onAbort = () => {
+        try {
+          ws.terminate();
+        } catch {}
+        done(reject)(createAbortError());
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
 
       ws.on("open", () => {
         // sherpa-onnx offline WS binary protocol:
@@ -256,7 +303,6 @@ class ParakeetWsServer {
       });
 
       ws.on("close", (code) => {
-        clearTimeout(timeout);
         const elapsed = Date.now() - startTime;
 
         debugLogger.debug("parakeet-ws transcription completed", {
@@ -274,7 +320,6 @@ class ParakeetWsServer {
       });
 
       ws.on("error", (error) => {
-        clearTimeout(timeout);
         done(reject)(new Error(`parakeet-ws transcription failed: ${error.message}`));
       });
     });

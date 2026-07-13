@@ -131,6 +131,39 @@ describe("LocalTranscriber", () => {
     });
   });
 
+  it("cancels pending local Whisper IPC work without waiting for its reply", async () => {
+    const controller = new AbortController();
+    const cancelIpcRequest = vi.fn(async () => ({ success: true }));
+    (window as any).electronAPI.cancelIpcRequest = cancelIpcRequest;
+    (window as any).electronAPI.transcribeLocalWhisper.mockImplementation(
+      async () => await new Promise(() => {})
+    );
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => false,
+      reasoningCleanupService: { processTranscription: vi.fn() },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+    const pending = transcriber.processWithLocalWhisper(
+      {
+        type: "audio/webm",
+        arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
+      } as any,
+      "base",
+      {},
+      { signal: controller.signal }
+    );
+    await vi.waitFor(() =>
+      expect((window as any).electronAPI.transcribeLocalWhisper).toHaveBeenCalledOnce()
+    );
+    const requestId = (window as any).electronAPI.transcribeLocalWhisper.mock.calls[0][2];
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: "TRANSCRIPTION_CANCELLED" });
+    expect(cancelIpcRequest).toHaveBeenCalledWith(requestId);
+  });
+
   it("processWithLocalWhisper falls back to OpenAI when configured", async () => {
     localStorage.setItem("allowOpenAIFallback", "true");
     localStorage.setItem("useLocalWhisper", "true");

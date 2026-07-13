@@ -119,8 +119,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   checkPasteTools: () => ipcRenderer.invoke("check-paste-tools"),
 
   // Local Whisper functions (whisper.cpp)
-  transcribeLocalWhisper: (audioBlob, options) =>
-    ipcRenderer.invoke("transcribe-local-whisper", audioBlob, options),
+  transcribeLocalWhisper: (audioBlob, options, requestId) =>
+    ipcRenderer.invoke("transcribe-local-whisper", audioBlob, options, requestId),
   checkWhisperInstallation: () => ipcRenderer.invoke("check-whisper-installation"),
   downloadWhisperModel: (modelName) => ipcRenderer.invoke("download-whisper-model", modelName),
   onWhisperDownloadProgress: registerListener("whisper-download-progress"),
@@ -138,8 +138,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   whisperServerStatus: () => ipcRenderer.invoke("whisper-server-status"),
 
   // Local Parakeet (NVIDIA) functions
-  transcribeLocalParakeet: (audioBlob, options) =>
-    ipcRenderer.invoke("transcribe-local-parakeet", audioBlob, options),
+  transcribeLocalParakeet: (audioBlob, options, requestId) =>
+    ipcRenderer.invoke("transcribe-local-parakeet", audioBlob, options, requestId),
   checkParakeetInstallation: () => ipcRenderer.invoke("check-parakeet-installation"),
   downloadParakeetModel: (modelName) => ipcRenderer.invoke("download-parakeet-model", modelName),
   onParakeetDownloadProgress: registerListener("parakeet-download-progress"),

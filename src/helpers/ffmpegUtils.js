@@ -2,6 +2,8 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const debugLogger = require("./debugLogger");
+const { createAbortError, throwIfAborted } = require("./abortUtils");
+const { killProcess } = require("../utils/process");
 
 let cachedFFmpegPath = null;
 
@@ -129,9 +131,15 @@ function isWavFormat(buffer) {
  * @returns {Promise<void>}
  */
 function convertToWav(inputPath, outputPath, options = {}) {
-  const { sampleRate = 16000, channels = 1 } = options;
+  const { sampleRate = 16000, channels = 1, signal = null } = options;
 
   return new Promise((resolve, reject) => {
+    try {
+      throwIfAborted(signal);
+    } catch (error) {
+      reject(error);
+      return;
+    }
     const ffmpegPath = getFFmpegPath();
     if (!ffmpegPath) {
       reject(new Error("FFmpeg not found - required for audio conversion"));
@@ -164,20 +172,33 @@ function convertToWav(inputPath, outputPath, options = {}) {
     });
 
     let stderr = "";
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      fn(value);
+    };
+    const onAbort = () => {
+      killProcess(proc, "SIGKILL");
+      finish(reject, createAbortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     proc.stderr.on("data", (data) => {
       stderr += data.toString();
     });
 
     proc.on("error", (error) => {
-      reject(new Error(`FFmpeg process error: ${error.message}`));
+      finish(reject, new Error(`FFmpeg process error: ${error.message}`));
     });
 
     proc.on("close", (code) => {
       if (code !== 0) {
         const stderrPreview = stderr.slice(-500).trim();
         debugLogger.debug("FFmpeg conversion failed", { code, stderr: stderrPreview });
-        reject(
+        finish(
+          reject,
           new Error(`FFmpeg exited with code ${code}${stderrPreview ? `: ${stderrPreview}` : ""}`)
         );
         return;
@@ -185,18 +206,18 @@ function convertToWav(inputPath, outputPath, options = {}) {
 
       // Verify output file exists and has content
       if (!fs.existsSync(outputPath)) {
-        reject(new Error("FFmpeg conversion produced no output file"));
+        finish(reject, new Error("FFmpeg conversion produced no output file"));
         return;
       }
 
       const stats = fs.statSync(outputPath);
       if (stats.size === 0) {
-        reject(new Error("FFmpeg conversion produced empty output file"));
+        finish(reject, new Error("FFmpeg conversion produced empty output file"));
         return;
       }
 
       debugLogger.debug("FFmpeg conversion complete", { outputSize: stats.size });
-      resolve();
+      finish(resolve);
     });
   });
 }
