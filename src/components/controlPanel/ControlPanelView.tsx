@@ -282,6 +282,10 @@ export default function ControlPanelView(props: Props) {
               setSettingsSection("hotkeys");
               setShowSettings(true);
             }}
+            onOpenMicrophoneSettings={() => {
+              setSettingsSection("general");
+              setShowSettings(true);
+            }}
             onOpenCleanupSettings={() => {
               setSettingsSection("aiModels");
               setShowSettings(true);

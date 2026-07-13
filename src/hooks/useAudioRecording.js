@@ -200,6 +200,17 @@ export const useAudioRecording = (toast, options = {}) => {
     return true;
   }, [updateStage]);
 
+  const routeToggleDictation = useCallback(
+    (payload = {}) => {
+      const managerState = audioManagerRef.current?.getState?.();
+      if (managerState?.isProcessing || latestProgressRef.current?.canCancel) {
+        return Promise.resolve(cancelProcessing());
+      }
+      return toggleRecording(payload);
+    },
+    [cancelProcessing, toggleRecording]
+  );
+
   useEffect(() => {
     audioManagerRef.current = new AudioManager();
 
@@ -263,7 +274,7 @@ export const useAudioRecording = (toast, options = {}) => {
     audioManagerRef.current.warmupStreamingConnection();
 
     const disposeToggle = window.electronAPI.onToggleDictation((payload) => {
-      void toggleRecording(payload);
+      void routeToggleDictation(payload);
       onToggle?.();
     });
 
@@ -314,7 +325,7 @@ export const useAudioRecording = (toast, options = {}) => {
     startRecording,
     stopRecording,
     toast,
-    toggleRecording,
+    routeToggleDictation,
     upsertJob,
     updateStage,
   ]);
@@ -385,6 +396,11 @@ export const useAudioRecording = (toast, options = {}) => {
   };
 
   const toggleListening = async (payload = {}) => {
+    const managerState = audioManagerRef.current?.getState?.();
+    if (managerState?.isProcessing || latestProgressRef.current?.canCancel) {
+      cancelProcessing();
+      return;
+    }
     const outputMode = payload?.outputMode === "clipboard" ? "clipboard" : "insert";
     if (!isRecording && (!isProcessing || outputMode === "clipboard")) {
       await toggleRecording(payload);

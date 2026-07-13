@@ -8,6 +8,7 @@ export function useAudioInputDevices() {
   const [error, setError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [hasHiddenLabels, setHasHiddenLabels] = useState(false);
+  const [systemDefaultLabel, setSystemDefaultLabel] = useState<string | null>(null);
   const mountedRef = useRef(false);
   const latestRequestRef = useRef(0);
 
@@ -33,7 +34,10 @@ export function useAudioInputDevices() {
       if (!mountedRef.current || requestId !== latestRequestRef.current) return;
 
       const audioInputs = allDevices.filter((device) => device.kind === "audioinput");
+      const defaultInput = audioInputs.find((device) => device.deviceId === "default");
+      const defaultLabel = defaultInput?.label?.replace(/^default\s*[-–—:]\s*/i, "").trim();
       setDevices(normalizeAudioInputDevices(audioInputs));
+      setSystemDefaultLabel(defaultLabel && !/^default$/i.test(defaultLabel) ? defaultLabel : null);
       setHasHiddenLabels(audioInputs.some((device) => !device.label));
       setHasLoaded(true);
     } catch {
@@ -71,6 +75,7 @@ export function useAudioInputDevices() {
     error,
     hasLoaded,
     hasHiddenLabels,
+    systemDefaultLabel,
     refreshDevices: () => loadDevices(false),
     requestDeviceLabels: () => loadDevices(true),
   };

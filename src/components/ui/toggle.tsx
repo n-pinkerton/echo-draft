@@ -5,9 +5,16 @@ interface ToggleProps {
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   ariaLabel?: string;
+  ariaDescribedBy?: string;
 }
 
-export const Toggle = ({ checked, onChange, disabled = false, ariaLabel }: ToggleProps) => {
+export const Toggle = ({
+  checked,
+  onChange,
+  disabled = false,
+  ariaLabel,
+  ariaDescribedBy,
+}: ToggleProps) => {
   const getTrackClasses = () => {
     if (disabled) {
       return checked ? "bg-primary/40" : "bg-muted";
@@ -23,6 +30,7 @@ export const Toggle = ({ checked, onChange, disabled = false, ariaLabel }: Toggl
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
       onClick={() => !disabled && onChange(!checked)}
       disabled={disabled}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-1 ${getTrackClasses()} ${

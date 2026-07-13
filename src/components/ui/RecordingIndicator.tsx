@@ -18,7 +18,7 @@ export default function RecordingIndicator({
   );
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center p-1.5 pointer-events-none select-none">
+    <div className="dictation-window flex h-screen w-screen items-center justify-center p-1.5 pointer-events-none select-none">
       <div
         data-testid="recording-indicator"
         data-long-recording={showLongReminder ? "true" : "false"}
@@ -43,7 +43,7 @@ export default function RecordingIndicator({
           <span className="block text-[10px] font-bold tracking-[0.16em] text-red-500">REC</span>
           <span
             className={`block text-[10px] ${
-              showLongReminder ? "font-medium text-warning" : "text-muted-foreground"
+              showLongReminder ? "font-medium text-warning-text" : "text-muted-foreground"
             }`}
           >
             {showLongReminder ? "Mic live · still recording" : "Microphone live"}
@@ -51,7 +51,7 @@ export default function RecordingIndicator({
         </span>
         <time
           className={`shrink-0 text-sm font-semibold tabular-nums ${
-            showLongReminder ? "text-warning" : ""
+            showLongReminder ? "text-warning-text" : ""
           }`}
           dateTime={`PT${Math.floor(recordedMs / 1000)}S`}
           aria-label={`Recording elapsed time ${formattedDuration}`}

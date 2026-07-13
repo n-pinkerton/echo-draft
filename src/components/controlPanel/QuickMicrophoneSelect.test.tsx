@@ -83,15 +83,24 @@ describe("QuickMicrophoneSelect", () => {
   });
 
   it("keeps an unplugged selection visible after device discovery finishes", async () => {
-    mediaDevices.enumerateDevices.mockResolvedValue([]);
+    mediaDevices.enumerateDevices.mockResolvedValue([
+      {
+        kind: "audioinput",
+        deviceId: "default",
+        label: "Default - USB Cond. Mic external",
+      },
+    ]);
     installMediaDevices();
+    const selectDevice = vi.fn();
+    const openSettings = vi.fn();
 
     render(
       <QuickMicrophoneSelect
         preferBuiltInMic={false}
         selectedMicDeviceId="missing-device"
         onPreferBuiltInChange={vi.fn()}
-        onDeviceSelect={vi.fn()}
+        onDeviceSelect={selectDevice}
+        onOpenMicrophoneSettings={openSettings}
       />
     );
 
@@ -101,6 +110,44 @@ describe("QuickMicrophoneSelect", () => {
     expect(
       await screen.findByRole("option", { name: "Previously selected microphone (unavailable)" })
     ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Dictation is using USB Cond. Mic external"
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Keep default" }));
+    expect(selectDevice).toHaveBeenCalledWith("");
+    fireEvent.click(screen.getByRole("button", { name: "Mic settings" }));
+    expect(openSettings).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces fallback as soon as a selected microphone disconnects", async () => {
+    let deviceChange: () => void = () => {};
+    mediaDevices.enumerateDevices
+      .mockResolvedValueOnce([
+        { kind: "audioinput", deviceId: "usb-mic", label: "USB Condenser Microphone" },
+      ])
+      .mockResolvedValueOnce([
+        { kind: "audioinput", deviceId: "default", label: "Default - Laptop Microphone" },
+      ]);
+    mediaDevices.addEventListener.mockImplementation((_event, listener) => {
+      deviceChange = listener;
+    });
+    installMediaDevices();
+
+    render(
+      <QuickMicrophoneSelect
+        preferBuiltInMic={false}
+        selectedMicDeviceId="usb-mic"
+        onPreferBuiltInChange={vi.fn()}
+        onDeviceSelect={vi.fn()}
+      />
+    );
+    await screen.findByRole("option", { name: "USB Condenser Microphone" });
+    expect(screen.queryByText("Selected microphone disconnected")).not.toBeInTheDocument();
+
+    act(() => deviceChange());
+
+    expect(await screen.findByText("Selected microphone disconnected")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Laptop Microphone");
   });
 
   it("stops saying a saved device is being checked after discovery fails", async () => {

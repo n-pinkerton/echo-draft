@@ -14,6 +14,7 @@ describe("MicrophoneLevelTest", () => {
   let trackStop: ReturnType<typeof vi.fn>;
   let contextClose: ReturnType<typeof vi.fn>;
   let getUserMedia: ReturnType<typeof vi.fn>;
+  let sampleValue: number;
 
   beforeEach(() => {
     frameCallbacks = new Map();
@@ -21,6 +22,7 @@ describe("MicrophoneLevelTest", () => {
     endedHandler = null;
     trackStop = vi.fn();
     contextClose = vi.fn(async () => {});
+    sampleValue = 0.1;
 
     const track = {
       label: "USB Cond. Mic external",
@@ -46,7 +48,7 @@ describe("MicrophoneLevelTest", () => {
         fftSize: 512,
         smoothingTimeConstant: 0,
         disconnect: vi.fn(),
-        getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.1),
+        getFloatTimeDomainData: (samples: Float32Array) => samples.fill(sampleValue),
       }));
       close = contextClose;
     }
@@ -114,5 +116,45 @@ describe("MicrophoneLevelTest", () => {
       "The microphone disconnected during the test."
     );
     expect(trackStop).toHaveBeenCalled();
+  });
+
+  it("keeps the strongest observed result when speech ends before the test", async () => {
+    render(<MicrophoneLevelTest deviceLabel="System Default" />);
+    fireEvent.click(screen.getByRole("button", { name: "Start microphone test" }));
+    await waitFor(() => expect(frameCallbacks.size).toBeGreaterThan(0));
+
+    const speechFrame = [...frameCallbacks.values()][0];
+    act(() => speechFrame?.(performance.now()));
+    expect(screen.getByText("Good signal")).toBeInTheDocument();
+
+    sampleValue = 0;
+    const silenceFrame = [...frameCallbacks.values()].at(-1);
+    act(() => silenceFrame?.(performance.now()));
+    expect(screen.getByText(/No signal yet/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop microphone test" }));
+    expect(screen.getByText("Last result: Good signal")).toBeInTheDocument();
+  });
+
+  it("releases the stream and context when audio graph setup fails", async () => {
+    class ThrowingAudioContext {
+      state = "running";
+      createMediaStreamSource = vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() }));
+      createAnalyser = vi.fn(() => {
+        throw new Error("Audio graph unavailable");
+      });
+      close = contextClose;
+    }
+    Object.defineProperty(window, "AudioContext", {
+      value: ThrowingAudioContext,
+      configurable: true,
+    });
+
+    render(<MicrophoneLevelTest deviceLabel="System Default" />);
+    fireEvent.click(screen.getByRole("button", { name: "Start microphone test" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Audio graph unavailable");
+    expect(trackStop).toHaveBeenCalledOnce();
+    expect(contextClose).toHaveBeenCalledOnce();
   });
 });

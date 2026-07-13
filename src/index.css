@@ -26,6 +26,7 @@
   --color-success: #16a34a;
   --color-success-foreground: #ffffff;
   --color-warning: #d97706;
+  --color-warning-text: #92400e;
   --color-warning-foreground: #ffffff;
   --color-info: #2563eb;
   --color-info-foreground: #ffffff;
@@ -101,6 +102,7 @@
   --color-success: oklch(0.7 0.18 145);
   --color-success-foreground: oklch(0.99 0 0);
   --color-warning: oklch(0.75 0.15 70);
+  --color-warning-text: #fbbf24;
   --color-warning-foreground: oklch(0.15 0 0);
   --color-info: oklch(0.68 0.2 240);
   --color-info-foreground: oklch(0.99 0 0);

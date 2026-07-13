@@ -30,6 +30,7 @@ type Props = {
   onPreferBuiltInChange: (value: boolean) => void;
   onDeviceSelect: (deviceId: string) => void;
   onOpenHotkeySettings: () => void;
+  onOpenMicrophoneSettings: () => void;
   onOpenCleanupSettings: () => void;
 };
 
@@ -65,6 +66,7 @@ export default function DictationQuickStart(props: Props) {
     onPreferBuiltInChange,
     onDeviceSelect,
     onOpenHotkeySettings,
+    onOpenMicrophoneSettings,
     onOpenCleanupSettings,
   } = props;
   const cleanupFallback = cleanupEnabled && latestCleanup?.status === "fallback";
@@ -122,6 +124,7 @@ export default function DictationQuickStart(props: Props) {
           selectedMicDeviceId={selectedMicDeviceId}
           onPreferBuiltInChange={onPreferBuiltInChange}
           onDeviceSelect={onDeviceSelect}
+          onOpenMicrophoneSettings={onOpenMicrophoneSettings}
         />
       </div>
 
@@ -133,7 +136,7 @@ export default function DictationQuickStart(props: Props) {
           onClick={onOpenCleanupSettings}
           aria-label={`Configure AI cleanup. ${cleanupStatusLabel}`}
           className={`flex min-w-0 items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2.5 py-2 text-left text-[11px] ${
-            cleanupWarning ? "text-warning" : "text-muted-foreground"
+            cleanupWarning ? "text-warning-text" : "text-muted-foreground"
           } md:col-span-2 hover:bg-muted/60 hover:text-foreground xl:col-span-1`}
         >
           {cleanupWarning ? (

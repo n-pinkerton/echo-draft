@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Mic, RefreshCw } from "lucide-react";
+import { Mic, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { useAudioInputDevices } from "../../hooks/useAudioInputDevices";
 import { Button } from "../ui/button";
@@ -12,6 +12,7 @@ type Props = {
   selectedMicDeviceId: string;
   onPreferBuiltInChange: (value: boolean) => void;
   onDeviceSelect: (deviceId: string) => void;
+  onOpenMicrophoneSettings?: () => void;
 };
 
 export default function QuickMicrophoneSelect({
@@ -19,6 +20,7 @@ export default function QuickMicrophoneSelect({
   selectedMicDeviceId,
   onPreferBuiltInChange,
   onDeviceSelect,
+  onOpenMicrophoneSettings,
 }: Props) {
   const {
     devices,
@@ -26,6 +28,7 @@ export default function QuickMicrophoneSelect({
     error,
     hasLoaded,
     hasHiddenLabels,
+    systemDefaultLabel,
     refreshDevices,
     requestDeviceLabels,
   } = useAudioInputDevices();
@@ -35,6 +38,8 @@ export default function QuickMicrophoneSelect({
     () => devices.some((device) => device.deviceId === selectedMicDeviceId),
     [devices, selectedMicDeviceId]
   );
+  const selectedDeviceUnavailable =
+    !preferBuiltInMic && Boolean(selectedMicDeviceId) && hasLoaded && !selectedDeviceAvailable;
 
   const handleChange = (nextValue: string) => {
     if (nextValue === AUTOMATIC_MIC) {
@@ -121,6 +126,46 @@ export default function QuickMicrophoneSelect({
               Show device names
             </Button>
           )}
+        </div>
+      )}
+
+      {selectedDeviceUnavailable && (
+        <div
+          className="flex min-w-0 flex-col gap-2 rounded-md border border-warning/30 bg-warning/10 p-2.5 text-xs md:basis-full md:flex-row md:items-center md:justify-between"
+          role="status"
+        >
+          <div className="flex min-w-0 items-start gap-2">
+            <TriangleAlert size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+            <div>
+              <p className="font-semibold text-warning-text">Selected microphone disconnected</p>
+              <p className="mt-0.5 leading-relaxed text-muted-foreground">
+                Dictation is using {systemDefaultLabel || "the Windows default microphone"} until
+                the selected microphone reconnects.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2 pl-5 md:pl-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2.5 text-xs"
+              onClick={() => onDeviceSelect("")}
+            >
+              Keep default
+            </Button>
+            {onOpenMicrophoneSettings && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2.5 text-xs"
+                onClick={onOpenMicrophoneSettings}
+              >
+                Mic settings
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </div>

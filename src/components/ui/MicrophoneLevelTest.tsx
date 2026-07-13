@@ -27,6 +27,7 @@ export default function MicrophoneLevelTest({
 }: MicrophoneLevelTestProps) {
   const [testState, setTestState] = useState<TestState>("idle");
   const [level, setLevel] = useState(0);
+  const [resultLevel, setResultLevel] = useState(0);
   const [activeLabel, setActiveLabel] = useState(deviceLabel);
   const [error, setError] = useState<string | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -36,6 +37,7 @@ export default function MicrophoneLevelTest({
   const frameRef = useRef<number | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionRef = useRef(0);
+  const peakLevelRef = useRef(0);
 
   const releaseResources = useCallback(() => {
     if (frameRef.current !== null) {
@@ -65,6 +67,9 @@ export default function MicrophoneLevelTest({
 
   const stopTest = useCallback(
     (nextState: TestState = "complete") => {
+      if (nextState === "complete") {
+        setResultLevel(peakLevelRef.current);
+      }
       sessionRef.current += 1;
       releaseResources();
       setTestState(nextState);
@@ -84,6 +89,8 @@ export default function MicrophoneLevelTest({
       stopTest("idle");
     }
     setLevel(0);
+    setResultLevel(0);
+    peakLevelRef.current = 0;
     setActiveLabel(deviceLabel);
     setError(null);
     // A device-selection change invalidates an active test.
@@ -95,6 +102,8 @@ export default function MicrophoneLevelTest({
     const sessionId = ++sessionRef.current;
     setError(null);
     setLevel(0);
+    setResultLevel(0);
+    peakLevelRef.current = 0;
     setTestState("requesting");
 
     try {
@@ -128,15 +137,15 @@ export default function MicrophoneLevelTest({
       }
 
       const context: AudioContext = new AudioContextCtor();
+      audioContextRef.current = context;
       const source = context.createMediaStreamSource(stream);
+      sourceRef.current = source;
       const analyser = context.createAnalyser();
+      analyserRef.current = analyser;
       analyser.fftSize = 512;
       analyser.smoothingTimeConstant = 0.65;
       source.connect(analyser);
 
-      audioContextRef.current = context;
-      sourceRef.current = source;
-      analyserRef.current = analyser;
       setActiveLabel(track.label || deviceLabel);
       setTestState("active");
 
@@ -156,7 +165,9 @@ export default function MicrophoneLevelTest({
           sumSquares += sample * sample;
         }
         const rms = Math.sqrt(sumSquares / samples.length);
-        setLevel(Math.min(1, rms * 4.5));
+        const nextLevel = Math.min(1, rms * 4.5);
+        peakLevelRef.current = Math.max(peakLevelRef.current, nextLevel);
+        setLevel(nextLevel);
         frameRef.current = requestAnimationFrame(readLevel);
       };
       frameRef.current = requestAnimationFrame(readLevel);
@@ -179,7 +190,8 @@ export default function MicrophoneLevelTest({
   }, [deviceId, deviceLabel, releaseResources, stopTest]);
 
   const isRunning = testState === "active" || testState === "requesting";
-  const signalLabel = getSignalLabel(level);
+  const displayedLevel = testState === "complete" ? resultLevel : level;
+  const signalLabel = getSignalLabel(displayedLevel);
 
   return (
     <div
@@ -222,7 +234,7 @@ export default function MicrophoneLevelTest({
       </div>
 
       {fallbackMessage ? (
-        <p className="mt-2 text-xs text-warning" role="status">
+        <p className="mt-2 text-xs text-warning-text" role="status">
           {fallbackMessage}
         </p>
       ) : null}
@@ -237,7 +249,10 @@ export default function MicrophoneLevelTest({
         <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between gap-3 text-xs">
             <span className="min-w-0 truncate text-muted-foreground">{activeLabel}</span>
-            <span className="shrink-0 font-medium text-foreground" role="status">
+            <span
+              className="shrink-0 font-medium text-foreground"
+              role={testState === "complete" ? "status" : undefined}
+            >
               {testState === "complete" ? `Last result: ${signalLabel}` : signalLabel}
             </span>
           </div>
@@ -246,18 +261,18 @@ export default function MicrophoneLevelTest({
             aria-label="Live microphone input level"
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={Math.round(level * 100)}
+            aria-valuenow={Math.round(displayedLevel * 100)}
             className="h-2 overflow-hidden rounded-full bg-border/70"
           >
             <div
               className={`h-full rounded-full transition-[width] duration-100 ${
-                level >= 0.7
+                displayedLevel >= 0.7
                   ? "bg-warning"
-                  : level >= 0.04
+                  : displayedLevel >= 0.04
                     ? "bg-success"
                     : "bg-muted-foreground/40"
               }`}
-              style={{ width: `${Math.max(2, Math.round(level * 100))}%` }}
+              style={{ width: `${Math.max(2, Math.round(displayedLevel * 100))}%` }}
             />
           </div>
         </div>

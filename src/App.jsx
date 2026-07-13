@@ -5,6 +5,7 @@ import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useAuth } from "./hooks/useAuth";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import RecordingIndicator from "./components/ui/RecordingIndicator";
+import DictationStatusIndicator from "./components/ui/DictationStatusIndicator";
 import { DICTATION_FEEDBACK_STORAGE_KEYS } from "./utils/dictationCues";
 
 const serializeBoolean = (value) => String(value);
@@ -135,16 +136,20 @@ export default function App() {
     window.electronAPI?.updateTrayStatus?.(trayStatus);
   }, [trayStatus]);
 
-  const shouldShowRecordingIndicator = recordingIndicatorEnabled && progress?.stage === "listening";
+  const isListening = progress?.stage === "listening";
+  const shouldShowRecordingIndicator = recordingIndicatorEnabled && isListening;
+  const shouldShowProcessingStatus = !isListening && progress?.stage && progress.stage !== "idle";
+  const shouldShowDictationWindow =
+    shouldShowRecordingIndicator || Boolean(shouldShowProcessingStatus);
 
   useEffect(() => {
-    if (shouldShowRecordingIndicator) {
+    if (shouldShowDictationWindow) {
       void window.electronAPI?.showRecordingIndicator?.();
       return;
     }
 
     void window.electronAPI?.hideWindow?.();
-  }, [shouldShowRecordingIndicator]);
+  }, [shouldShowDictationWindow]);
 
   useEffect(() => {
     return () => {
@@ -157,14 +162,23 @@ export default function App() {
     };
   }, []);
 
-  if (!shouldShowRecordingIndicator) {
+  if (!shouldShowDictationWindow) {
     return null;
   }
 
-  return (
+  return shouldShowRecordingIndicator ? (
     <RecordingIndicator
       recordedMs={progress?.recordedMs || 0}
       longRecordingReminderEnabled={longRecordingReminderEnabled}
+    />
+  ) : (
+    <DictationStatusIndicator
+      stage={progress?.stage || "idle"}
+      stageLabel={progress?.stageLabel}
+      stageElapsedMs={progress?.stageElapsedMs}
+      message={progress?.message}
+      canCancel={progress?.canCancel === true}
+      isSlow={progress?.isSlow === true}
     />
   );
 }

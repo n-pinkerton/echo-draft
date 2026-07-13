@@ -20,6 +20,7 @@ describe("DictationQuickStart", () => {
         onPreferBuiltInChange={vi.fn()}
         onDeviceSelect={vi.fn()}
         onOpenHotkeySettings={onOpenSettings}
+        onOpenMicrophoneSettings={vi.fn()}
         onOpenCleanupSettings={vi.fn()}
       />
     );
@@ -46,6 +47,7 @@ describe("DictationQuickStart", () => {
         onPreferBuiltInChange={vi.fn()}
         onDeviceSelect={vi.fn()}
         onOpenHotkeySettings={vi.fn()}
+        onOpenMicrophoneSettings={vi.fn()}
         onOpenCleanupSettings={vi.fn()}
       />
     );

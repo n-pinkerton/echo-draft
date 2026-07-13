@@ -17,6 +17,7 @@ export default function DeveloperSection() {
   const [isLoading, setIsLoading] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
+  const [enableDialogOpen, setEnableDialogOpen] = useState(false);
   const [purgeDialogOpen, setPurgeDialogOpen] = useState(false);
   const [isPurging, setIsPurging] = useState(false);
   const { toast } = useToast();
@@ -52,12 +53,11 @@ export default function DeveloperSection() {
     void loadDebugState();
   }, [loadDebugState]);
 
-  const handleToggleDebug = async () => {
+  const setDebugLogging = async (newState: boolean) => {
     if (isToggling) return;
 
     try {
       setIsToggling(true);
-      const newState = !debugEnabled;
       const result = await window.electronAPI.setDebugLogging(newState);
 
       if (!result.success) {
@@ -85,6 +85,14 @@ export default function DeveloperSection() {
     } finally {
       setIsToggling(false);
     }
+  };
+
+  const handleToggleDebug = (nextState: boolean) => {
+    if (nextState) {
+      setEnableDialogOpen(true);
+      return;
+    }
+    void setDebugLogging(false);
   };
 
   const handleOpenLogsFolder = async () => {
@@ -180,14 +188,19 @@ export default function DeveloperSection() {
           <div className="flex items-center justify-between gap-6">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <p className="text-[13px] font-medium text-foreground">Debug mode</p>
+                <p id="debug-mode-label" className="text-[13px] font-medium text-foreground">
+                  Debug mode
+                </p>
                 <div
                   className={`h-1.5 w-1.5 rounded-full transition-colors ${
                     debugEnabled ? "bg-success" : "bg-muted-foreground/30"
                   }`}
                 />
               </div>
-              <p className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed">
+              <p
+                id="debug-mode-description"
+                className="text-[12px] text-muted-foreground mt-0.5 leading-relaxed"
+              >
                 {debugEnabled
                   ? "Capturing detailed diagnostics and up to 10 recent input recordings on this computer"
                   : "Enable to capture detailed diagnostic information (writes to disk)"}
@@ -198,26 +211,28 @@ export default function DeveloperSection() {
                 checked={debugEnabled}
                 onChange={handleToggleDebug}
                 disabled={isLoading || isToggling}
+                ariaLabel="Enable debug logging and voice recording capture"
+                ariaDescribedBy="debug-mode-description debug-privacy-warning"
               />
             </div>
           </div>
         </div>
 
-        {/* Log Details */}
-        {debugEnabled && (
-          <div className="px-5 py-4">
-            <div className="flex items-start gap-3 rounded-lg border border-warning/25 bg-warning/5 dark:bg-warning/10 p-3">
-              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-              <div>
-                <p className="text-[12px] font-medium text-warning">Sensitive diagnostic data</p>
-                <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-                  Logs can contain transcribed text, and captured recordings contain your voice.
-                  Turn debug mode off and delete this data when troubleshooting is finished.
-                </p>
-              </div>
+        {/* Privacy warning is intentionally visible before debug capture is enabled. */}
+        <div className="px-5 py-4">
+          <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 dark:bg-warning/10 p-3">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+            <div id="debug-privacy-warning">
+              <p className="text-[12px] font-medium text-warning-text">
+                Stores sensitive diagnostic data
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                Debug mode stores logs that may include dictated text and up to 10 recent input
+                recordings containing your voice. Delete this data when troubleshooting is finished.
+              </p>
             </div>
           </div>
-        )}
+        </div>
 
         {debugEnabled && (
           <div className="px-5 py-4 space-y-3">
@@ -263,7 +278,7 @@ export default function DeveloperSection() {
 
             {fileLoggingError && (
               <div className="rounded-lg border border-warning/20 bg-warning/5 dark:bg-warning/10 p-3">
-                <p className="text-[12px] font-medium text-warning">Log file error</p>
+                <p className="text-[12px] font-medium text-warning-text">Log file error</p>
                 <p className="text-[12px] text-muted-foreground mt-1 break-words">
                   {fileLoggingError}
                 </p>
@@ -272,7 +287,7 @@ export default function DeveloperSection() {
 
             {fileLoggingEnabled === false && !fileLoggingError && (
               <div className="rounded-lg border border-warning/20 bg-warning/5 dark:bg-warning/10 p-3">
-                <p className="text-[12px] font-medium text-warning">Log file status</p>
+                <p className="text-[12px] font-medium text-warning-text">Log file status</p>
                 <p className="text-[12px] text-muted-foreground mt-1 break-words">
                   Debug mode is enabled, but file logging is not active yet.
                 </p>
@@ -340,8 +355,9 @@ export default function DeveloperSection() {
         <div className="rounded-xl border border-warning/20 bg-warning/5 dark:bg-warning/10">
           <div className="px-5 py-4">
             <p className="text-[12px] text-muted-foreground leading-relaxed">
-              <span className="font-medium text-warning">Note</span> — Debug logging writes to disk
-              continuously and may slightly affect performance. Disable when not troubleshooting.
+              <span className="font-medium text-warning-text">Note</span> — Debug logging writes to
+              disk continuously and may slightly affect performance. Disable when not
+              troubleshooting.
             </p>
           </div>
         </div>
@@ -379,6 +395,16 @@ export default function DeveloperSection() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={enableDialogOpen}
+        onOpenChange={setEnableDialogOpen}
+        title="Enable sensitive diagnostics?"
+        description="Debug mode writes detailed logs and keeps up to 10 recent input recordings containing your voice on this computer. Enable it only while troubleshooting, then turn it off and delete the diagnostic data."
+        confirmText="Enable Debug Mode"
+        cancelText="Cancel"
+        onConfirm={() => void setDebugLogging(true)}
+      />
 
       <ConfirmDialog
         open={purgeDialogOpen}

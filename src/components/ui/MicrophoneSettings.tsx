@@ -67,7 +67,7 @@ export const MicrophoneSettings = ({
         !builtInDevice &&
         devices.length > 0 && (
           <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 dark:bg-warning/20">
-            <p className="text-sm text-warning">
+            <p className="text-sm text-warning-text">
               No built-in microphone detected. Using system default.
             </p>
           </div>
@@ -137,7 +137,9 @@ export const MicrophoneSettings = ({
           role="status"
         >
           <div>
-            <p className="text-sm font-medium text-warning">Selected microphone disconnected</p>
+            <p className="text-sm font-medium text-warning-text">
+              Selected microphone disconnected
+            </p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
               Dictation will use System Default until this microphone is available again.
             </p>

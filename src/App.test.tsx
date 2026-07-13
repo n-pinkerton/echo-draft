@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 
 const mocks = vi.hoisted(() => ({
   recordingState: {
@@ -57,7 +57,7 @@ describe("App recording indicator routing", () => {
     };
   });
 
-  it("shows only after listening begins and hides as soon as processing starts", () => {
+  it("keeps a stage timer and cancellation guidance visible while processing", () => {
     const { rerender } = render(<App />);
 
     expect(window.electronAPI.showRecordingIndicator).toHaveBeenCalledTimes(1);
@@ -71,10 +71,18 @@ describe("App recording indicator routing", () => {
         ...mocks.recordingState.progress,
         stage: "transcribing",
         stageLabel: "Transcribing",
+        stageElapsedMs: 12_000,
+        canCancel: true,
       },
     };
     rerender(<App />);
 
-    expect(window.electronAPI.hideWindow).toHaveBeenCalledTimes(1);
+    expect(window.electronAPI.hideWindow).not.toHaveBeenCalled();
+    expect(screen.getByTestId("dictation-status-indicator")).toHaveAttribute(
+      "data-stage",
+      "transcribing"
+    );
+    expect(screen.getByText("0:12")).toBeInTheDocument();
+    expect(screen.getByText("Press dictation hotkey again to cancel")).toBeInTheDocument();
   });
 });

@@ -43,9 +43,40 @@ describe("DeveloperSection", () => {
   it("makes debug privacy and cleanup controls prominent", async () => {
     render(<DeveloperSection />);
 
-    expect(await screen.findByText("Sensitive diagnostic data")).toBeInTheDocument();
-    expect(screen.getByText(/captured recordings contain your voice/i)).toBeInTheDocument();
+    expect(await screen.findByText("Stores sensitive diagnostic data")).toBeInTheDocument();
+    expect(screen.getByText(/input recordings containing your voice/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", { name: "Enable debug logging and voice recording capture" })
+    ).toHaveAccessibleDescription(/may include dictated text/i);
     expect(screen.getByRole("button", { name: "Delete Diagnostic Data" })).toBeInTheDocument();
+  });
+
+  it("warns and asks for confirmation before enabling capture", async () => {
+    window.electronAPI.getDebugState = vi.fn(async () => ({
+      enabled: false,
+      logPath: null,
+      logsDir: "C:\\EchoDraft\\logs",
+      logsDirSource: "install",
+      fileLoggingEnabled: false,
+      fileLoggingError: null,
+      logLevel: "info",
+    }));
+    window.electronAPI.setDebugLogging = vi.fn(async () => ({ success: true }));
+
+    render(<DeveloperSection />);
+    const toggle = await screen.findByRole("switch", {
+      name: "Enable debug logging and voice recording capture",
+    });
+    expect(screen.getByText("Stores sensitive diagnostic data")).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(
+      screen.getByRole("heading", { name: "Enable sensitive diagnostics?" })
+    ).toBeInTheDocument();
+    expect(window.electronAPI.setDebugLogging).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Enable Debug Mode" }));
+    await waitFor(() => expect(window.electronAPI.setDebugLogging).toHaveBeenCalledWith(true));
   });
 
   it("requires confirmation before invoking the pathless purge API", async () => {
