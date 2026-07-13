@@ -5,6 +5,7 @@ const DevServerManager = require("../devServerManager");
 const { CONTROL_PANEL_CONFIG } = require("../windowConfig");
 const { shouldSuppressWindowPresentation } = require("./e2eWindowPresentation");
 const { loadWindowContent } = require("./windowContentLoader");
+const { pinWindowToAllVirtualDesktops } = require("./windowsVirtualDesktop");
 
 function openExternalUrl(url, { showError = true } = {}) {
   shell.openExternal(url).catch((error) => {
@@ -40,6 +41,7 @@ async function createControlPanelWindow(manager) {
     if (suppressPresentation) {
       return;
     }
+    await pinWindowToAllVirtualDesktops(manager.controlPanelWindow);
     if (typeof app.focus === "function") {
       app.focus({ steal: true });
     }
@@ -56,6 +58,9 @@ async function createControlPanelWindow(manager) {
   }
 
   manager.controlPanelWindow = new BrowserWindow(CONTROL_PANEL_CONFIG);
+  const pinPromise = suppressPresentation
+    ? Promise.resolve({ success: true, skipped: true })
+    : pinWindowToAllVirtualDesktops(manager.controlPanelWindow);
 
   manager.controlPanelWindow.webContents.on("will-navigate", (event, url) => {
     if (url.startsWith("file://") || url.startsWith("devtools://") || url.startsWith("about:"))
@@ -104,11 +109,13 @@ async function createControlPanelWindow(manager) {
     clearTimeout(visibilityTimer);
   };
 
-  manager.controlPanelWindow.once("ready-to-show", () => {
+  manager.controlPanelWindow.once("ready-to-show", async () => {
     clearVisibilityTimer();
     if (suppressPresentation) {
       return;
     }
+    await pinPromise;
+    if (!manager.controlPanelWindow || manager.controlPanelWindow.isDestroyed()) return;
     // Show dock icon on macOS when control panel opens
     if (process.platform === "darwin" && app.dock) {
       app.dock.show();
@@ -159,6 +166,7 @@ async function createControlPanelWindow(manager) {
   );
 
   await loadControlPanel(manager);
+  await pinPromise;
 }
 
 module.exports = {

@@ -30,6 +30,7 @@ const {
 const { bootstrapManagers } = require("./src/helpers/app/managerBootstrap");
 const { installNeonAuthOriginFix } = require("./src/helpers/app/neonAuthOriginFix");
 const { isLiveWindow } = require("./src/helpers/app/windowUtils");
+const { registerControlPanelShortcut } = require("./src/helpers/app/controlPanelShortcut");
 const {
   registerMacOsGlobeHotkeys,
 } = require("./src/helpers/app/platformHotkeys/macosGlobeHotkeys");
@@ -106,6 +107,7 @@ let windowsKeyManager = null;
 let authBridgeServer = null;
 let windowsHotkeyController = null;
 let disposeWindowsHotkeyRecovery = null;
+let controlPanelShortcutRegistration = null;
 
 const AUTH_BRIDGE_HOST = DEFAULT_AUTH_BRIDGE_HOST;
 const AUTH_BRIDGE_PORT = parseAuthBridgePort();
@@ -235,6 +237,10 @@ async function startApp() {
 
   // Create main window
   await windowManager.createMainWindow();
+  controlPanelShortcutRegistration = registerControlPanelShortcut(
+    { globalShortcut },
+    { windowManager, logger: debugLogger }
+  );
 
   // Set up tray
   trayManager.setWindows(windowManager.mainWindow, windowManager.controlPanelWindow);
@@ -384,6 +390,8 @@ if (gotSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    controlPanelShortcutRegistration?.dispose?.();
+    controlPanelShortcutRegistration = null;
     disposeWindowsHotkeyRecovery?.();
     disposeWindowsHotkeyRecovery = null;
     windowsHotkeyController?.dispose?.();

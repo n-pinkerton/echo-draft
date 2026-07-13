@@ -9,6 +9,7 @@ import {
 
 import { getReasoningModelLabel } from "../../models/ModelRegistry";
 import { formatHotkeyLabel } from "../../utils/hotkeys";
+import { CONTROL_PANEL_ACCELERATOR } from "../../shared/controlPanelShortcut";
 import { Button } from "../ui/button";
 import QuickMicrophoneSelect from "./QuickMicrophoneSelect";
 
@@ -128,16 +129,21 @@ export default function DictationQuickStart(props: Props) {
         />
       </div>
 
-      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(240px,0.9fr)]">
+      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
         <Shortcut icon={Keyboard} hotkey={insertHotkey} label="Insert in active app" />
         <Shortcut icon={Clipboard} hotkey={clipboardHotkey} label="Copy to clipboard" />
+        <Shortcut
+          icon={Settings2}
+          hotkey={CONTROL_PANEL_ACCELERATOR}
+          label="Open control panel on any desktop"
+        />
         <button
           type="button"
           onClick={onOpenCleanupSettings}
           aria-label={`Configure AI cleanup. ${cleanupStatusLabel}`}
           className={`flex min-w-0 items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2.5 py-2 text-left text-[11px] ${
             cleanupWarning ? "text-warning-text" : "text-muted-foreground"
-          } md:col-span-2 hover:bg-muted/60 hover:text-foreground xl:col-span-1`}
+          } hover:bg-muted/60 hover:text-foreground`}
         >
           {cleanupWarning ? (
             <TriangleAlert size={13} className="shrink-0" aria-hidden="true" />

@@ -27,6 +27,8 @@ describe("DictationQuickStart", () => {
 
     expect(screen.getByText("Insert in active app")).toBeInTheDocument();
     expect(screen.getByText("Copy to clipboard")).toBeInTheDocument();
+    expect(screen.getByText("Open control panel on any desktop")).toBeInTheDocument();
+    expect(screen.getByText("Ctrl+Alt+E")).toBeInTheDocument();
     expect(screen.getByText(/GPT-5.6 Terra/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Shortcuts" }));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);

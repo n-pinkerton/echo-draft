@@ -68,7 +68,7 @@ const CONTROL_PANEL_CONFIG = {
   fullscreenable: true,
   skipTaskbar: false, // Ensure control panel stays in taskbar
   alwaysOnTop: false, // Control panel should not be always on top
-  visibleOnAllWorkspaces: false, // Control panel should stay in its workspace
+  visibleOnAllWorkspaces: process.platform !== "win32", // Windows uses VirtualDesktop pinning.
   type: "normal", // Ensure it's a normal window, not a panel
   title: "EchoDraft",
 };

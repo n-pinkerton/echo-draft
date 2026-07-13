@@ -87,10 +87,10 @@ describe("recording indicator window presentation", () => {
       })
     ).toEqual({ success: true });
     expect(mainWindow.setBounds).toHaveBeenCalledWith({
-      x: 1086,
-      y: 732,
-      width: 210,
-      height: 64,
+      x: 1036,
+      y: 724,
+      width: 260,
+      height: 72,
     });
     expect(mainWindow.setIgnoreMouseEvents).toHaveBeenCalledWith(true, { forward: true });
     expect(mainWindow.showInactive).toHaveBeenCalledTimes(1);
