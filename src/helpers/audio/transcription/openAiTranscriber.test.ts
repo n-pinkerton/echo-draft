@@ -742,6 +742,56 @@ describe("OpenAiTranscriber", () => {
     expect(result.timings.transcriptionAttemptCount).toBe(2);
     expect(result.timings.transcriptionRetried).toBe(true);
     expect(result.timings.transcriptionStreamRecovery).toBe(true);
+    expect(result.timings.transcriptionAttempts).toEqual([
+      expect.objectContaining({
+        label: "primary",
+        outcome: "TRANSCRIPTION_STREAM_INCOMPLETE",
+      }),
+      expect.objectContaining({ label: "retry-incomplete-stream", outcome: "success" }),
+    ]);
+  });
+
+  it("keeps a failed recovery attempt in successful-result diagnostics", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
+
+    const logger = { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() };
+    const t = new OpenAiTranscriber({ logger });
+    const primaryText =
+      "Keep every deadline budget caveat stakeholder concern and implementation note while preserving the original order and all concrete action items for the team.";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeJsonResponse(primaryText))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        headers: {
+          get: (key: string) => (key.toLowerCase() === "content-type" ? "application/json" : ""),
+        },
+        text: async () => JSON.stringify({ error: { code: "invalid_audio" } }),
+      });
+    globalThis.fetch = fetchMock as any;
+
+    const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
+    const result = await t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 45 });
+
+    expect(result.rawText).toBe(primaryText);
+    expect(result.timings.transcriptionAttemptCount).toBe(2);
+    expect(result.timings.transcriptionTransportAttemptCount).toBe(2);
+    expect(result.timings.transcriptionAttempts).toEqual([
+      expect.objectContaining({ label: "primary", outcome: "success" }),
+      expect.objectContaining({
+        label: "retry-truncation",
+        outcome: "TRANSCRIPTION_HTTP_ERROR",
+      }),
+    ]);
+    expect(result.timings.transcriptionTransportAttempts).toEqual([
+      expect.objectContaining({ attemptLabel: "primary", outcome: "success" }),
+      expect.objectContaining({
+        attemptLabel: "retry-truncation",
+        outcome: "TRANSCRIPTION_HTTP_ERROR",
+      }),
+    ]);
   });
 
   it("recovers a truncated transcript after an independent corroborating attempt", async () => {

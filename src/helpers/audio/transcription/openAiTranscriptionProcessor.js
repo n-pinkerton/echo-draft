@@ -382,7 +382,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     ]);
     throwIfTranscriptionCancelled(externalSignal);
 
-    const transcribeOnce = async ({
+    const transcriptionAttemptLedger = [];
+
+    const performTranscribeOnce = async ({
       attemptLabel,
       attemptSkipDictionaryPrompt,
       attemptForceNoStream,
@@ -757,22 +759,68 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       }
     };
 
+    const transcribeOnce = async (attemptOptions) => {
+      const attemptStartedAt = performance.now();
+      try {
+        const result = await performTranscribeOnce(attemptOptions);
+        transcriptionAttemptLedger.push({
+          ...result,
+          attemptLabel: attemptOptions.attemptLabel,
+          attemptOutcome: "success",
+        });
+        return result;
+      } catch (error) {
+        if (!isTranscriptionCancelled(error, externalSignal)) {
+          transcriptionAttemptLedger.push({
+            attemptLabel: attemptOptions.attemptLabel,
+            attemptOutcome:
+              typeof error?.code === "string" && /^[A-Z0-9_]{1,64}$/.test(error.code)
+                ? error.code
+                : "error",
+            timings: {
+              transcriptionProcessingDurationMs: Math.round(performance.now() - attemptStartedAt),
+              transcriptionTransportAttempts: Array.isArray(error?.transportAttempts)
+                ? error.transportAttempts
+                : [],
+            },
+          });
+        }
+        throw error;
+      }
+    };
+
     const combineTranscriptionTimings = (attempts) => {
       const total = attempts.reduce(
         (sum, attempt) => sum + (attempt?.timings?.transcriptionProcessingDurationMs || 0),
         0
       );
-      const transportAttempts = attempts.flatMap(
-        (attempt) => attempt?.timings?.transcriptionTransportAttempts || []
+      const transportAttempts = attempts.flatMap((attempt, index) =>
+        (attempt?.timings?.transcriptionTransportAttempts || []).map((transportAttempt) => ({
+          ...transportAttempt,
+          transcriptionAttempt: index + 1,
+          attemptLabel: attempt.attemptLabel || `attempt-${index + 1}`,
+        }))
       );
       const requestIds = transportAttempts.map((attempt) => attempt.requestId).filter(Boolean);
-      const lastAttempt = attempts.at(-1)?.timings || {};
+      const lastSuccessfulAttempt = [...attempts]
+        .reverse()
+        .find((attempt) => attempt.attemptOutcome === "success");
+      const lastAttempt = lastSuccessfulAttempt?.timings || attempts.at(-1)?.timings || {};
+      const attemptSummaries = attempts.map((attempt, index) => ({
+        attempt: index + 1,
+        label: attempt.attemptLabel || `attempt-${index + 1}`,
+        outcome: attempt.attemptOutcome || "success",
+        durationMs: attempt?.timings?.transcriptionProcessingDurationMs || 0,
+        transportAttemptCount: attempt?.timings?.transcriptionTransportAttempts?.length || 0,
+      }));
       return {
         transcriptionProcessingDurationMs: total,
         transcriptionAttemptCount: attempts.length,
         ...(attempts.length > 1 ? { transcriptionRetried: true } : {}),
         transcriptionTransportAttemptCount: transportAttempts.length,
-        ...(transportAttempts.length > attempts.length
+        ...(attempts.some(
+          (attempt) => (attempt?.timings?.transcriptionTransportAttempts?.length || 0) > 1
+        )
           ? { transcriptionTransportRetried: true }
           : {}),
         transcriptionTimeToHeadersMs: lastAttempt.transcriptionTimeToHeadersMs ?? null,
@@ -781,6 +829,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           ? { transcriptionRequestId: lastAttempt.transcriptionRequestId }
           : {}),
         ...(requestIds.length > 0 ? { transcriptionRequestIds: requestIds } : {}),
+        transcriptionAttempts: attemptSummaries,
         transcriptionTransportAttempts: transportAttempts,
       };
     };
@@ -836,9 +885,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
 
     const attempts = [];
     let recoveredFromIncompleteStream = false;
-    let incompleteStreamAttemptDurationMs = 0;
     let primary;
-    const primaryStartedAt = performance.now();
     try {
       primary = await transcribeWithDictionaryRetry({
         attemptLabel: "primary",
@@ -848,7 +895,6 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     } catch (error) {
       if (!forceNoStream && error?.code === "TRANSCRIPTION_STREAM_INCOMPLETE") {
         recoveredFromIncompleteStream = true;
-        incompleteStreamAttemptDurationMs = Math.round(performance.now() - primaryStartedAt);
         transcriber.logger?.warn?.(
           "Streaming transcription ended early; retrying with a complete non-streaming response",
           { model, provider, durationSeconds },
@@ -1095,7 +1141,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
               ? Number(finalAnalysis.wordsPerSecond.toFixed(3))
               : null,
           reasons: finalAnalysis.reasons,
-          attemptsCount: attempts.length,
+          attemptsCount: transcriptionAttemptLedger.length,
           promptEchoDetected,
         },
         "transcription"
@@ -1105,17 +1151,16 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       );
     }
 
-    const combinedTimings = combineTranscriptionTimings(attempts);
-    timings.transcriptionProcessingDurationMs =
-      combinedTimings.transcriptionProcessingDurationMs + incompleteStreamAttemptDurationMs;
-    timings.transcriptionAttemptCount =
-      combinedTimings.transcriptionAttemptCount + (recoveredFromIncompleteStream ? 1 : 0);
-    if (combinedTimings.transcriptionRetried || recoveredFromIncompleteStream) {
+    const combinedTimings = combineTranscriptionTimings(transcriptionAttemptLedger);
+    timings.transcriptionProcessingDurationMs = combinedTimings.transcriptionProcessingDurationMs;
+    timings.transcriptionAttemptCount = combinedTimings.transcriptionAttemptCount;
+    if (combinedTimings.transcriptionRetried) {
       timings.transcriptionRetried = true;
     }
     timings.transcriptionTransportAttemptCount = combinedTimings.transcriptionTransportAttemptCount;
     timings.transcriptionTimeToHeadersMs = combinedTimings.transcriptionTimeToHeadersMs;
     timings.transcriptionBodyReadDurationMs = combinedTimings.transcriptionBodyReadDurationMs;
+    timings.transcriptionAttempts = combinedTimings.transcriptionAttempts;
     timings.transcriptionTransportAttempts = combinedTimings.transcriptionTransportAttempts;
     if (combinedTimings.transcriptionTransportRetried) {
       timings.transcriptionTransportRetried = true;
