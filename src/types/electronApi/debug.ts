@@ -26,6 +26,7 @@ export interface ElectronAPIDebugLogging {
     fileLoggingEnabled?: boolean;
     fileLoggingError?: string | null;
     logLevel?: string;
+    cancelled?: boolean;
     error?: string;
   }>;
   debugSaveAudio?: (payload: {
@@ -58,6 +59,7 @@ export interface ElectronAPIDebugLogging {
     residualArtifacts?: number;
     rootsScanned?: number;
     freshLogStarted?: boolean;
+    debugEnabled?: boolean;
     cancelled?: boolean;
     busy?: boolean;
     errors?: string[];

@@ -72,33 +72,9 @@ export async function bootstrapDebugTelemetry(): Promise<void> {
     }
     win.__echoDraftDebugTelemetryBootstrapped = true;
 
-    let state = await window.electronAPI.getDebugState().catch(() => null);
-    const storedDebugMode =
-      localStorage.getItem(DEBUG_MODE_STORAGE_KEY) ??
-      localStorage.getItem(LEGACY_DEBUG_MODE_STORAGE_KEY);
-    if (storedDebugMode === "true" || storedDebugMode === "false") {
-      const desiredDebugMode = storedDebugMode === "true";
-      const currentDebugMode = Boolean(state?.enabled);
-      if (desiredDebugMode !== currentDebugMode) {
-        const reconciledState = await window.electronAPI
-          .setDebugLogging(desiredDebugMode)
-          .catch(() => null);
-        if (reconciledState?.success) {
-          state = reconciledState;
-        } else {
-          logger.warn(
-            "Failed to reconcile debug mode from localStorage",
-            {
-              desiredDebugMode,
-              currentDebugMode,
-              error: reconciledState?.error || "setDebugLogging failed",
-            },
-            "telemetry"
-          );
-          localStorage.setItem(DEBUG_MODE_STORAGE_KEY, String(currentDebugMode));
-        }
-      }
-    }
+    const state = await window.electronAPI.getDebugState().catch(() => null);
+    // Main-process persisted state is authoritative. A renderer-local value must never
+    // silently enable sensitive capture at startup.
     localStorage.removeItem(LEGACY_DEBUG_MODE_STORAGE_KEY);
 
     if (!state?.enabled) {

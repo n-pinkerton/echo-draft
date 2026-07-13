@@ -3,7 +3,6 @@ import { Button } from "./ui/button";
 import { FolderOpen, Copy, Check, ShieldAlert, Trash2 } from "lucide-react";
 import { useToast } from "./ui/toastContext";
 import { Toggle } from "./ui/toggle";
-import { ConfirmDialog } from "./ui/dialog";
 import logger from "../utils/logger";
 import { DEBUG_MODE_STORAGE_KEY } from "../utils/branding";
 
@@ -17,7 +16,6 @@ export default function DeveloperSection() {
   const [isLoading, setIsLoading] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
-  const [enableDialogOpen, setEnableDialogOpen] = useState(false);
   const [isPurging, setIsPurging] = useState(false);
   const { toast } = useToast();
 
@@ -59,18 +57,20 @@ export default function DeveloperSection() {
       setIsToggling(true);
       const result = await window.electronAPI.setDebugLogging(newState);
 
+      if (result.cancelled) return;
       if (!result.success) {
         throw new Error(result.error || "Failed to update debug logging");
       }
 
-      setDebugEnabled(newState);
-      localStorage.setItem(DEBUG_MODE_STORAGE_KEY, String(newState));
+      const appliedState = typeof result.enabled === "boolean" ? result.enabled : newState;
+      setDebugEnabled(appliedState);
+      localStorage.setItem(DEBUG_MODE_STORAGE_KEY, String(appliedState));
       logger.refreshLogLevel();
       await loadDebugState();
 
       toast({
-        title: newState ? "Debug Logging Enabled" : "Debug Logging Disabled",
-        description: newState
+        title: appliedState ? "Debug Logging Enabled" : "Debug Logging Disabled",
+        description: appliedState
           ? "Detailed logs are now being written to disk"
           : "Debug logging has been turned off",
         variant: "success",
@@ -87,11 +87,7 @@ export default function DeveloperSection() {
   };
 
   const handleToggleDebug = (nextState: boolean) => {
-    if (nextState) {
-      setEnableDialogOpen(true);
-      return;
-    }
-    void setDebugLogging(false);
+    void setDebugLogging(nextState);
   };
 
   const handleOpenLogsFolder = async () => {
@@ -319,6 +315,12 @@ export default function DeveloperSection() {
             {isPurging ? "Deleting…" : "Delete Diagnostic Data"}
           </Button>
         </div>
+        {debugEnabled && (
+          <p className="px-5 pb-4 text-[11px] leading-relaxed text-muted-foreground">
+            When deleting, EchoDraft will ask whether to turn off debug mode or keep logging and
+            immediately start a fresh log.
+          </p>
+        )}
       </div>
 
       {/* What gets logged */}
@@ -395,16 +397,6 @@ export default function DeveloperSection() {
           </div>
         </div>
       )}
-
-      <ConfirmDialog
-        open={enableDialogOpen}
-        onOpenChange={setEnableDialogOpen}
-        title="Enable sensitive diagnostics?"
-        description="Debug mode writes detailed logs and keeps up to 10 recent input recordings containing your voice on this computer. Enable it only while troubleshooting, then turn it off and delete the diagnostic data."
-        confirmText="Enable Debug Mode"
-        cancelText="Cancel"
-        onConfirm={() => void setDebugLogging(true)}
-      />
     </div>
   );
 }

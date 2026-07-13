@@ -51,7 +51,7 @@ describe("DeveloperSection", () => {
     expect(screen.getByRole("button", { name: "Delete Diagnostic Data" })).toBeInTheDocument();
   });
 
-  it("warns and asks for confirmation before enabling capture", async () => {
+  it("keeps the warning visible and delegates enablement consent to the main process", async () => {
     window.electronAPI.getDebugState = vi.fn(async () => ({
       enabled: false,
       logPath: null,
@@ -61,7 +61,11 @@ describe("DeveloperSection", () => {
       fileLoggingError: null,
       logLevel: "info",
     }));
-    window.electronAPI.setDebugLogging = vi.fn(async () => ({ success: true }));
+    window.electronAPI.setDebugLogging = vi.fn(async () => ({
+      success: false,
+      cancelled: true,
+      enabled: false,
+    }));
 
     render(<DeveloperSection />);
     const toggle = await screen.findByRole("switch", {
@@ -70,13 +74,8 @@ describe("DeveloperSection", () => {
     expect(screen.getByText("Stores sensitive diagnostic data")).toBeInTheDocument();
 
     fireEvent.click(toggle);
-    expect(
-      screen.getByRole("heading", { name: "Enable sensitive diagnostics?" })
-    ).toBeInTheDocument();
-    expect(window.electronAPI.setDebugLogging).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Enable Debug Mode" }));
     await waitFor(() => expect(window.electronAPI.setDebugLogging).toHaveBeenCalledWith(true));
+    expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "destructive" }));
   });
 
   it("delegates deletion confirmation to the main-process purge API", async () => {
