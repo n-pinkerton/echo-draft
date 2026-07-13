@@ -51,16 +51,6 @@ class CancelableRequestRegistry {
     return count;
   }
 
-  _removeOldestTombstoneForSender(senderId) {
-    const prefix = `${senderId}:`;
-    for (const key of this.cancelledBeforeRegistration.keys()) {
-      if (key.startsWith(prefix)) {
-        this.cancelledBeforeRegistration.delete(key);
-        return;
-      }
-    }
-  }
-
   _ensureSenderState(event, senderId) {
     const existing = this.senderStates.get(senderId);
     if (existing) return existing;
@@ -155,21 +145,22 @@ class CancelableRequestRegistry {
     }
 
     this._pruneTombstones();
+    if (!this.cancelledBeforeRegistration.has(key)) {
+      if (
+        this._countForSender(this.cancelledBeforeRegistration, senderId) >=
+        MAX_TOMBSTONES_PER_SENDER
+      ) {
+        const error = new Error("Too many pending request cancellations for this sender");
+        error.code = "TOO_MANY_CANCELLATION_TOMBSTONES";
+        throw error;
+      }
+      if (this.cancelledBeforeRegistration.size >= MAX_TOMBSTONES_TOTAL) {
+        const error = new Error("Too many pending request cancellations");
+        error.code = "TOO_MANY_CANCELLATION_TOMBSTONES";
+        throw error;
+      }
+    }
     this._ensureSenderState(event, senderId);
-    if (
-      !this.cancelledBeforeRegistration.has(key) &&
-      this._countForSender(this.cancelledBeforeRegistration, senderId) >= MAX_TOMBSTONES_PER_SENDER
-    ) {
-      this._removeOldestTombstoneForSender(senderId);
-    }
-    while (
-      !this.cancelledBeforeRegistration.has(key) &&
-      this.cancelledBeforeRegistration.size >= MAX_TOMBSTONES_TOTAL
-    ) {
-      const oldestKey = this.cancelledBeforeRegistration.keys().next().value;
-      if (!oldestKey) break;
-      this.cancelledBeforeRegistration.delete(oldestKey);
-    }
     this.cancelledBeforeRegistration.set(key, this.now());
     return false;
   }
@@ -180,6 +171,10 @@ class CancelableRequestRegistry {
 
   get tombstoneCount() {
     return this.cancelledBeforeRegistration.size;
+  }
+
+  get senderStateCount() {
+    return this.senderStates.size;
   }
 }
 
@@ -197,6 +192,7 @@ module.exports = {
   CancelableRequestRegistry,
   MAX_ACTIVE_REQUESTS_PER_SENDER,
   MAX_TOMBSTONES_PER_SENDER,
+  MAX_TOMBSTONES_TOTAL,
   createAbortError,
   registerCancelableRequestHandler,
 };

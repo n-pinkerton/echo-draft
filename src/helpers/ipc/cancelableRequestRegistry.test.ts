@@ -5,6 +5,7 @@ const {
   CancelableRequestRegistry,
   MAX_ACTIVE_REQUESTS_PER_SENDER,
   MAX_TOMBSTONES_PER_SENDER,
+  MAX_TOMBSTONES_TOTAL,
   registerCancelableRequestHandler,
 } = require("./cancelableRequestRegistry");
 
@@ -95,9 +96,31 @@ describe("CancelableRequestRegistry", () => {
     expect(() => registry.createScope(event, "active-request-over-limit")).toThrow(/too many/i);
     for (const scope of scopes) scope.finish();
 
-    for (let index = 0; index < MAX_TOMBSTONES_PER_SENDER + 20; index += 1) {
+    for (let index = 0; index < MAX_TOMBSTONES_PER_SENDER; index += 1) {
       registry.cancel(event, `cancel-request-${String(index).padStart(3, "0")}`);
     }
+    expect(() => registry.cancel(event, "cancel-request-over-limit")).toThrow(/too many/i);
     expect(registry.tombstoneCount).toBe(MAX_TOMBSTONES_PER_SENDER);
+  });
+
+  it("preserves existing cancellation guarantees when the global cap is reached", () => {
+    const registry = new CancelableRequestRegistry();
+    const events = Array.from({ length: MAX_TOMBSTONES_TOTAL }, (_, index) =>
+      createEvent(index + 100)
+    );
+
+    for (const event of events) registry.cancel(event, REQUEST_ID);
+
+    const rejectedEvent = createEvent(10_000);
+    expect(() => registry.cancel(rejectedEvent, REQUEST_ID)).toThrow(/too many/i);
+    expect(registry.tombstoneCount).toBe(MAX_TOMBSTONES_TOTAL);
+    expect(registry.senderStateCount).toBe(MAX_TOMBSTONES_TOTAL);
+    expect(rejectedEvent.sender.listenerCount("destroyed")).toBe(0);
+
+    const firstScope = registry.createScope(events[0], REQUEST_ID);
+    expect(firstScope.signal.aborted).toBe(true);
+    firstScope.finish();
+    expect(events[0].sender.listenerCount("destroyed")).toBe(0);
+    expect(registry.senderStateCount).toBe(MAX_TOMBSTONES_TOTAL - 1);
   });
 });
