@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { useReasoningSettings } from "./useReasoningSettings";
@@ -26,5 +26,26 @@ describe("useReasoningSettings", () => {
 
     expect(result.current.reasoningModel).toBe("gpt-4.1");
     expect(localStorage.getItem("reasoningModel")).toBe("gpt-4.1");
+  });
+
+  it("defaults cleanup reasoning to low and persists explicit changes", () => {
+    const { result } = renderHook(() => useReasoningSettings());
+
+    expect(result.current.cleanupReasoningEffort).toBe("low");
+    expect(localStorage.getItem("cleanupReasoningEffort")).toBe("low");
+
+    act(() => result.current.setCleanupReasoningEffort("none"));
+
+    expect(result.current.cleanupReasoningEffort).toBe("none");
+    expect(localStorage.getItem("cleanupReasoningEffort")).toBe("none");
+  });
+
+  it("normalizes an unsupported cleanup reasoning value to low", () => {
+    localStorage.setItem("cleanupReasoningEffort", "extreme");
+
+    const { result } = renderHook(() => useReasoningSettings());
+
+    expect(result.current.cleanupReasoningEffort).toBe("low");
+    expect(localStorage.getItem("cleanupReasoningEffort")).toBe("low");
   });
 });

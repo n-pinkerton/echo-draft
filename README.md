@@ -346,11 +346,15 @@ The optional agent name personalizes the trusted cleanup prompt. Cleanup is an e
 - Corrects spelling, grammar, obvious recognition artifacts, and unambiguous self-corrections
 - May consolidate or rewrite locally for clarity while preserving every substantive point
 - Keeps questions, requests, caveats, examples, names, numbers, qualifiers, uncertainty, and polarity
+- Preserves model identifiers and file, folder, path, directory, and agent-related tokens instead of guessing a cleaner spelling
+- Adds quotation marks to explicit speech, not around an entire request merely because it reads like a message
+- Gives rejected OpenAI Luna or Terra output one strict Sol preservation retry before keeping the original text
 - Retries suspicious output conservatively and keeps the original transcript if preservation cannot be verified
 
 **🤖 AI Provider Options**:
 
 - **OpenAI cleanup**: GPT-5.6 Terra, GPT-5.6 Luna, and GPT-5.6 Sol
+- **OpenAI GPT-5 reasoning**: Choose None (fastest), Low (recommended default), or Medium (most thorough) under _Settings → AI Text Enhancement_. Higher effort can help with complex wording but may take longer.
 - **Anthropic**: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5
 - **Google**: Gemini 2.5 Pro/Flash/Flash-Lite
 - **Groq**: Ultra-fast Llama and Mixtral inference

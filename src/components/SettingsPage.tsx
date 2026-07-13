@@ -57,6 +57,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     useReasoningModel,
     reasoningModel,
     reasoningProvider,
+    cleanupReasoningEffort,
     openaiApiKey,
     anthropicApiKey,
     geminiApiKey,
@@ -76,6 +77,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     setUseReasoningModel,
     setReasoningModel,
     setReasoningProvider,
+    setCleanupReasoningEffort,
     setOpenaiApiKey,
     setAnthropicApiKey,
     setGeminiApiKey,
@@ -173,6 +175,8 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
             setReasoningModel={setReasoningModel}
             reasoningProvider={reasoningProvider}
             setReasoningProvider={setReasoningProvider}
+            cleanupReasoningEffort={cleanupReasoningEffort}
+            setCleanupReasoningEffort={setCleanupReasoningEffort}
             cloudReasoningBaseUrl={cloudReasoningBaseUrl}
             setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
             openaiApiKey={openaiApiKey}

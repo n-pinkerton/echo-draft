@@ -1,4 +1,5 @@
 import type { LocalTranscriptionProvider } from "../../types/electron";
+import type { CleanupReasoningEffort } from "../../services/BaseReasoningService";
 
 export interface TranscriptionSettings {
   useLocalWhisper: boolean;
@@ -21,6 +22,7 @@ export interface ReasoningSettings {
   useReasoningModel: boolean;
   reasoningModel: string;
   reasoningProvider: string;
+  cleanupReasoningEffort: CleanupReasoningEffort;
   cloudReasoningBaseUrl?: string;
   cloudReasoningMode: string;
 }
@@ -54,4 +56,3 @@ export interface PrivacySettings {
 export interface ThemeSettings {
   theme: "light" | "dark" | "auto";
 }
-

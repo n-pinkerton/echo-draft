@@ -1,10 +1,13 @@
 import { getSystemPrompt, type CleanupPromptMode } from "../config/prompts";
 
+export type CleanupReasoningEffort = "none" | "low" | "medium";
+
 export interface ReasoningConfig {
   maxTokens?: number;
   temperature?: number;
   contextSize?: number;
   cleanupPromptMode?: CleanupPromptMode;
+  reasoningEffort?: CleanupReasoningEffort;
 }
 
 export abstract class BaseReasoningService {

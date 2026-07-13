@@ -36,7 +36,7 @@ describe("ReasoningService (OpenAI)", () => {
       expect(body.input[0].role).toBe("developer");
       expect(body.input[0].content).toContain("Selected cleanup model: GPT-5.6 Terra");
       expect(body.input[1].content).toContain("<echodraft_gpt56_terra_untrusted_dictation>");
-      expect(body.reasoning).toEqual({ effort: "none" });
+      expect(body.reasoning).toEqual({ effort: "low" });
       expect(body.text).toEqual({ verbosity: "medium" });
       expect(body.truncation).toBe("disabled");
       expect(body.max_output_tokens).toBeGreaterThanOrEqual(2048);
@@ -60,9 +60,11 @@ describe("ReasoningService (OpenAI)", () => {
 
     vi.stubGlobal("fetch", fetchMock as any);
 
-    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).resolves.toBe(
-      "I have also provided the rest."
-    );
+    await expect(
+      ReasoningService.processText("input", "gpt-5.6-terra", null, {
+        reasoningEffort: "low",
+      })
+    ).resolves.toBe("I have also provided the rest.");
   });
 
   it("throws when Responses API is incomplete due to max_output_tokens (avoids returning partial text)", async () => {

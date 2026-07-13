@@ -286,6 +286,93 @@ async function checkSettingsUsability(panel, record, outputDir, runId, options =
     JSON.stringify(feedbackResult)
   );
 
+  const reasoningResult = await panel.eval(`
+    (async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const aiModelsButton = document.querySelector('button[data-section-id="aiModels"]');
+      if (!aiModelsButton) return { ok: false, error: "AI Models settings link missing" };
+      const originalCloudMode = localStorage.getItem("cloudReasoningMode");
+      aiModelsButton.click();
+      await sleep(400);
+
+      let selector = document.querySelector(
+        'select[aria-label="Cleanup reasoning effort"]'
+      );
+      let switchedToCustom = false;
+      if (!selector) {
+        const customSetupButton = Array.from(document.querySelectorAll("button")).find(
+          (button) => button.textContent?.includes("Custom Setup")
+        );
+        customSetupButton?.click();
+        switchedToCustom = Boolean(customSetupButton);
+        await sleep(400);
+        selector = document.querySelector('select[aria-label="Cleanup reasoning effort"]');
+      }
+      if (!selector) {
+        if (switchedToCustom) {
+          if (originalCloudMode === null) {
+            localStorage.removeItem("cloudReasoningMode");
+          } else {
+            localStorage.setItem("cloudReasoningMode", originalCloudMode);
+          }
+        }
+        return { ok: false, error: "Cleanup reasoning selector missing for OpenAI GPT-5" };
+      }
+
+      const options = Array.from(selector.options).map((option) => option.value);
+      const choicesPresent = ["none", "low", "medium"].every((value) =>
+        options.includes(value)
+      );
+      const originalValue = selector.value;
+      const originalStorage = localStorage.getItem("cleanupReasoningEffort");
+      const testValue = originalValue === "medium" ? "none" : "medium";
+      const rect = selector.getBoundingClientRect();
+      const visible = rect.width > 0 && rect.height > 0;
+      selector.value = testValue;
+      selector.dispatchEvent(new Event("change", { bubbles: true }));
+      await sleep(150);
+      const persisted = localStorage.getItem("cleanupReasoningEffort") === testValue;
+
+      selector.value = originalValue;
+      selector.dispatchEvent(new Event("change", { bubbles: true }));
+      await sleep(100);
+      if (originalStorage === null) {
+        localStorage.removeItem("cleanupReasoningEffort");
+      }
+      if (switchedToCustom) {
+        if (originalCloudMode === null) {
+          localStorage.removeItem("cloudReasoningMode");
+        } else {
+          localStorage.setItem("cloudReasoningMode", originalCloudMode);
+        }
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: "cloudReasoningMode",
+            newValue: originalCloudMode,
+          })
+        );
+        await sleep(100);
+      }
+
+      const cloudModeRestored =
+        localStorage.getItem("cloudReasoningMode") === originalCloudMode;
+      return {
+        ok: visible && choicesPresent && persisted && cloudModeRestored,
+        visible,
+        choicesPresent,
+        persisted,
+        switchedToCustom,
+        cloudModeRestored,
+      };
+    })()
+  `);
+
+  record(
+    "Packaged cleanup reasoning choices render and persist",
+    Boolean(reasoningResult?.ok),
+    JSON.stringify(reasoningResult)
+  );
+
   await panel.eval(`
     (() => {
       const closeButton = Array.from(document.querySelectorAll('[role="dialog"] button')).find(
@@ -296,7 +383,7 @@ async function checkSettingsUsability(panel, record, outputDir, runId, options =
     })()
   `);
 
-  return { ...result, microphoneResult, feedbackResult, screenshotPath };
+  return { ...result, microphoneResult, feedbackResult, reasoningResult, screenshotPath };
 }
 
 module.exports = { checkSettingsUsability };

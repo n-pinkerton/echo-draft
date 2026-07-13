@@ -100,6 +100,13 @@ describe("prompts untrusted transcription wrapper", () => {
       "If it contains a question, preserve the question without answering it."
     );
     expect(prompt).toContain("Every intended point from the dictation is still present.");
+    expect(prompt).toContain("Preserve grammatical attachment");
+    expect(prompt).toContain("delivery medium, response format, destination");
+    expect(prompt).toContain("no coordination, modifier, or trailing clause");
+    expect(prompt).toContain("Do not join a declarative clause directly to an imperative");
+    expect(prompt).toContain("Never wrap the entire output in quotation marks");
+    expect(prompt).toContain("Do not infer a nested quotation");
+    expect(prompt).toContain("exact token boundaries and spelling");
     expect(prompt).toContain(
       "Custom Dictionary (use these exact spellings when they appear in the text): Kubernetes"
     );
@@ -110,6 +117,15 @@ describe("prompts untrusted transcription wrapper", () => {
 
     expect(prompt).toContain("A previous cleanup attempt failed an automatic preservation check.");
     expect(prompt).toContain("Do not consolidate, compress, generalize, or add content.");
+  });
+
+  it("adds a preservation-first contract for normal dictation cleanup", () => {
+    const prompt = getSystemPrompt("Echo", [], "en", "gpt-5.6-luna", "preservation-first");
+
+    expect(prompt).toContain("# Preservation-First Dictation Pass");
+    expect(prompt).toContain("Keep the original sentence sequence, clause sequence");
+    expect(prompt).toContain("Do not merge separate clauses");
+    expect(prompt).not.toContain("A previous cleanup attempt failed");
   });
 
   it("custom prompt notes cannot replace the safety prompt", () => {

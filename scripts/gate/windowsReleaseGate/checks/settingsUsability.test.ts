@@ -15,6 +15,11 @@ describe("Windows release gate Settings usability check", () => {
           soundTogglePersisted: true,
           timerTogglePersisted: true,
         })
+        .mockResolvedValueOnce({
+          ok: true,
+          choicesPresent: true,
+          persisted: true,
+        })
         .mockResolvedValueOnce(true),
       send: vi.fn(),
     };
@@ -28,6 +33,7 @@ describe("Windows release gate Settings usability check", () => {
       ok: true,
       microphoneResult: { ok: true },
       feedbackResult: { ok: true },
+      reasoningResult: { ok: true },
       screenshotPath: null,
     });
 
@@ -46,6 +52,11 @@ describe("Windows release gate Settings usability check", () => {
       "Packaged sound feedback controls render, persist, and preview",
       true,
       expect.stringContaining("timerTogglePersisted")
+    );
+    expect(record).toHaveBeenCalledWith(
+      "Packaged cleanup reasoning choices render and persist",
+      true,
+      expect.stringContaining("choicesPresent")
     );
   });
 });

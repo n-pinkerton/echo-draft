@@ -1,6 +1,7 @@
 import { Cloud, Key } from "lucide-react";
 
 import ReasoningModelSelector from "../../ReasoningModelSelector";
+import type { CleanupReasoningEffort } from "../../../services/BaseReasoningService";
 import { SettingsRow } from "../../ui/SettingsSection";
 import { Toggle } from "../../ui/toggle";
 import { ECHO_DRAFT_CLOUD_MODE } from "../../../utils/branding";
@@ -16,6 +17,8 @@ export interface AiModelsSectionProps {
   setReasoningModel: (model: string) => void;
   reasoningProvider: string;
   setReasoningProvider: (provider: string) => void;
+  cleanupReasoningEffort: CleanupReasoningEffort;
+  setCleanupReasoningEffort: (effort: CleanupReasoningEffort) => void;
   cloudReasoningBaseUrl: string;
   setCloudReasoningBaseUrl: (url: string) => void;
   openaiApiKey: string;
@@ -48,6 +51,8 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
     setReasoningModel,
     reasoningProvider,
     setReasoningProvider,
+    cleanupReasoningEffort,
+    setCleanupReasoningEffort,
     cloudReasoningBaseUrl,
     setCloudReasoningBaseUrl,
     openaiApiKey,
@@ -66,6 +71,8 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
 
   const isCustomMode = cloudReasoningMode === "byok";
   const isCloudMode = isSignedIn && cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE;
+  const supportsCleanupReasoningEffort =
+    reasoningProvider === "openai" && reasoningModel.startsWith("gpt-5");
 
   return (
     <div className="space-y-4">
@@ -207,28 +214,53 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
 
           {/* Custom Setup model picker — shown when Custom Setup is active or not signed in */}
           {(isCustomMode || !isSignedIn) && (
-            <ReasoningModelSelector
-              showEnableToggle={false}
-              useReasoningModel={useReasoningModel}
-              setUseReasoningModel={setUseReasoningModel}
-              reasoningModel={reasoningModel}
-              setReasoningModel={setReasoningModel}
-              localReasoningProvider={reasoningProvider}
-              setLocalReasoningProvider={setReasoningProvider}
-              cloudReasoningBaseUrl={cloudReasoningBaseUrl}
-              setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
-              openaiApiKey={openaiApiKey}
-              setOpenaiApiKey={setOpenaiApiKey}
-              anthropicApiKey={anthropicApiKey}
-              setAnthropicApiKey={setAnthropicApiKey}
-              geminiApiKey={geminiApiKey}
-              setGeminiApiKey={setGeminiApiKey}
-              groqApiKey={groqApiKey}
-              setGroqApiKey={setGroqApiKey}
-              customReasoningApiKey={customReasoningApiKey}
-              setCustomReasoningApiKey={setCustomReasoningApiKey}
-              showAlertDialog={showAlertDialog}
-            />
+            <>
+              <ReasoningModelSelector
+                showEnableToggle={false}
+                useReasoningModel={useReasoningModel}
+                setUseReasoningModel={setUseReasoningModel}
+                reasoningModel={reasoningModel}
+                setReasoningModel={setReasoningModel}
+                localReasoningProvider={reasoningProvider}
+                setLocalReasoningProvider={setReasoningProvider}
+                cloudReasoningBaseUrl={cloudReasoningBaseUrl}
+                setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
+                openaiApiKey={openaiApiKey}
+                setOpenaiApiKey={setOpenaiApiKey}
+                anthropicApiKey={anthropicApiKey}
+                setAnthropicApiKey={setAnthropicApiKey}
+                geminiApiKey={geminiApiKey}
+                setGeminiApiKey={setGeminiApiKey}
+                groqApiKey={groqApiKey}
+                setGroqApiKey={setGroqApiKey}
+                customReasoningApiKey={customReasoningApiKey}
+                setCustomReasoningApiKey={setCustomReasoningApiKey}
+                showAlertDialog={showAlertDialog}
+              />
+              {supportsCleanupReasoningEffort && (
+                <SettingsPanel>
+                  <SettingsPanelRow>
+                    <SettingsRow
+                      label="Cleanup reasoning"
+                      description="Higher effort can preserve complex intent more reliably, but takes longer. Risky Luna or Terra output gets one strict Sol preservation retry."
+                    >
+                      <select
+                        aria-label="Cleanup reasoning effort"
+                        value={cleanupReasoningEffort}
+                        onChange={(event) =>
+                          setCleanupReasoningEffort(event.target.value as CleanupReasoningEffort)
+                        }
+                        className="h-9 min-w-[150px] rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground outline-none transition-colors focus:border-primary focus:ring-[3px] focus:ring-primary/15"
+                      >
+                        <option value="none">None — fastest</option>
+                        <option value="low">Low — recommended</option>
+                        <option value="medium">Medium — most thorough</option>
+                      </select>
+                    </SettingsRow>
+                  </SettingsPanelRow>
+                </SettingsPanel>
+              )}
+            </>
           )}
         </>
       )}

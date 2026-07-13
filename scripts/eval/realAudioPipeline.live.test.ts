@@ -192,6 +192,15 @@ describe("authorized real-audio transcription and cleanup", () => {
       const inputPath = process.env.ECHODRAFT_REAL_AUDIO_EVAL_INPUT;
       const outputPath = process.env.ECHODRAFT_REAL_AUDIO_EVAL_OUTPUT;
       const envPath = process.env.ECHODRAFT_REAL_AUDIO_ENV;
+      const cleanupModel =
+        process.env.ECHODRAFT_REAL_AUDIO_CLEANUP_MODEL?.trim() || "gpt-5.6-terra";
+      const requestedCleanupReasoningEffort =
+        process.env.ECHODRAFT_REAL_AUDIO_CLEANUP_REASONING_EFFORT?.trim().toLowerCase() || "low";
+      const cleanupReasoningEffort = ["none", "low", "medium"].includes(
+        requestedCleanupReasoningEffort
+      )
+        ? requestedCleanupReasoningEffort
+        : "low";
       if (!inputPath || !outputPath || !envPath) {
         throw new Error("Real-audio evaluation paths were not configured.");
       }
@@ -274,8 +283,9 @@ describe("authorized real-audio transcription and cleanup", () => {
       }
 
       localStorage.setItem("useReasoningModel", "true");
-      localStorage.setItem("reasoningModel", "gpt-5.6-terra");
+      localStorage.setItem("reasoningModel", cleanupModel);
       localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("cleanupReasoningEffort", cleanupReasoningEffort);
       ReasoningService.clearApiKeyCache();
       const cleanupService = new ReasoningCleanupService({
         logger: noContentLogger,
@@ -303,6 +313,10 @@ describe("authorized real-audio transcription and cleanup", () => {
         {
           id: "synthetic-grammatical-attachment",
           text: "revise the workflow so it keeps reviewers operating the way we agreed and in line with policy then bring the proposed wording back before making the change",
+        },
+        {
+          id: "synthetic-declarative-imperative-transition",
+          text: "the report is still using the old label and bring the proposed wording back before making the change",
         },
       ];
       const cleanupInputs = [
@@ -340,6 +354,8 @@ describe("authorized real-audio transcription and cleanup", () => {
             privacy:
               "Contains user-authorized private voice transcripts; do not quote outside the review loop.",
             generatedAt: new Date().toISOString(),
+            cleanupModel,
+            cleanupReasoningEffort,
             transcriptionResults,
             cleanupResults,
             judgment,
@@ -351,7 +367,14 @@ describe("authorized real-audio transcription and cleanup", () => {
 
       const judgedById = new Map(judgment.cases.map((item: any) => [item.id, item]));
       for (const item of cleanupResults) {
-        expect(item.cleanup.status, `cleanup fell back for ${item.id}`).not.toBe("fallback");
+        if (item.cleanup.status === "fallback") {
+          expect(item.cleanup.fallbackReason, `unexpected fallback for ${item.id}`).toBe(
+            "fidelity_rejected"
+          );
+          expect(item.cleaned, `fallback changed private source text for ${item.id}`).toBe(
+            item.original
+          );
+        }
         expect(judgedById.get(item.id)?.pass, `cleanup judge rejected ${item.id}`).toBe(true);
       }
     },

@@ -1,6 +1,33 @@
 import { normalizeCleanupModelId, sanitizeProcessedText } from "../../../config/prompts";
 import { assessCleanupFidelity, CleanupFidelityError } from "./cleanupFidelity";
 
+const OPENAI_FIDELITY_RETRY_MODEL = "gpt-5.6-sol";
+const SOL_RESCUE_ADVISORY_REASONS = new Set([
+  "high-rewrite-risk",
+  "relation-marker-addition",
+  "relation-marker-loss",
+]);
+
+const canAcceptStrictSolRescue = (assessment) => {
+  if (
+    !assessment ||
+    !Array.isArray(assessment.reasons) ||
+    assessment.reasons.length === 0 ||
+    !assessment.reasons.every((reason) => SOL_RESCUE_ADVISORY_REASONS.has(reason))
+  ) {
+    return false;
+  }
+
+  const metrics = assessment.metrics || {};
+  return (
+    metrics.contentCoverage >= 0.9 &&
+    metrics.contentPrecision >= 0.9 &&
+    metrics.orderedBigramRetention >= 0.75 &&
+    metrics.semanticMissingContentWordCount <= 5 &&
+    metrics.semanticAddedContentWordCount <= 5
+  );
+};
+
 /**
  * Shared cleanup/orchestration around `ReasoningService` for transcript post-processing.
  *
@@ -50,6 +77,25 @@ export class ReasoningCleanupService {
     return cleanupEnabledOverride !== null
       ? cleanupEnabledOverride
       : storedValue === "true" || (!!storedValue && storedValue !== "false");
+  }
+
+  _getReasoningEffort() {
+    const storedValue =
+      typeof window !== "undefined" && window.localStorage
+        ? localStorage.getItem("cleanupReasoningEffort") || ""
+        : "";
+    return storedValue === "none" || storedValue === "medium" ? storedValue : "low";
+  }
+
+  _getFidelityRetryModel(model) {
+    const provider =
+      typeof window !== "undefined" && window.localStorage
+        ? localStorage.getItem("reasoningProvider") || "auto"
+        : "auto";
+    return (provider === "openai" || provider === "auto") &&
+      /^(?:gpt-5\.6-luna|gpt-5\.6-terra)$/.test(model)
+      ? OPENAI_FIDELITY_RETRY_MODEL
+      : model;
   }
 
   /**
@@ -114,7 +160,7 @@ export class ReasoningCleanupService {
    * @param {string} text
    * @param {string} model
    * @param {string|null} agentName
-   * @returns {Promise<{text: string, assessment: any, retryCount: number}>}
+   * @returns {Promise<{text: string, assessment: any, retryCount: number, appliedModel: string}>}
    */
   async processWithReasoningModelResult(text, model, agentName) {
     this.logger?.logReasoning?.("CALLING_REASONING_SERVICE", {
@@ -124,9 +170,15 @@ export class ReasoningCleanupService {
     });
 
     const startTime = Date.now();
+    const reasoningEffort = this._getReasoningEffort();
+    let retryAttempted = false;
+    let attemptedRetryModel = null;
     try {
       const firstResult = sanitizeProcessedText(
-        await this.reasoningService.processText(text, model, agentName)
+        await this.reasoningService.processText(text, model, agentName, {
+          cleanupPromptMode: "preservation-first",
+          reasoningEffort,
+        })
       );
       const firstAssessment = assessCleanupFidelity(text, firstResult);
 
@@ -139,7 +191,12 @@ export class ReasoningCleanupService {
           retryCount: 0,
           success: true,
         });
-        return { text: firstResult, assessment: firstAssessment, retryCount: 0 };
+        return {
+          text: firstResult,
+          assessment: firstAssessment,
+          retryCount: 0,
+          appliedModel: model,
+        };
       }
 
       this.logger?.logReasoning?.("REASONING_FIDELITY_RETRY", {
@@ -148,17 +205,32 @@ export class ReasoningCleanupService {
         metrics: firstAssessment.metrics,
       });
 
+      const retryModel = this._getFidelityRetryModel(model);
+      retryAttempted = true;
+      attemptedRetryModel = retryModel;
       const retryResult = sanitizeProcessedText(
-        await this.reasoningService.processText(text, model, agentName, {
+        await this.reasoningService.processText(text, retryModel, agentName, {
           cleanupPromptMode: "strict-preservation",
+          reasoningEffort,
         })
       );
       const retryAssessment = assessCleanupFidelity(text, retryResult);
+      const solRescueAccepted =
+        retryModel === OPENAI_FIDELITY_RETRY_MODEL && canAcceptStrictSolRescue(retryAssessment);
+      const effectiveRetryAssessment = solRescueAccepted
+        ? {
+            ...retryAssessment,
+            accepted: true,
+            reasons: [],
+            advisoryReasons: retryAssessment.reasons,
+          }
+        : retryAssessment;
       const processingTimeMs = Date.now() - startTime;
 
-      if (!retryAssessment.accepted) {
+      if (!effectiveRetryAssessment.accepted) {
         this.logger?.logReasoning?.("REASONING_FIDELITY_REJECTED", {
           model,
+          retryModel,
           processingTimeMs,
           reasons: retryAssessment.reasons,
           metrics: retryAssessment.metrics,
@@ -167,16 +239,36 @@ export class ReasoningCleanupService {
         throw new CleanupFidelityError(retryAssessment);
       }
 
+      if (solRescueAccepted) {
+        this.logger?.logReasoning?.("REASONING_SOL_RESCUE_ACCEPTED", {
+          model,
+          retryModel,
+          processingTimeMs,
+          advisoryReasons: retryAssessment.reasons,
+          metrics: retryAssessment.metrics,
+        });
+      }
+
       this.logger?.logReasoning?.("REASONING_SERVICE_COMPLETE", {
         model,
+        retryModel,
         processingTimeMs,
         resultLength: retryResult.length,
         retryCount: 1,
         success: true,
       });
 
-      return { text: retryResult, assessment: retryAssessment, retryCount: 1 };
+      return {
+        text: retryResult,
+        assessment: effectiveRetryAssessment,
+        retryCount: 1,
+        appliedModel: retryModel,
+      };
     } catch (error) {
+      if (retryAttempted && error && typeof error === "object") {
+        error.cleanupRetryCount = 1;
+        error.cleanupRetryModel = attemptedRetryModel;
+      }
       const processingTimeMs = Date.now() - startTime;
       this.logger?.logReasoning?.("REASONING_SERVICE_ERROR", {
         model,
@@ -238,6 +330,7 @@ export class ReasoningCleanupService {
       status: requested ? "fallback" : "disabled",
       fallbackReason: requested ? null : "disabled",
       model: reasoningModel || null,
+      appliedModel: null,
       provider: reasoningProvider || "auto",
       retryCount: 0,
     };
@@ -314,6 +407,7 @@ export class ReasoningCleanupService {
           status: unchanged ? "unchanged" : "applied",
           fallbackReason: null,
           retryCount: result.retryCount,
+          appliedModel: result.appliedModel || reasoningModel,
           metrics: result.assessment.metrics,
         },
       };
@@ -333,7 +427,8 @@ export class ReasoningCleanupService {
           status: "fallback",
           fallbackReason:
             error?.code === "CLEANUP_FIDELITY_REJECTED" ? "fidelity_rejected" : "provider_error",
-          retryCount: error?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
+          retryCount:
+            error?.cleanupRetryCount === 1 || error?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
           ...(error?.assessment?.metrics ? { metrics: error.assessment.metrics } : {}),
         },
       };

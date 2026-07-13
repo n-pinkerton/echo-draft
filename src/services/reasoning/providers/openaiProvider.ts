@@ -91,6 +91,7 @@ export async function processWithOpenAiProvider({
       ? calculateCleanupMaxOutputTokens(text.length, config.maxTokens)
       : Math.max(legacyCalculatedMaxTokens, calculateCleanupMaxOutputTokens(text.length));
     const requestTimeoutMs = getCleanupRequestTimeoutMs(text.length);
+    const reasoningEffort = config.reasoningEffort || "none";
 
     const isOlderModel = model && (model.startsWith("gpt-4") || model.startsWith("gpt-3"));
     const isCustomEndpoint = openAiBase !== API_ENDPOINTS.OPENAI_BASE;
@@ -127,7 +128,7 @@ export async function processWithOpenAiProvider({
             requestBody.store = false;
             requestBody.max_output_tokens = maxOutputTokens;
             if (usesOpenAiReasoningControls) {
-              requestBody.reasoning = { effort: "none" };
+              requestBody.reasoning = { effort: reasoningEffort };
               requestBody.text = { verbosity: OPENAI_CLEANUP_TEXT_VERBOSITY };
               requestBody.truncation = "disabled";
             }
@@ -143,7 +144,7 @@ export async function processWithOpenAiProvider({
               requestBody.max_tokens = maxOutputTokens;
             }
             if (usesOpenAiReasoningControls) {
-              requestBody.reasoning_effort = "none";
+              requestBody.reasoning_effort = reasoningEffort;
             }
           }
 
@@ -157,6 +158,7 @@ export async function processWithOpenAiProvider({
             userPromptLength: userPrompt.length,
             isOlderModel,
             temperature: requestBody.temperature ?? null,
+            reasoningEffort: usesOpenAiReasoningControls ? reasoningEffort : null,
           });
 
           const res = await fetchFn(endpoint, {

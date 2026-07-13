@@ -3,6 +3,7 @@ import { useCallback, useEffect } from "react";
 import { API_ENDPOINTS } from "../../config/constants";
 import { normalizeCleanupModelId } from "../../config/prompts";
 import { ECHO_DRAFT_CLOUD_MODE, normalizeCloudMode } from "../../utils/branding";
+import type { CleanupReasoningEffort } from "../../services/BaseReasoningService";
 import { useLocalStorage } from "../useLocalStorage";
 import type { ReasoningSettings } from "./settingsTypes";
 
@@ -21,6 +22,13 @@ export function useReasoningSettings() {
     serialize: String,
     deserialize: String,
   });
+
+  const [cleanupReasoningEffort, setCleanupReasoningEffort] =
+    useLocalStorage<CleanupReasoningEffort>("cleanupReasoningEffort", "low", {
+      serialize: String,
+      deserialize: (value) =>
+        value === "none" || value === "low" || value === "medium" ? value : "low",
+    });
 
   const [cloudReasoningBaseUrl, setCloudReasoningBaseUrl] = useLocalStorage(
     "cloudReasoningBaseUrl",
@@ -54,6 +62,8 @@ export function useReasoningSettings() {
       if (settings.reasoningModel !== undefined) setReasoningModel(settings.reasoningModel);
       if (settings.reasoningProvider !== undefined)
         setReasoningProvider(settings.reasoningProvider);
+      if (settings.cleanupReasoningEffort !== undefined)
+        setCleanupReasoningEffort(settings.cleanupReasoningEffort);
       if (settings.cloudReasoningBaseUrl !== undefined)
         setCloudReasoningBaseUrl(settings.cloudReasoningBaseUrl);
       if (settings.cloudReasoningMode !== undefined)
@@ -64,6 +74,7 @@ export function useReasoningSettings() {
       setCloudReasoningMode,
       setReasoningModel,
       setReasoningProvider,
+      setCleanupReasoningEffort,
       setUseReasoningModel,
     ]
   );
@@ -72,11 +83,13 @@ export function useReasoningSettings() {
     useReasoningModel,
     reasoningModel,
     reasoningProvider,
+    cleanupReasoningEffort,
     cloudReasoningBaseUrl,
     cloudReasoningMode,
     setUseReasoningModel,
     setReasoningModel,
     setReasoningProvider,
+    setCleanupReasoningEffort,
     setCloudReasoningBaseUrl,
     setCloudReasoningMode,
     updateReasoningSettings,
