@@ -7,11 +7,9 @@ import {
 } from "../pipeline/cancellation";
 
 const OPENAI_FIDELITY_RETRY_MODEL = "gpt-5.6-sol";
-const SOL_RESCUE_ADVISORY_REASONS = new Set([
-  "high-rewrite-risk",
-  "relation-marker-addition",
-  "relation-marker-loss",
-]);
+// A strict rescue may overcome a conservative rewrite-risk score, but never a
+// detected change to ordering, causality, or other relation markers.
+const SOL_RESCUE_ADVISORY_REASONS = new Set(["high-rewrite-risk"]);
 
 const canAcceptStrictSolRescue = (assessment) => {
   if (

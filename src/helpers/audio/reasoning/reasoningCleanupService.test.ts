@@ -270,7 +270,7 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
-  it("accepts a bounded Sol rescue that preserves sequence with equivalent wording", async () => {
+  it("rejects a Sol rescue when relation-marker wording changes", async () => {
     const original =
       "Review the draft, then bring the wording back before making the change. Keep reference 42, the budget caveat, the customer example, the fallback owner, and the Friday deadline in the review, because both teams must approve the final wording before publication.";
     const rescued =
@@ -292,14 +292,16 @@ describe("ReasoningCleanupService", () => {
     const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
 
     expect(result).toMatchObject({
-      text: rescued,
-      cleanup: { status: "applied", retryCount: 1, appliedModel: "gpt-5.6-sol" },
+      text: original,
+      cleanup: {
+        status: "fallback",
+        fallbackReason: "fidelity_rejected",
+        retryCount: 1,
+      },
     });
-    expect(logger.logReasoning).toHaveBeenCalledWith(
+    expect(logger.logReasoning).not.toHaveBeenCalledWith(
       "REASONING_SOL_RESCUE_ACCEPTED",
-      expect.objectContaining({
-        advisoryReasons: expect.arrayContaining(["relation-marker-loss"]),
-      })
+      expect.anything()
     );
   });
 
