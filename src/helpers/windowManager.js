@@ -158,6 +158,10 @@ class WindowManager {
     sendStopDictationImpl(this, payload, { logger: debugLogger });
   }
 
+  sendCancelProcessing() {
+    this.emitDictationEvent("cancel-dictation-processing", {});
+  }
+
   getActivationMode() {
     return this._cachedActivationMode;
   }

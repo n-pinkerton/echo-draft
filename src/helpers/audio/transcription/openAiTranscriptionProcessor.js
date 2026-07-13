@@ -19,6 +19,53 @@ const PROMPT_ECHO_UNKNOWN_DURATION_MIN_WORDS = 2;
 const PROMPT_ECHO_UNKNOWN_DURATION_MIN_CHARS = 6;
 const ASSISTANT_STYLE_RETRY_MIN_DURATION_SECONDS = 20;
 const ASSISTANT_STYLE_RETRY_MIN_WORDS = 80;
+const DEFAULT_SLOW_REQUEST_THRESHOLD_MS = 10_000;
+const DEFAULT_TRANSPORT_RETRY_DELAY_MS = 750;
+const MAX_RETRY_AFTER_MS = 5_000;
+
+const isRetryableHttpStatus = (status) =>
+  status === 408 || status === 429 || (status >= 500 && status <= 599);
+
+const getRetryAfterMs = (response, fallbackMs) => {
+  const raw = response?.headers?.get?.("retry-after");
+  if (!raw) return fallbackMs;
+
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(MAX_RETRY_AFTER_MS, Math.max(250, Math.round(seconds * 1000)));
+  }
+
+  const retryAt = Date.parse(raw);
+  if (Number.isFinite(retryAt)) {
+    return Math.min(MAX_RETRY_AFTER_MS, Math.max(250, retryAt - Date.now()));
+  }
+
+  return fallbackMs;
+};
+
+const waitForRetryDelay = async (delayMs, signal) => {
+  throwIfTranscriptionCancelled(signal);
+  if (!delayMs || delayMs <= 0) return;
+
+  await new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort);
+      resolve();
+    }, delayMs);
+    const handleAbort = () => {
+      clearTimeout(timeoutId);
+      reject(createTranscriptionCancelledError());
+    };
+    signal?.addEventListener("abort", handleAbort, { once: true });
+  });
+};
+
+const getProviderLabel = (provider) => {
+  if (provider === "openai") return "OpenAI";
+  if (provider === "groq") return "Groq";
+  if (provider === "mistral") return "Mistral";
+  return "The transcription provider";
+};
 
 const ASSISTANT_PREFIX_PATTERNS = [
   /^certainly[,.!\s]/i,
@@ -274,6 +321,19 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
   const forceNoStream = options.forceNoStream === true;
   const allowTruncationRetry = options.allowTruncationRetry !== false;
   const externalSignal = options.signal || null;
+  const slowRequestThresholdMs =
+    Number.isFinite(options.slowRequestThresholdMs) && options.slowRequestThresholdMs >= 0
+      ? options.slowRequestThresholdMs
+      : DEFAULT_SLOW_REQUEST_THRESHOLD_MS;
+  const transportRetryDelayMs =
+    Number.isFinite(options.transportRetryDelayMs) && options.transportRetryDelayMs >= 0
+      ? options.transportRetryDelayMs
+      : DEFAULT_TRANSPORT_RETRY_DELAY_MS;
+  const requestTimeoutOverrideMs =
+    Number.isFinite(options.requestTimeoutMs) && options.requestTimeoutMs > 0
+      ? options.requestTimeoutMs
+      : null;
+  let remainingTransportRetries = options.allowTransportRetry === false ? 0 : 1;
 
   const timings = {};
   const language = getBaseLanguageCode(localStorage.getItem("preferredLanguage"));
@@ -434,21 +494,47 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         headers.Authorization = `Bearer ${apiKey}`;
       }
 
-      const requestTimeoutMs = Math.max(
-        60_000,
-        Math.min(300_000, 30_000 + (Number(durationSeconds) || 0) * 1_500)
-      );
-      const controller = new AbortController();
-      const handleExternalAbort = () => controller.abort(externalSignal?.reason);
-      if (externalSignal) {
-        if (externalSignal.aborted) {
-          throw createTranscriptionCancelledError();
+      const requestTimeoutMs =
+        requestTimeoutOverrideMs ||
+        Math.max(60_000, Math.min(300_000, 30_000 + (Number(durationSeconds) || 0) * 1_500));
+      const transportAttempts = [];
+      let transportAttempt = 0;
+
+      while (true) {
+        transportAttempt += 1;
+        throwIfTranscriptionCancelled(externalSignal);
+
+        const transportStartedAt = performance.now();
+        const controller = new AbortController();
+        let timeoutTriggered = false;
+        let response = null;
+        let requestId = null;
+        let timeToHeadersMs = null;
+        let bodyReadDurationMs = null;
+        let attemptRecorded = false;
+        const handleExternalAbort = () => controller.abort(externalSignal?.reason);
+        if (externalSignal) {
+          if (externalSignal.aborted) {
+            throw createTranscriptionCancelledError();
+          }
+          externalSignal.addEventListener("abort", handleExternalAbort, { once: true });
         }
-        externalSignal.addEventListener("abort", handleExternalAbort, { once: true });
-      }
-      const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
-      try {
-        let response;
+        const timeoutId = setTimeout(() => {
+          timeoutTriggered = true;
+          controller.abort();
+        }, requestTimeoutMs);
+        const slowTimerId = setTimeout(() => {
+          if (externalSignal?.aborted) return;
+          transcriber.emitProgress?.({
+            stage: "transcribing",
+            stageLabel: "Still transcribing",
+            message: `${getProviderLabel(provider)} is taking longer than usual`,
+            isSlow: true,
+            canCancel: true,
+            transportAttempt,
+          });
+        }, slowRequestThresholdMs);
+
         try {
           response = await fetch(endpoint, {
             method: "POST",
@@ -456,102 +542,204 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
             body: formData,
             signal: controller.signal,
           });
-        } catch (error) {
-          if (externalSignal?.aborted) {
-            throw createTranscriptionCancelledError();
-          }
-          if (error?.name === "AbortError") {
-            throw new Error(
-              `Transcription request timed out after ${Math.round(requestTimeoutMs / 1000)}s`
-            );
-          }
-          throw error;
-        }
-        const responseContentType = response.headers.get("content-type") || "";
-        const requestId =
-          response.headers.get("x-request-id") || response.headers.get("openai-request-id") || null;
+          timeToHeadersMs = Math.round(performance.now() - transportStartedAt);
+          const responseContentType = response.headers.get("content-type") || "";
+          requestId =
+            response.headers.get("x-request-id") ||
+            response.headers.get("openai-request-id") ||
+            null;
 
-        transcriber.logger?.debug?.(
-          "Transcription API response received",
-          {
-            status: response.status,
-            statusText: response.statusText,
-            contentType: responseContentType,
-            requestId,
-            ok: response.ok,
-          },
-          "transcription"
-        );
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          let errorMessage = response.statusText || "Transcription request failed";
-          let errorCode = null;
-          try {
-            const errorData = JSON.parse(errorText);
-            errorMessage = errorData?.error?.message || errorData?.message || errorMessage;
-            errorCode = errorData?.error?.code || errorData?.code || null;
-          } catch {
-            // Keep the status text when a provider returns a non-JSON error page.
-          }
-          transcriber.logger?.error?.(
-            "Transcription API error response",
-            { status: response.status, requestId, errorCode },
-            "transcription"
-          );
-          throw new Error(`API Error: ${response.status} ${errorMessage}`);
-        }
-
-        let result;
-        const contentType = responseContentType;
-
-        if (contentType.includes("text/event-stream")) {
           transcriber.logger?.debug?.(
-            "Processing streaming response",
-            { contentType, requestId },
+            "Transcription API response received",
+            {
+              status: response.status,
+              statusText: response.statusText,
+              contentType: responseContentType,
+              requestId,
+              ok: response.ok,
+              transportAttempt,
+              timeToHeadersMs,
+            },
             "transcription"
           );
-          const streamedText = await transcriber.readTranscriptionStream(response);
-          throwIfTranscriptionCancelled(externalSignal);
-          result = { text: streamedText };
-        } else {
-          const rawText = await response.text();
-          throwIfTranscriptionCancelled(externalSignal);
-          try {
-            result = JSON.parse(rawText);
-          } catch (parseError) {
+
+          const bodyReadStartedAt = performance.now();
+          if (!response.ok) {
+            const errorText = await response.text();
+            bodyReadDurationMs = Math.round(performance.now() - bodyReadStartedAt);
+            let errorMessage = response.statusText || "Transcription request failed";
+            let providerErrorCode = null;
+            try {
+              const errorData = JSON.parse(errorText);
+              errorMessage = errorData?.error?.message || errorData?.message || errorMessage;
+              providerErrorCode = errorData?.error?.code || errorData?.code || null;
+            } catch {
+              // Keep the status text when a provider returns a non-JSON error page.
+            }
+            const error = new Error(`API Error: ${response.status} ${errorMessage}`);
+            error.code = "TRANSCRIPTION_HTTP_ERROR";
+            error.httpStatus = response.status;
+            error.providerErrorCode = providerErrorCode;
+            error.requestId = requestId;
+            error.retryable = isRetryableHttpStatus(response.status);
+            error.retryAfterMs = getRetryAfterMs(response, transportRetryDelayMs);
             transcriber.logger?.error?.(
-              "Failed to parse JSON response",
+              "Transcription API error response",
               {
+                status: response.status,
                 requestId,
-                parseError: parseError.message,
-                responseLength: rawText.length,
+                errorCode: providerErrorCode,
+                retryable: error.retryable,
+                transportAttempt,
               },
               "transcription"
             );
-            throw new Error(`Failed to parse API response: ${parseError.message}`);
+            throw error;
           }
+
+          let result;
+          if (responseContentType.includes("text/event-stream")) {
+            transcriber.logger?.debug?.(
+              "Processing streaming response",
+              { contentType: responseContentType, requestId, transportAttempt },
+              "transcription"
+            );
+            const streamedText = await transcriber.readTranscriptionStream(response);
+            throwIfTranscriptionCancelled(externalSignal);
+            result = { text: streamedText };
+          } else {
+            const rawText = await response.text();
+            throwIfTranscriptionCancelled(externalSignal);
+            try {
+              result = JSON.parse(rawText);
+            } catch (parseError) {
+              transcriber.logger?.error?.(
+                "Failed to parse JSON response",
+                {
+                  requestId,
+                  parseError: parseError.message,
+                  responseLength: rawText.length,
+                },
+                "transcription"
+              );
+              throw new Error(`Failed to parse API response: ${parseError.message}`);
+            }
+          }
+          bodyReadDurationMs = Math.round(performance.now() - bodyReadStartedAt);
+          transportAttempts.push({
+            attempt: transportAttempt,
+            status: response.status,
+            requestId,
+            outcome: "success",
+            timeToHeadersMs,
+            bodyReadDurationMs,
+            durationMs: Math.round(performance.now() - transportStartedAt),
+          });
+          attemptRecorded = true;
+
+          if (result.text && result.text.trim().length > 0) {
+            const attemptDurationMs = Math.round(performance.now() - apiCallStart);
+            const requestIds = transportAttempts.map((entry) => entry.requestId).filter(Boolean);
+            transcriber.emitProgress?.({
+              stage: "transcribing",
+              stageLabel: "Transcribing",
+              message: null,
+              isSlow: false,
+              canCancel: true,
+              transportAttempt,
+              transportRetrying: false,
+            });
+            return {
+              rawText: result.text,
+              source: "openai",
+              timings: {
+                transcriptionProcessingDurationMs: attemptDurationMs,
+                transcriptionTimeToHeadersMs: timeToHeadersMs,
+                transcriptionBodyReadDurationMs: bodyReadDurationMs,
+                transcriptionTransportAttemptCount: transportAttempts.length,
+                ...(transportAttempts.length > 1 ? { transcriptionTransportRetried: true } : {}),
+                ...(requestId ? { transcriptionRequestId: requestId } : {}),
+                ...(requestIds.length > 0 ? { transcriptionRequestIds: requestIds } : {}),
+                transcriptionTransportAttempts: transportAttempts,
+              },
+              dictionaryEntries: dictionaryEntriesUsed,
+              shouldAttachDictionaryPrompt,
+            };
+          }
+
+          throw new Error(
+            "No text transcribed - audio may be too short, silent, or in an unsupported format"
+          );
+        } catch (caughtError) {
+          if (externalSignal?.aborted) {
+            throw createTranscriptionCancelledError();
+          }
+
+          let error = caughtError;
+          if (timeoutTriggered || (error?.name === "AbortError" && !externalSignal?.aborted)) {
+            error = new Error(
+              `Transcription request timed out after ${Math.round(requestTimeoutMs / 1000)}s`
+            );
+            error.code = "TRANSCRIPTION_TIMEOUT";
+            error.retryable = true;
+          } else if (error?.retryable === undefined && error?.name === "TypeError") {
+            const networkError = new Error("Network error while contacting transcription provider");
+            networkError.code = "TRANSCRIPTION_NETWORK_ERROR";
+            networkError.retryable = true;
+            networkError.cause = error;
+            error = networkError;
+          }
+
+          if (!attemptRecorded) {
+            transportAttempts.push({
+              attempt: transportAttempt,
+              status: response?.status ?? null,
+              requestId,
+              outcome: error?.code || "error",
+              retryable: error?.retryable === true,
+              timeToHeadersMs,
+              bodyReadDurationMs,
+              durationMs: Math.round(performance.now() - transportStartedAt),
+            });
+            attemptRecorded = true;
+          }
+          error.transportAttempts = transportAttempts;
+
+          if (error?.retryable === true && remainingTransportRetries > 0) {
+            remainingTransportRetries -= 1;
+            const retryDelayMs = error.retryAfterMs ?? transportRetryDelayMs;
+            transcriber.logger?.warn?.(
+              "Retrying transcription after a transient transport failure",
+              {
+                attempt: transportAttempt,
+                nextAttempt: transportAttempt + 1,
+                errorCode: error.code || null,
+                status: error.httpStatus || null,
+                requestId: error.requestId || requestId,
+                retryDelayMs,
+              },
+              "transcription"
+            );
+            transcriber.emitProgress?.({
+              stage: "transcribing",
+              stageLabel: "Retrying transcription",
+              message: "Temporary provider problem; retrying once",
+              isSlow: false,
+              canCancel: true,
+              transportAttempt: transportAttempt + 1,
+              transportRetrying: true,
+            });
+            await waitForRetryDelay(retryDelayMs, externalSignal);
+            continue;
+          }
+
+          throw error;
+        } finally {
+          // Keep the abort deadline active while the response body or SSE stream is consumed.
+          clearTimeout(timeoutId);
+          clearTimeout(slowTimerId);
+          externalSignal?.removeEventListener("abort", handleExternalAbort);
         }
-
-        const attemptDurationMs = Math.round(performance.now() - apiCallStart);
-
-        if (result.text && result.text.trim().length > 0) {
-          return {
-            rawText: result.text,
-            source: "openai",
-            timings: { transcriptionProcessingDurationMs: attemptDurationMs },
-            dictionaryEntries: dictionaryEntriesUsed,
-            shouldAttachDictionaryPrompt,
-          };
-        }
-
-        throw new Error(
-          "No text transcribed - audio may be too short, silent, or in an unsupported format"
-        );
-      } finally {
-        // Keep the abort deadline active while the response body or SSE stream is consumed.
-        clearTimeout(timeoutId);
-        externalSignal?.removeEventListener("abort", handleExternalAbort);
       }
     };
 
@@ -560,10 +748,26 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         (sum, attempt) => sum + (attempt?.timings?.transcriptionProcessingDurationMs || 0),
         0
       );
+      const transportAttempts = attempts.flatMap(
+        (attempt) => attempt?.timings?.transcriptionTransportAttempts || []
+      );
+      const requestIds = transportAttempts.map((attempt) => attempt.requestId).filter(Boolean);
+      const lastAttempt = attempts.at(-1)?.timings || {};
       return {
         transcriptionProcessingDurationMs: total,
         transcriptionAttemptCount: attempts.length,
         ...(attempts.length > 1 ? { transcriptionRetried: true } : {}),
+        transcriptionTransportAttemptCount: transportAttempts.length,
+        ...(transportAttempts.length > attempts.length
+          ? { transcriptionTransportRetried: true }
+          : {}),
+        transcriptionTimeToHeadersMs: lastAttempt.transcriptionTimeToHeadersMs ?? null,
+        transcriptionBodyReadDurationMs: lastAttempt.transcriptionBodyReadDurationMs ?? null,
+        ...(lastAttempt.transcriptionRequestId
+          ? { transcriptionRequestId: lastAttempt.transcriptionRequestId }
+          : {}),
+        ...(requestIds.length > 0 ? { transcriptionRequestIds: requestIds } : {}),
+        transcriptionTransportAttempts: transportAttempts,
       };
     };
 
@@ -895,6 +1099,19 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     if (combinedTimings.transcriptionRetried || recoveredFromIncompleteStream) {
       timings.transcriptionRetried = true;
     }
+    timings.transcriptionTransportAttemptCount = combinedTimings.transcriptionTransportAttemptCount;
+    timings.transcriptionTimeToHeadersMs = combinedTimings.transcriptionTimeToHeadersMs;
+    timings.transcriptionBodyReadDurationMs = combinedTimings.transcriptionBodyReadDurationMs;
+    timings.transcriptionTransportAttempts = combinedTimings.transcriptionTransportAttempts;
+    if (combinedTimings.transcriptionTransportRetried) {
+      timings.transcriptionTransportRetried = true;
+    }
+    if (combinedTimings.transcriptionRequestId) {
+      timings.transcriptionRequestId = combinedTimings.transcriptionRequestId;
+    }
+    if (combinedTimings.transcriptionRequestIds) {
+      timings.transcriptionRequestIds = combinedTimings.transcriptionRequestIds;
+    }
     if (recoveredFromIncompleteStream) {
       timings.transcriptionStreamRecovery = true;
     }
@@ -905,7 +1122,11 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
 
     if (transcriber.shouldApplyReasoningCleanup?.()) {
       throwIfTranscriptionCancelled(externalSignal);
-      transcriber.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
+      transcriber.emitProgress?.({
+        stage: "cleaning",
+        stageLabel: "Cleaning up",
+        canCancel: true,
+      });
       const reasoningStart = performance.now();
       const cleanupEnabledOverride = transcriber.getCleanupEnabledOverride?.() ?? null;
       if (

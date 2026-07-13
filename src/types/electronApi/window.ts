@@ -13,6 +13,7 @@ export interface ElectronAPIWindow {
   onToggleDictation: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
   onStartDictation?: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
   onStopDictation?: (callback: (payload?: DictationTriggerPayload) => void) => () => void;
+  onCancelDictationProcessing?: (callback: () => void) => () => void;
 
   // Window control operations
   windowMinimize: () => Promise<void>;

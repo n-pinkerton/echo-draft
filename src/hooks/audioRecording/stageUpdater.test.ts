@@ -10,6 +10,7 @@ describe("createStageUpdater", () => {
     const latestProgressRef = { current: progress };
     const sessionStartedAtRef = { current: null as number | null };
     const recordingStartedAtRef = { current: null as number | null };
+    const stageStartedAtRef = { current: null as number | null };
     const progressResetTimerRef = { current: null as any };
     const jobsBySessionIdRef = { current: new Map() };
     const audioManagerRef = {
@@ -34,6 +35,7 @@ describe("createStageUpdater", () => {
       recordingStartedAtRef,
       resetProgress,
       sessionStartedAtRef,
+      stageStartedAtRef,
       setProgress,
     });
 
@@ -44,6 +46,7 @@ describe("createStageUpdater", () => {
     expect(progress.stageLabel).toBe("Starting");
     expect(progress.sessionId).toBe("s-1");
     expect(progress.jobId).toBe(1);
+    expect(progress.stageElapsedMs).toBe(0);
   });
 
   it("schedules an auto-reset after terminal stages when idle", async () => {
@@ -53,6 +56,7 @@ describe("createStageUpdater", () => {
     const latestProgressRef = { current: progress };
     const sessionStartedAtRef = { current: null as number | null };
     const recordingStartedAtRef = { current: null as number | null };
+    const stageStartedAtRef = { current: null as number | null };
     const progressResetTimerRef = { current: null as any };
     const jobsBySessionIdRef = { current: new Map() };
     const audioManagerRef = {
@@ -77,6 +81,7 @@ describe("createStageUpdater", () => {
       recordingStartedAtRef,
       resetProgress,
       sessionStartedAtRef,
+      stageStartedAtRef,
       setProgress,
     });
 
@@ -89,4 +94,3 @@ describe("createStageUpdater", () => {
     vi.useRealTimers();
   });
 });
-

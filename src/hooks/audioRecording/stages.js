@@ -19,6 +19,7 @@ export const INITIAL_PROGRESS = {
   stageProgress: null,
   overallProgress: STAGE_META.idle.overallProgress,
   elapsedMs: 0,
+  stageElapsedMs: 0,
   recordedMs: 0,
   generatedChars: 0,
   generatedWords: 0,
@@ -28,5 +29,8 @@ export const INITIAL_PROGRESS = {
   provider: null,
   model: null,
   message: null,
+  isSlow: false,
+  canCancel: false,
+  transportAttempt: null,
+  transportRetrying: false,
 };
-

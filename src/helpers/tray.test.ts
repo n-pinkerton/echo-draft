@@ -33,4 +33,33 @@ describe("TrayManager recovery copy", () => {
       .find((item: any) => item.label === "Copy Last Dictation");
     expect(copyItem?.enabled).toBe(true);
   });
+
+  it("shows accurate slow-stage time and routes an explicit processing cancel", () => {
+    const trayManager = new TrayManager();
+    const sendCancelProcessing = vi.fn();
+    trayManager.setWindowManager({
+      sendCancelProcessing,
+      windowsPushToTalkAvailable: true,
+    });
+    trayManager.updateDictationStatus({
+      stage: "transcribing",
+      stageLabel: "Still transcribing",
+      message: "OpenAI is taking longer than usual",
+      elapsedMs: 52_000,
+      stageElapsedMs: 12_000,
+      canCancel: true,
+      isSlow: true,
+    });
+
+    expect(trayManager.getStatusLabel(false)).toBe(
+      "Status: OpenAI is taking longer than usual 0:12"
+    );
+    const cancelItem = trayManager
+      .buildContextMenuTemplate()
+      .find((item: any) => item.label === "Cancel Processing");
+    expect(cancelItem?.visible).toBe(true);
+
+    cancelItem?.click();
+    expect(sendCancelProcessing).toHaveBeenCalledOnce();
+  });
 });

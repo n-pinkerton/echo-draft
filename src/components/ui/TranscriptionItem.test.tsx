@@ -66,4 +66,39 @@ describe("TranscriptionItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy raw transcript" }));
     expect(onCopyRaw).toHaveBeenCalledWith("Original raw text");
   });
+
+  it("shows provider phase timings, retry count, and request ID in diagnostics", () => {
+    render(
+      <TranscriptionItem
+        item={
+          makeItem("Original raw text", {
+            timings: {
+              transcriptionProcessingDurationMs: 12_500,
+              transcriptionTimeToHeadersMs: 10_200,
+              transcriptionBodyReadDurationMs: 650,
+              transcriptionTransportAttemptCount: 2,
+              transcriptionRequestId: "request-123",
+            },
+          }) as any
+        }
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    expect(screen.getByText("Headers")).toBeInTheDocument();
+    expect(screen.getByText("10s")).toBeInTheDocument();
+    expect(screen.getByText("Response")).toBeInTheDocument();
+    expect(screen.getByText("0.7s")).toBeInTheDocument();
+    expect(screen.getByText("API attempts")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("Request ID")).toBeInTheDocument();
+    expect(screen.getByText("request-123")).toBeInTheDocument();
+  });
 });

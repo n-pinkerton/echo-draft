@@ -132,6 +132,7 @@ describe("OpenAiTranscriber", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -173,18 +174,24 @@ describe("OpenAiTranscriber", () => {
     await expect(t.readTranscriptionStream(response as any)).resolves.toBe("Hello world");
 
     expect(emitProgress).toHaveBeenCalledTimes(2);
-    expect(emitProgress.mock.calls[0][0]).toEqual({
-      stage: "transcribing",
-      stageLabel: "Transcribing",
-      generatedChars: 5,
-      generatedWords: 1,
-    });
-    expect(emitProgress.mock.calls[1][0]).toEqual({
-      stage: "transcribing",
-      stageLabel: "Transcribing",
-      generatedChars: 11,
-      generatedWords: 2,
-    });
+    expect(emitProgress.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        stage: "transcribing",
+        stageLabel: "Transcribing",
+        generatedChars: 5,
+        generatedWords: 1,
+        isSlow: false,
+      })
+    );
+    expect(emitProgress.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        stage: "transcribing",
+        stageLabel: "Transcribing",
+        generatedChars: 11,
+        generatedWords: 2,
+        isSlow: false,
+      })
+    );
   });
 
   it("preserves long streamed text exactly (rules out SSE parser truncation)", async () => {
@@ -231,7 +238,13 @@ describe("OpenAiTranscriber", () => {
     expect(result.rawText).toBe("hello");
     expect(result.text).toBe("hello [cleaned]");
     expect(result.source).toBe("openai-reasoned");
-    expect(emitProgress).toHaveBeenCalledWith({ stage: "cleaning", stageLabel: "Cleaning up" });
+    expect(emitProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "cleaning",
+        stageLabel: "Cleaning up",
+        canCancel: true,
+      })
+    );
     expect(reasoningCleanupService.processTranscription).toHaveBeenCalledTimes(1);
   });
 
@@ -270,6 +283,228 @@ describe("OpenAiTranscriber", () => {
     });
     expect(fetchMock).toHaveBeenCalledOnce();
     expect((window as any).electronAPI.transcribeLocalWhisper).toBeUndefined();
+  });
+
+  it("retries one transient HTTP failure sequentially and records phase telemetry", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const emitProgress = vi.fn();
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+      emitProgress,
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Unavailable",
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ error: { message: "Temporarily unavailable" } }),
+      })
+      .mockResolvedValueOnce({
+        ...makeJsonResponse("Recovered transcript"),
+        headers: {
+          get: (key: string) => {
+            if (key.toLowerCase() === "content-type") return "application/json";
+            if (key.toLowerCase() === "x-request-id") return "request-recovered";
+            return null;
+          },
+        },
+      });
+    globalThis.fetch = fetchMock as any;
+
+    const result = await t.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any,
+      {},
+      { transportRetryDelayMs: 0 }
+    );
+
+    expect(result.text).toBe("Recovered transcript");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.timings).toMatchObject({
+      transcriptionTransportAttemptCount: 2,
+      transcriptionTransportRetried: true,
+      transcriptionRequestId: "request-recovered",
+    });
+    expect(result.timings.transcriptionTransportAttempts).toHaveLength(2);
+    expect(result.timings.transcriptionTransportAttempts[0]).toMatchObject({
+      status: 503,
+      retryable: true,
+    });
+    expect(result.timings.transcriptionTransportAttempts[1]).toMatchObject({
+      status: 200,
+      requestId: "request-recovered",
+      outcome: "success",
+    });
+    expect(emitProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stageLabel: "Retrying transcription",
+        transportRetrying: true,
+        transportAttempt: 2,
+      })
+    );
+  });
+
+  it("does not retry a non-transient HTTP error", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ error: { message: "Invalid audio" } }),
+    }));
+    globalThis.fetch = fetchMock as any;
+
+    await expect(
+      t.processWithOpenAIAPI(new Blob(["audio"], { type: "audio/webm" }) as any)
+    ).rejects.toMatchObject({ code: "TRANSCRIPTION_HTTP_ERROR", httpStatus: 400 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("spends at most one transport retry budget for a dictation", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+    const transientResponse = () => ({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: { get: () => null },
+      text: async () => JSON.stringify({ error: { message: "Try later" } }),
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(transientResponse())
+      .mockResolvedValueOnce(transientResponse())
+      .mockResolvedValueOnce(makeJsonResponse("Must not be requested"));
+    globalThis.fetch = fetchMock as any;
+
+    await expect(
+      t.processWithOpenAIAPI(
+        new Blob(["audio"], { type: "audio/webm" }) as any,
+        {},
+        { transportRetryDelayMs: 0 }
+      )
+    ).rejects.toMatchObject({ code: "TRANSCRIPTION_HTTP_ERROR", httpStatus: 429 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries one network error and never overlaps transport attempts", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        activeRequests += 1;
+        maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+        activeRequests -= 1;
+        throw new TypeError("network unavailable");
+      })
+      .mockImplementationOnce(async () => {
+        activeRequests += 1;
+        maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+        activeRequests -= 1;
+        return makeJsonResponse("Network recovered");
+      });
+    globalThis.fetch = fetchMock as any;
+
+    const result = await t.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any,
+      {},
+      { transportRetryDelayMs: 0 }
+    );
+
+    expect(result.text).toBe("Network recovered");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(maxActiveRequests).toBe(1);
+  });
+
+  it("retries once after a request timeout", async () => {
+    vi.useFakeTimers();
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        async (_url: string, init: RequestInit) =>
+          await new Promise((_resolve, reject) => {
+            init.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("Aborted", "AbortError")),
+              { once: true }
+            );
+          })
+      )
+      .mockResolvedValueOnce(makeJsonResponse("Recovered after timeout"));
+    globalThis.fetch = fetchMock as any;
+
+    const pending = t.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any,
+      {},
+      { requestTimeoutMs: 1_000, transportRetryDelayMs: 0 }
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(pending).resolves.toMatchObject({ text: "Recovered after timeout" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("announces a slow provider after ten seconds and clears the slow state on success", async () => {
+    vi.useFakeTimers();
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    const emitProgress = vi.fn();
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+      emitProgress,
+    });
+    let resolveFetch: ((value: any) => void) | null = null;
+    globalThis.fetch = vi.fn(
+      async () =>
+        await new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    ) as any;
+
+    const pending = t.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any,
+      {},
+      { slowRequestThresholdMs: 10_000 }
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resolveFetch).toBeTypeOf("function");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(emitProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stageLabel: "Still transcribing",
+        message: "OpenAI is taking longer than usual",
+        isSlow: true,
+        canCancel: true,
+      })
+    );
+
+    resolveFetch?.(makeJsonResponse("Eventually completed"));
+    await expect(pending).resolves.toMatchObject({ text: "Eventually completed" });
+    expect(emitProgress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ isSlow: false, message: null })
+    );
   });
 
   it("retries without prompt when the transcript matches the custom dictionary prompt", async () => {

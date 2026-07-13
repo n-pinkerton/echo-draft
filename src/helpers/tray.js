@@ -282,12 +282,18 @@ class TrayManager {
       message: typeof status.message === "string" ? status.message.trim() : "",
       recordedMs: typeof status.recordedMs === "number" ? status.recordedMs : null,
       elapsedMs: typeof status.elapsedMs === "number" ? status.elapsedMs : null,
+      stageElapsedMs: typeof status.stageElapsedMs === "number" ? status.stageElapsedMs : null,
       generatedWords: typeof status.generatedWords === "number" ? status.generatedWords : null,
       jobCount: typeof status.jobCount === "number" ? status.jobCount : 0,
       hasTranscript: Boolean(status.hasTranscript),
       outputMode: status.outputMode === "clipboard" ? "clipboard" : "insert",
       provider: typeof status.provider === "string" ? status.provider : "",
       model: typeof status.model === "string" ? status.model : "",
+      isSlow: status.isSlow === true,
+      canCancel: status.canCancel === true,
+      transportAttempt:
+        typeof status.transportAttempt === "number" ? status.transportAttempt : null,
+      transportRetrying: status.transportRetrying === true,
     };
   }
 
@@ -315,11 +321,17 @@ class TrayManager {
       message: status.message || "",
       recorded: typeof status.recordedMs === "number" ? this.formatDuration(status.recordedMs) : "",
       elapsed: typeof status.elapsedMs === "number" ? this.formatDuration(status.elapsedMs) : "",
+      stageElapsed:
+        typeof status.stageElapsedMs === "number" ? this.formatDuration(status.stageElapsedMs) : "",
       generatedWords: status.generatedWords ?? null,
       jobCount: status.jobCount ?? 0,
       hasTranscript: Boolean(status.hasTranscript),
       provider: status.provider || "",
       model: status.model || "",
+      isSlow: status.isSlow === true,
+      canCancel: status.canCancel === true,
+      transportAttempt: status.transportAttempt ?? null,
+      transportRetrying: status.transportRetrying === true,
     });
   }
 
@@ -521,9 +533,13 @@ class TrayManager {
     }
     if (
       ["transcribing", "cleaning", "inserting", "saving"].includes(status.stage) &&
-      typeof status.elapsedMs === "number"
+      (typeof status.stageElapsedMs === "number" || typeof status.elapsedMs === "number")
     ) {
-      return `Status: ${label} ${this.formatDuration(status.elapsedMs)}`;
+      const elapsed = this.formatDuration(status.stageElapsedMs ?? status.elapsedMs);
+      if (status.message) {
+        return `Status: ${status.message} ${elapsed}`;
+      }
+      return `Status: ${label} ${elapsed}`;
     }
     if (status.stage === "error" && status.message) {
       return `Status: Error - ${status.message}`;
@@ -593,6 +609,9 @@ class TrayManager {
     const isBusy = ["starting", "transcribing", "cleaning", "inserting", "saving"].includes(
       this.dictationStatus?.stage
     );
+    const canCancelProcessing =
+      this.dictationStatus?.canCancel === true &&
+      ["transcribing", "cleaning"].includes(this.dictationStatus?.stage);
 
     return [
       {
@@ -630,6 +649,13 @@ class TrayManager {
         enabled: Boolean(copyText),
         click: async () => {
           await this.copyLastTranscription();
+        },
+      },
+      {
+        label: "Cancel Processing",
+        visible: canCancelProcessing,
+        click: () => {
+          this.windowManager?.sendCancelProcessing?.();
         },
       },
       {

@@ -388,6 +388,8 @@ export class OpenAiTranscriber {
           stageLabel: "Transcribing",
           generatedChars,
           generatedWords,
+          isSlow: false,
+          transportRetrying: false,
         });
       },
     });

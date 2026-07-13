@@ -108,6 +108,7 @@ export default function App() {
       message: progress?.message || "",
       recordedMs: typeof progress?.recordedMs === "number" ? progress.recordedMs : null,
       elapsedMs: typeof progress?.elapsedMs === "number" ? progress.elapsedMs : null,
+      stageElapsedMs: typeof progress?.stageElapsedMs === "number" ? progress.stageElapsedMs : null,
       generatedWords: typeof progress?.generatedWords === "number" ? progress.generatedWords : null,
       jobCount: visibleJobs.length,
       hasTranscript: Boolean(transcriptToCopy && transcriptToCopy.trim()),
@@ -115,6 +116,11 @@ export default function App() {
       outputMode: progress?.outputMode === "clipboard" ? "clipboard" : "insert",
       provider: progress?.provider || "",
       model: progress?.model || "",
+      isSlow: progress?.isSlow === true,
+      canCancel: progress?.canCancel === true,
+      transportAttempt:
+        typeof progress?.transportAttempt === "number" ? progress.transportAttempt : null,
+      transportRetrying: progress?.transportRetrying === true,
       isRecording,
       isProcessing,
     };
@@ -124,8 +130,7 @@ export default function App() {
     window.electronAPI?.updateTrayStatus?.(trayStatus);
   }, [trayStatus]);
 
-  const shouldShowRecordingIndicator =
-    recordingIndicatorEnabled && progress?.stage === "listening";
+  const shouldShowRecordingIndicator = recordingIndicatorEnabled && progress?.stage === "listening";
 
   useEffect(() => {
     if (shouldShowRecordingIndicator) {

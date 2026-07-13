@@ -122,6 +122,10 @@ export const createAudioManagerCallbacks = (deps) => {
             provider: event.provider,
             model: event.model,
             message: event.message,
+            isSlow: event.isSlow,
+            canCancel: event.canCancel,
+            transportAttempt: event.transportAttempt,
+            transportRetrying: event.transportRetrying,
             ...(contextSessionId ? { sessionId: contextSessionId } : {}),
             ...(jobIdFromEvent !== null ? { jobId: jobIdFromEvent } : {}),
             ...(event?.context?.outputMode ? { outputMode: event.context.outputMode } : {}),
@@ -165,6 +169,12 @@ export const createAudioManagerCallbacks = (deps) => {
         provider: event.provider !== undefined ? event.provider : prev.provider,
         model: event.model !== undefined ? event.model : prev.model,
         message: event.message !== undefined ? event.message : prev.message,
+        isSlow: event.isSlow !== undefined ? event.isSlow : prev.isSlow,
+        canCancel: event.canCancel !== undefined ? event.canCancel : prev.canCancel,
+        transportAttempt:
+          event.transportAttempt !== undefined ? event.transportAttempt : prev.transportAttempt,
+        transportRetrying:
+          event.transportRetrying !== undefined ? event.transportRetrying : prev.transportRetrying,
       }));
     },
     onPartialTranscript: (text) => {

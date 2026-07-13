@@ -22,6 +22,20 @@ import {
 import { createStageUpdater } from "./audioRecording/stageUpdater";
 import { createTranscriptionCompleteHandler } from "./audioRecording/transcriptionCompleteHandler";
 
+const SLOW_STAGE_THRESHOLD_MS = 10_000;
+
+const getSlowStageMessage = (progress) => {
+  if (progress.stage === "cleaning") {
+    return "Cleanup is taking longer than usual";
+  }
+  if (progress.provider === "openai") return "OpenAI is taking longer than usual";
+  if (progress.provider === "groq") return "Groq is taking longer than usual";
+  if (String(progress.provider || "").startsWith("local-")) {
+    return "Local transcription is taking longer than usual";
+  }
+  return "The transcription provider is taking longer than usual";
+};
+
 export const useAudioRecording = (toast, options = {}) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -38,6 +52,7 @@ export const useAudioRecording = (toast, options = {}) => {
   const recordingSessionIdRef = useRef(null);
   const latestProgressRef = useRef(INITIAL_PROGRESS);
   const sessionStartedAtRef = useRef(null);
+  const stageStartedAtRef = useRef(null);
   const recordingStartedAtRef = useRef(null);
   const progressResetTimerRef = useRef(null);
   const recordingOperationQueueRef = useRef(null);
@@ -60,6 +75,7 @@ export const useAudioRecording = (toast, options = {}) => {
   const resetProgress = useCallback(() => {
     clearProgressResetTimer();
     sessionStartedAtRef.current = null;
+    stageStartedAtRef.current = null;
     recordingStartedAtRef.current = null;
     setProgress(INITIAL_PROGRESS);
   }, [clearProgressResetTimer]);
@@ -110,6 +126,7 @@ export const useAudioRecording = (toast, options = {}) => {
         recordingStartedAtRef,
         resetProgress,
         sessionStartedAtRef,
+        stageStartedAtRef,
         setProgress,
       }),
     [clearProgressResetTimer, resetProgress]
@@ -168,6 +185,20 @@ export const useAudioRecording = (toast, options = {}) => {
       }),
     [performStartRecording, performStopRecording]
   );
+
+  const cancelProcessing = useCallback(() => {
+    const cancelled = audioManagerRef.current?.cancelProcessing() || false;
+    if (!cancelled) {
+      return false;
+    }
+    activeSessionRef.current = null;
+    sessionsByIdRef.current.clear();
+    jobsBySessionIdRef.current.clear();
+    setJobs([]);
+    updateStage("cancelled", { message: "Processing cancelled", canCancel: false });
+    void playCancelCue();
+    return true;
+  }, [updateStage]);
 
   useEffect(() => {
     audioManagerRef.current = new AudioManager();
@@ -246,6 +277,10 @@ export const useAudioRecording = (toast, options = {}) => {
       onToggle?.();
     });
 
+    const disposeCancelProcessing = window.electronAPI.onCancelDictationProcessing?.(() => {
+      cancelProcessing();
+    });
+
     const handleNoAudioDetected = () => {
       updateStage("error", { message: "No audio detected" });
       void playErrorCue();
@@ -262,6 +297,7 @@ export const useAudioRecording = (toast, options = {}) => {
       disposeToggle?.();
       disposeStart?.();
       disposeStop?.();
+      disposeCancelProcessing?.();
       disposeNoAudio?.();
       disposeE2E?.();
       clearProgressResetTimer();
@@ -271,6 +307,7 @@ export const useAudioRecording = (toast, options = {}) => {
     };
   }, [
     clearProgressResetTimer,
+    cancelProcessing,
     normalizeTriggerPayload,
     onToggle,
     removeJob,
@@ -295,15 +332,28 @@ export const useAudioRecording = (toast, options = {}) => {
         }
 
         const elapsedMs = Math.max(0, now - (sessionStartedAtRef.current || now));
+        const stageElapsedMs = Math.max(0, now - (stageStartedAtRef.current || now));
         const recordedMs =
           prev.stage === "listening" && recordingStartedAtRef.current
             ? Math.max(0, now - recordingStartedAtRef.current)
             : prev.recordedMs;
+        const slowStage = prev.stage === "transcribing" || prev.stage === "cleaning";
+        const shouldMarkSlow =
+          slowStage && stageElapsedMs >= SLOW_STAGE_THRESHOLD_MS && prev.transportRetrying !== true;
 
         return {
           ...prev,
           elapsedMs,
+          stageElapsedMs,
           recordedMs,
+          ...(shouldMarkSlow
+            ? {
+                isSlow: true,
+                canCancel: true,
+                stageLabel: prev.stage === "cleaning" ? "Still cleaning up" : "Still transcribing",
+                message: prev.message || getSlowStageMessage(prev),
+              }
+            : {}),
         };
       });
     }, 200);
@@ -326,22 +376,6 @@ export const useAudioRecording = (toast, options = {}) => {
     updateStage("cancelled", { message: "Recording cancelled" });
     if (audioManagerRef.current) {
       const cancelled = audioManagerRef.current.cancelRecording();
-      if (cancelled) {
-        void playCancelCue();
-      }
-      return cancelled;
-    }
-    return false;
-  };
-
-  const cancelProcessing = () => {
-    activeSessionRef.current = null;
-    sessionsByIdRef.current.clear();
-    jobsBySessionIdRef.current.clear();
-    setJobs([]);
-    updateStage("cancelled", { message: "Processing cancelled" });
-    if (audioManagerRef.current) {
-      const cancelled = audioManagerRef.current.cancelProcessing();
       if (cancelled) {
         void playCancelCue();
       }

@@ -50,10 +50,11 @@ Examples of the high-value telemetry captured in debug mode:
 
 - Hotkey activity (including Windows push-to-talk key down/up)
 - Dictation lifecycle (requested → recording started → stop → paste/clipboard → save)
-- Per-stage pipeline timings (record/transcribe/cleanup/paste/save/total)
+- Per-stage pipeline timings (record/transcribe/cleanup/paste/save/total), including provider time-to-headers and response-body read time
 - Audio chunk telemetry (MediaRecorder chunks and/or streaming PCM chunks)
 - Transcription and cleanup lengths, completion state, fallback reason, and timing metadata without transcript previews
 - API request/response metadata. Credential-named fields and common embedded credential formats are redacted at the main logging boundary; API-key retrieval records contain presence only, never key values, prefixes, or lengths.
+- Transient HTTP/network/timeout failures, the single sequential retry decision, transport-attempt count, and provider request IDs (when supplied)
 - Errors and warnings with stack/context
 
 ## Sharing logs

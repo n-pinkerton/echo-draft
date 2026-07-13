@@ -48,6 +48,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "stop-dictation",
     (callback) => (_event, payload) => callback(payload)
   ),
+  onCancelDictationProcessing: registerListener(
+    "cancel-dictation-processing",
+    (callback) => () => callback()
+  ),
 
   // Database functions
   saveTranscription: (text) => ipcRenderer.invoke("db-save-transcription", text),

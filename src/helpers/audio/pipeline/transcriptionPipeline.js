@@ -76,6 +76,7 @@ export class TranscriptionPipeline {
             stageLabel: "Transcribing",
             provider: "local-parakeet",
             model: parakeetModel,
+            canCancel: true,
           });
           activeModel = parakeetModel;
           result = await this.localTranscriber.processWithLocalParakeet(
@@ -89,6 +90,7 @@ export class TranscriptionPipeline {
             stageLabel: "Transcribing",
             provider: "local-whisper",
             model: whisperModel,
+            canCancel: true,
           });
           activeModel = whisperModel;
           result = await this.localTranscriber.processWithLocalWhisper(
@@ -103,6 +105,7 @@ export class TranscriptionPipeline {
           stageLabel: "Transcribing",
           provider: ECHO_DRAFT_CLOUD_SOURCE,
           model: ECHO_DRAFT_CLOUD_MODEL,
+          canCancel: true,
         });
         activeModel = ECHO_DRAFT_CLOUD_MODEL;
         result = await this.cloudTranscriber.processWithEchoDraftCloud(audioBlob, metadata);
@@ -113,6 +116,7 @@ export class TranscriptionPipeline {
           stageLabel: "Transcribing",
           provider: localStorage.getItem("cloudTranscriptionProvider") || "openai",
           model: activeModel,
+          canCancel: true,
         });
         result = await this.openAiTranscriber.processWithOpenAIAPI(audioBlob, metadata, { signal });
       }
@@ -193,6 +197,14 @@ export class TranscriptionPipeline {
       }
       timingData.transcriptionProcessingDurationMs =
         resultWithDiagnostics?.timings?.transcriptionProcessingDurationMs ?? null;
+      timingData.transcriptionTimeToHeadersMs =
+        resultWithDiagnostics?.timings?.transcriptionTimeToHeadersMs ?? null;
+      timingData.transcriptionBodyReadDurationMs =
+        resultWithDiagnostics?.timings?.transcriptionBodyReadDurationMs ?? null;
+      timingData.transcriptionTransportAttemptCount =
+        resultWithDiagnostics?.timings?.transcriptionTransportAttemptCount ?? null;
+      timingData.transcriptionRequestId =
+        resultWithDiagnostics?.timings?.transcriptionRequestId ?? null;
 
       this.logger.info("Pipeline timing", timingData, "performance");
     } catch (error) {

@@ -11,6 +11,7 @@ export const createStageUpdater = (deps) => {
     recordingStartedAtRef,
     resetProgress,
     sessionStartedAtRef,
+    stageStartedAtRef,
     setProgress,
   } = deps;
 
@@ -21,10 +22,15 @@ export const createStageUpdater = (deps) => {
     const previousSessionId = latestProgressRef.current?.sessionId;
     const nextSessionId = patch.sessionId || previousSessionId;
     const previousStage = latestProgressRef.current?.stage;
-    const nextJobId = patch.jobId !== undefined ? patch.jobId : (latestProgressRef.current?.jobId ?? null);
+    const nextJobId =
+      patch.jobId !== undefined ? patch.jobId : (latestProgressRef.current?.jobId ?? null);
     const nextOutputMode = patch.outputMode || latestProgressRef.current?.outputMode || null;
     const stageChanged =
       previousStage !== normalizedStage || (nextSessionId && nextSessionId !== previousSessionId);
+
+    if (stageChanged || !stageStartedAtRef.current) {
+      stageStartedAtRef.current = now;
+    }
 
     if (stageChanged) {
       logger.trace(
@@ -76,6 +82,7 @@ export const createStageUpdater = (deps) => {
         overallProgress:
           patch.overallProgress !== undefined ? patch.overallProgress : defaultMeta.overallProgress,
         elapsedMs,
+        stageElapsedMs: Math.max(0, now - (stageStartedAtRef.current || now)),
         recordedMs:
           patch.recordedMs !== undefined
             ? patch.recordedMs
@@ -97,6 +104,23 @@ export const createStageUpdater = (deps) => {
         provider: patch.provider !== undefined ? patch.provider : prev.provider,
         model: patch.model !== undefined ? patch.model : prev.model,
         message: patch.message !== undefined ? patch.message : null,
+        isSlow: patch.isSlow !== undefined ? patch.isSlow : stageChanged ? false : prev.isSlow,
+        canCancel:
+          patch.canCancel !== undefined
+            ? patch.canCancel
+            : normalizedStage === "transcribing" || normalizedStage === "cleaning",
+        transportAttempt:
+          patch.transportAttempt !== undefined
+            ? patch.transportAttempt
+            : stageChanged
+              ? null
+              : prev.transportAttempt,
+        transportRetrying:
+          patch.transportRetrying !== undefined
+            ? patch.transportRetrying
+            : stageChanged
+              ? false
+              : prev.transportRetrying,
         outputMode: patch.outputMode || prev.outputMode,
         sessionId: patch.sessionId || prev.sessionId,
         jobId: patch.jobId !== undefined ? patch.jobId : prev.jobId,
@@ -114,4 +138,3 @@ export const createStageUpdater = (deps) => {
     }
   };
 };
-

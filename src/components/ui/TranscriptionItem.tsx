@@ -141,6 +141,14 @@ export default function TranscriptionItem({
       ),
     },
     {
+      label: "Headers",
+      value: formatDuration(timings.transcriptionTimeToHeadersMs),
+    },
+    {
+      label: "Response",
+      value: formatDuration(timings.transcriptionBodyReadDurationMs),
+    },
+    {
       label: "Cleanup",
       value: formatDuration(timings.reasoningProcessingDurationMs ?? timings.cleanupDurationMs),
     },
@@ -181,6 +189,15 @@ export default function TranscriptionItem({
       : null;
   const hotkeyToRecorderStartLabel =
     formatDuration(timings.hotkeyToRecorderStartMs) || formatDuration(timings.hotkeyToStartCallMs);
+  const requestId =
+    typeof timings.transcriptionRequestId === "string" && timings.transcriptionRequestId.trim()
+      ? timings.transcriptionRequestId.trim()
+      : null;
+  const transportAttemptCount =
+    typeof timings.transcriptionTransportAttemptCount === "number" &&
+    Number.isFinite(timings.transcriptionTransportAttemptCount)
+      ? timings.transcriptionTransportAttemptCount
+      : null;
 
   const extraDiagnosticsRows: Array<{ label: string; value: string }> = [];
   if (stopReason) {
@@ -200,6 +217,15 @@ export default function TranscriptionItem({
   }
   if (hotkeyToRecorderStartLabel) {
     extraDiagnosticsRows.push({ label: "Hotkey→Rec", value: hotkeyToRecorderStartLabel });
+  }
+  if (transportAttemptCount !== null) {
+    extraDiagnosticsRows.push({
+      label: "API attempts",
+      value: String(transportAttemptCount),
+    });
+  }
+  if (requestId) {
+    extraDiagnosticsRows.push({ label: "Request ID", value: requestId });
   }
 
   return (
