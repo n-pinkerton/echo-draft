@@ -1,5 +1,13 @@
 import { countWords } from "../utils/wordCount";
 import { hasGovernedExplicitQuoteAttachment } from "./cleanupOutputRepairs";
+import {
+  countQuotationGlyphs,
+  countSpokenQuoteMarkers,
+  countUnverifiedContextualQuotationPairs,
+  countVerifiedContextualQuotationPairs,
+  getAppliedSpokenQuoteMarkerTexts,
+  getSpokenQuoteAttachmentComparisonText,
+} from "./cleanupQuoteFidelity";
 
 const ASSISTANT_ACTION_OPENERS = [
   /^(?:certainly|absolutely|sure|of course)[,!.:\s]/i,
@@ -119,7 +127,6 @@ const STANCE_PHRASES = [
 ];
 const CLEAR_SELF_CORRECTION = /\b(?:no[,]?\s+sorry|sorry[,]?\s+i mean|correction|make that)\b/i;
 const SPOKEN_QUOTE_MARKER = /\b(?:open|start|begin|close|end)?\s*quote(?:s|d)?\b/i;
-const SPOKEN_QUOTE_MARKER_GLOBAL = /\b(?:(?:open|start|begin|close|end)\s+)?quotes?\b/gi;
 const WHOLE_OUTPUT_QUOTE_PAIRS = [
   ['"', '"'],
   ["“", "”"],
@@ -257,11 +264,18 @@ const normalizeContractions = (value) =>
     .replace(/\bain't\b/gi, "is not")
     .replace(/\b([a-z]+)n't\b/gi, "$1 not");
 
+// Treat typographic variants such as "2:30pm" and "2:30 p.m." as the same
+// lexical value. The critical-token check below still rejects a changed time;
+// this only prevents punctuation cleanup from looking like added/lost words.
+const normalizeMeridiemTimesForComparison = (value) =>
+  String(value || "").replace(
+    /\b(\d{1,2}:\d{2})\s*([ap])\.?\s*m\.?(?=$|[^\p{L}\p{N}])/giu,
+    (_match, time, meridiem) => `${time}${String(meridiem).toLowerCase()}m`
+  );
+
 const normalizeForComparison = (value) =>
   normalizeContractions(
-    String(value || "")
-      .normalize("NFKC")
-      .replace(/[’‘]/g, "'")
+    normalizeMeridiemTimesForComparison(value).normalize("NFKC").replace(/[’‘]/g, "'")
   )
     .toLowerCase()
     .replace(/[^\p{L}\p{N}%]+/gu, " ")
@@ -625,9 +639,7 @@ const isPreferredSpellingTechnicalContextWord = (word) => {
   const normalized = String(word || "");
   if (PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(normalized)) return true;
   if (normalized.endsWith("ies")) {
-    return PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(
-      `${normalized.slice(0, -3)}y`
-    );
+    return PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(`${normalized.slice(0, -3)}y`);
   }
   return (
     normalized.endsWith("s") &&
@@ -889,9 +901,7 @@ const hasPreferredSpellingTechnicalDefinition = (suffixWords) => {
   ) {
     return false;
   }
-  return suffixWords
-    .slice(cursor, cursor + 4)
-    .some(isPreferredSpellingTechnicalContextWord);
+  return suffixWords.slice(cursor, cursor + 4).some(isPreferredSpellingTechnicalContextWord);
 };
 
 const hasPreferredSpellingTechnicalObjectComplement = (suffixWords) => {
@@ -904,9 +914,7 @@ const hasPreferredSpellingTechnicalObjectComplement = (suffixWords) => {
 
 const hasPreferredSpellingTechnicalPrefix = (prefixWords) => {
   const nearbyStart = Math.max(0, prefixWords.length - 5);
-  return prefixWords
-    .slice(nearbyStart)
-    .some(isPreferredSpellingTechnicalContextWord);
+  return prefixWords.slice(nearbyStart).some(isPreferredSpellingTechnicalContextWord);
 };
 
 const getPreferredSpellingPredicatePrefixWords = (clausePrefix) => {
@@ -937,8 +945,7 @@ const getPreferredSpellingCommaContinuation = (clauseSuffix) => {
   return {
     commaIndex,
     hasTechnicalContext: words.some(isPreferredSpellingTechnicalContextWord),
-    isAttachedParticiple:
-      !startsIndependentClause && /(?:ed|ing)$/u.test(words[headIndex] || ""),
+    isAttachedParticiple: !startsIndependentClause && /(?:ed|ing)$/u.test(words[headIndex] || ""),
     startsIndependentClause,
   };
 };
@@ -953,8 +960,7 @@ const getPreferredSpellingAttachedSuffixText = (
   if (commaContinuation) {
     if (
       commaContinuation.startsIndependentClause ||
-      (!commaContinuation.isAttachedParticiple &&
-        !commaContinuation.hasTechnicalContext)
+      (!commaContinuation.isAttachedParticiple && !commaContinuation.hasTechnicalContext)
     ) {
       local = raw.slice(0, commaContinuation.commaIndex);
     } else {
@@ -995,15 +1001,17 @@ const hasLocalPreferredSpellingPersonPurpose = (suffixText) => {
 
 const hasTrustedPreferredSpellingPersonDoubleObject = (suffixWords) => {
   let cursor = 0;
-  while (
-    ["a", "an", "her", "his", "our", "the", "their", "your"].includes(
-      suffixWords[cursor]
-    )
-  ) {
+  while (["a", "an", "her", "his", "our", "the", "their", "your"].includes(suffixWords[cursor])) {
     cursor += 1;
   }
-  const object = suffixWords[cursor] || "";
-  if (!PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS.has(object)) return false;
+  const objectOffset = suffixWords
+    .slice(cursor, cursor + 5)
+    .findIndex((word) => PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS.has(word));
+  if (objectOffset < 0) return false;
+  const objectModifiers = suffixWords.slice(cursor, cursor + objectOffset);
+  if (objectModifiers.some(isPreferredSpellingTechnicalContextWord)) return false;
+  cursor += objectOffset;
+  const object = suffixWords[cursor];
 
   const trailingTimeWords = new Set(["later", "now", "today", "tomorrow", "tonight"]);
   const remainder = suffixWords.slice(cursor + 1);
@@ -1031,9 +1039,7 @@ const getPreferredSpellingCoordinatedPredicatePrefix = (clausePrefix) => {
   const raw = String(clausePrefix || "");
   const boundaries = Array.from(raw.matchAll(/\b(?:and|but|then)\b/giu));
   const lastBoundary = boundaries.at(-1);
-  return lastBoundary
-    ? raw.slice((lastBoundary.index || 0) + lastBoundary[0].length)
-    : raw;
+  return lastBoundary ? raw.slice((lastBoundary.index || 0) + lastBoundary[0].length) : raw;
 };
 
 const startsNewPreferredSpellingPersonCall = (clausePrefix, clauseSuffix) => {
@@ -1071,9 +1077,7 @@ const startsNewPreferredSpellingPersonCall = (clausePrefix, clauseSuffix) => {
 
   if (!personPurpose) return false;
   return (
-    /(?:^|[,;:—–]\s*|\b(?:and|but|so)\s+)(?:then\s+)?(?:please\s+)?call\s*$/iu.test(
-      raw
-    ) ||
+    /(?:^|[,;:—–]\s*|\b(?:and|but|so)\s+)(?:then\s+)?(?:please\s+)?call\s*$/iu.test(raw) ||
     (!technicalPrefix &&
       /(?:^|[,;:—–]\s*|\b(?:and|but|so)\s+)(?:then\s+)?(?:\p{L}[\p{L}'’-]*\s+){1,4}called\s*$/iu.test(
         raw
@@ -1324,22 +1328,15 @@ const evaluatePreferredSpellingPersonContext = (originalText, originalMatches, s
     clauseMatches,
     clauseSourceIndex
   );
-  const immediatePreviousWord = getWords(
-    clauseMatches[clauseSourceIndex - 1]?.[0] || ""
-  )[0];
-  const sourceStem = normalizeForComparison(
-    splitPreferredSpellingAliasToken(sourceMatch[0]).stem
-  );
+  const immediatePreviousWord = getWords(clauseMatches[clauseSourceIndex - 1]?.[0] || "")[0];
+  const sourceStem = normalizeForComparison(splitPreferredSpellingAliasToken(sourceMatch[0]).stem);
   const hasEarlierAuthorizedSamePerson = originalMatches
     .slice(0, sourceIndex)
     .some((match, index) => {
-      const candidateStem = normalizeForComparison(
-        splitPreferredSpellingAliasToken(match[0]).stem
-      );
+      const candidateStem = normalizeForComparison(splitPreferredSpellingAliasToken(match[0]).stem);
       return (
         candidateStem === sourceStem &&
-        evaluatePreferredSpellingPersonContext(originalText, originalMatches, index)
-          .positive
+        evaluatePreferredSpellingPersonContext(originalText, originalMatches, index).positive
       );
     });
   const hasStandaloneDoubleObjectPrefix =
@@ -1351,11 +1348,7 @@ const evaluatePreferredSpellingPersonContext = (originalText, originalMatches, s
     );
   const technicalDoubleObjectActor =
     PREFERRED_SPELLING_ALIAS_PERSON_DOUBLE_OBJECT_VERBS.has(immediatePreviousWord) &&
-    hasTechnicalPreferredSpellingRecipientActor(
-      raw,
-      clauseMatches,
-      clauseSourceIndex - 1
-    );
+    hasTechnicalPreferredSpellingRecipientActor(raw, clauseMatches, clauseSourceIndex - 1);
   const personDoubleObjectContext =
     (hasStandaloneDoubleObjectPrefix || hasAuthorizedCoordinatedDoubleObjectPrefix) &&
     hasTrustedPreferredSpellingPersonDoubleObject(predicateSuffixWords) &&
@@ -1363,12 +1356,8 @@ const evaluatePreferredSpellingPersonContext = (originalText, originalMatches, s
     !technicalDoubleObjectActor;
   const ambiguousTechnicalNamingContext =
     PREFERRED_SPELLING_ALIAS_TECHNICAL_NAMING_VERBS.has(immediatePreviousWord);
-  const callPersonPurpose = hasLocalPreferredSpellingPersonPurpose(
-    callAttachedSuffixText
-  );
-  const directPersonPurpose = hasLocalPreferredSpellingPersonPurpose(
-    directAttachedSuffixText
-  );
+  const callPersonPurpose = hasLocalPreferredSpellingPersonPurpose(callAttachedSuffixText);
+  const directPersonPurpose = hasLocalPreferredSpellingPersonPurpose(directAttachedSuffixText);
   const callAttachedSuffixHasTechnicalObject = callAttachedSuffixWords.some(
     isPreferredSpellingTechnicalContextWord
   );
@@ -1376,13 +1365,11 @@ const evaluatePreferredSpellingPersonContext = (originalText, originalMatches, s
     ambiguousTechnicalNamingContext &&
     ((!callPersonPurpose && commaContinuation?.isAttachedParticiple) ||
       PREFERRED_SPELLING_ALIAS_CALL_INVOCATION_CONTINUATION.test(
-      normalizeForComparison(callAttachedSuffixText)
-    ) ||
+        normalizeForComparison(callAttachedSuffixText)
+      ) ||
       (callAttachedSuffixHasTechnicalObject && !callPersonPurpose));
   const ambiguousTechnicalDirectContext =
-    PREFERRED_SPELLING_ALIAS_AMBIGUOUS_TECHNICAL_DIRECT_VERBS.has(
-      immediatePreviousWord
-    ) &&
+    PREFERRED_SPELLING_ALIAS_AMBIGUOUS_TECHNICAL_DIRECT_VERBS.has(immediatePreviousWord) &&
     !directPersonPurpose &&
     (commaContinuation?.isAttachedParticiple ||
       [...predicatePrefixWords, ...directAttachedSuffixWords].some(
@@ -1434,11 +1421,7 @@ const evaluatePreferredSpellingPersonContext = (originalText, originalMatches, s
   };
 };
 
-const hasPreferredSpellingTechnicalClauseContext = (
-  originalText,
-  originalMatches,
-  sourceIndex
-) => {
+const hasPreferredSpellingTechnicalClauseContext = (originalText, originalMatches, sourceIndex) => {
   const sourceMatch = originalMatches[sourceIndex];
   if (!sourceMatch) return true;
   const sourceStart = sourceMatch.index || 0;
@@ -2219,19 +2202,23 @@ const countMarkerAttachmentChanges = (original, cleaned, markers) => {
 const getCriticalTokens = (value) => {
   const raw = String(value || "");
   const matches = raw.match(
-    /(?:https?:\/\/|www\.)[^\s]+|[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d[\d,.:/%-]*\b/giu
+    /(?:https?:\/\/|www\.)[^\s]+|[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d[\d,.:/%-]*(?:\s*[ap]\.?\s*m\.?(?=$|[^\p{L}\p{N}]))?/giu
   );
   return Array.from(
     new Set(
-      (matches || []).map((token) =>
-        token
+      (matches || []).map((token) => {
+        const normalized = token
           .toLowerCase()
-          .replace(/[),.;!?]+$/g, "")
-          .replace(/,(?=\d)/g, "")
-      )
+          .replace(/[),.;:!?]+$/g, "")
+          .replace(/,(?=\d)/g, "");
+        const time = normalized.match(/^(\d{1,2}:\d{2})\s*([ap])\.?\s*m\.?$/u);
+        return time ? `${time[1]}${time[2]}m` : normalized.replace(/[.]+$/g, "");
+      })
     )
   );
 };
+
+const isCanonicalMeridiemTimeToken = (value) => /^\d{1,2}:\d{2}[ap]m$/iu.test(value || "");
 
 const tokenizeTechnicalText = (value) =>
   (String(value || "").match(TECHNICAL_TOKEN_PATTERN) || []).map((token) =>
@@ -2269,25 +2256,10 @@ const isWholeOutputQuoted = (value) => {
   );
 };
 
-const countSpokenQuoteMarkers = (value) =>
-  (String(value || "").match(SPOKEN_QUOTE_MARKER_GLOBAL) || []).length;
-
-const countQuotationGlyphs = (value) => {
-  const characters = Array.from(String(value || ""));
-  let count = 0;
-  for (let index = 0; index < characters.length; index += 1) {
-    const character = characters[index];
-    if (character === '"' || character === "“" || character === "”" || character === "‘") {
-      count += 1;
-      continue;
-    }
-    if (character !== "'" && character !== "’") continue;
-
-    const previousIsLetter = /\p{L}/u.test(characters[index - 1] || "");
-    const nextIsLetter = /\p{L}/u.test(characters[index + 1] || "");
-    if (!(previousIsLetter && nextIsLetter)) count += 1;
-  }
-  return count;
+const getAppliedSpokenQuoteMarkerWords = (original, cleaned) => {
+  return getAppliedSpokenQuoteMarkerTexts(original, cleaned).flatMap((marker) =>
+    getContentWordTokens(marker)
+  );
 };
 
 const countMarker = (normalizedText, marker) => {
@@ -2562,10 +2534,15 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   }
 
   const spokenQuoteMarkerCount = countSpokenQuoteMarkers(original);
+  const contextualQuoteGlyphAllowance =
+    countVerifiedContextualQuotationPairs(original, cleaned) * 2;
+  if (cleaned && countUnverifiedContextualQuotationPairs(original, cleaned) > 0) {
+    reasons.push("nested-quotation-inference");
+  }
   if (
     cleaned &&
     spokenQuoteMarkerCount >= 2 &&
-    countQuotationGlyphs(cleaned) > spokenQuoteMarkerCount
+    countQuotationGlyphs(cleaned) > spokenQuoteMarkerCount + contextualQuoteGlyphAllowance
   ) {
     reasons.push("nested-quotation-inference");
   }
@@ -2608,7 +2585,6 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
 
   const normalizedOriginal = normalizeForComparison(original);
   const normalizedCleaned = normalizeForComparison(cleaned);
-  const explicitQuoteRewrite = SPOKEN_QUOTE_MARKER.test(original);
   const completedWorkflowRepair =
     INCOMPLETE_WORKFLOW_PROGRESSION.test(original) && COMPLETED_WORKFLOW_PROGRESSION.test(cleaned);
   const repairedRequestReason =
@@ -2624,6 +2600,10 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   // bigrams and can look like a clause reorder to the attachment guard.
   const comparisonOriginalWords = preferredSpellingAlignment.comparisonOriginalWords;
   const comparisonOriginalText = preferredSpellingAlignment.comparisonOriginalText;
+  const comparisonOriginalAttachmentText = getSpokenQuoteAttachmentComparisonText(
+    comparisonOriginalText,
+    cleaned
+  );
   const appliedSpokenFormattingRanges = getAppliedSpokenFormattingRanges(
     original,
     cleaned,
@@ -2644,6 +2624,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     occurrenceSemanticContentDiff.missingWords,
     [
       ...getAppliedSpokenFormattingWords(appliedSpokenFormattingRanges),
+      ...getAppliedSpokenQuoteMarkerWords(original, cleaned),
       ...getAllowedStructuralRewriteWords(original, cleaned),
     ]
   );
@@ -2696,16 +2677,13 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   if (
     (semanticContentDiff.missingCount > 0 || semanticContentDiff.addedCount > 0) &&
     !CLEAR_SELF_CORRECTION.test(original) &&
-    !explicitQuoteRewrite &&
     !approvedStructuralAddition
   ) {
     reasons.push("substantive-rewrite-risk");
   }
-  const paddedNormalizedCleaned = ` ${normalizedCleaned} `;
   const criticalTokens = getCriticalTokens(original);
-  const missingCriticalTokens = criticalTokens.filter(
-    (token) => !paddedNormalizedCleaned.includes(` ${normalizeForComparison(token)} `)
-  );
+  const cleanedCriticalTokens = new Set(getCriticalTokens(cleaned));
+  const missingCriticalTokens = criticalTokens.filter((token) => !cleanedCriticalTokens.has(token));
   if (missingCriticalTokens.length > 0) {
     reasons.push("critical-token-loss");
   }
@@ -2713,7 +2691,9 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   const protectedTechnicalTokens = getProtectedTechnicalTokens(original);
   const cleanedTechnicalTokens = new Set(tokenizeTechnicalText(cleaned));
   const missingProtectedTechnicalTokens = [...protectedTechnicalTokens].filter(
-    (token) => !cleanedTechnicalTokens.has(token)
+    (token) =>
+      !cleanedTechnicalTokens.has(token) &&
+      !(isCanonicalMeridiemTimeToken(token) && cleanedCriticalTokens.has(token))
   );
   if (missingProtectedTechnicalTokens.length > 0) {
     reasons.push("technical-token-change");
@@ -2732,9 +2712,11 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     if (lostNegation) reasons.push("negation-loss");
     if (addedNegation) reasons.push("negation-addition");
   }
-  const changedNegationAttachmentCount = explicitQuoteRewrite
-    ? 0
-    : countMarkerAttachmentChanges(comparisonOriginalText, cleaned, NEGATION_MARKERS);
+  const changedNegationAttachmentCount = countMarkerAttachmentChanges(
+    comparisonOriginalAttachmentText,
+    cleaned,
+    NEGATION_MARKERS
+  );
   if (changedNegationAttachmentCount > 0) {
     reasons.push("negation-attachment-change");
   }
@@ -2763,9 +2745,11 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
       !(completedWorkflowRepair && marker === "then") &&
       !(repairedRequestReason && marker === "because")
   );
-  const changedRelationAttachmentCount = explicitQuoteRewrite
-    ? 0
-    : countMarkerAttachmentChanges(comparisonOriginalText, cleaned, relationAttachmentMarkers);
+  const changedRelationAttachmentCount = countMarkerAttachmentChanges(
+    comparisonOriginalAttachmentText,
+    cleaned,
+    relationAttachmentMarkers
+  );
   if (changedRelationAttachmentCount > 0) {
     reasons.push("relation-attachment-change");
   }
@@ -2792,12 +2776,11 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   if (stanceChanges.some(({ cleaned, original }) => cleaned > original)) {
     reasons.push("stance-marker-addition");
   }
-  const changedStanceAttachmentCount = explicitQuoteRewrite
-    ? 0
-    : countMarkerAttachmentChanges(comparisonOriginalText, cleaned, [
-        ...STANCE_MARKERS,
-        ...STANCE_PHRASES,
-      ]);
+  const changedStanceAttachmentCount = countMarkerAttachmentChanges(
+    comparisonOriginalAttachmentText,
+    cleaned,
+    [...STANCE_MARKERS, ...STANCE_PHRASES]
+  );
   if (changedStanceAttachmentCount > 0) {
     reasons.push("stance-attachment-change");
   }
@@ -2820,9 +2803,11 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   ) {
     reasons.push("request-modality-change");
   }
-  const changedModalAttachmentCount = explicitQuoteRewrite
-    ? 0
-    : countMarkerAttachmentChanges(comparisonOriginalText, cleaned, MODAL_MARKERS);
+  const changedModalAttachmentCount = countMarkerAttachmentChanges(
+    comparisonOriginalAttachmentText,
+    cleaned,
+    MODAL_MARKERS
+  );
   if (changedModalAttachmentCount > 0) {
     reasons.push("modal-attachment-change");
   }

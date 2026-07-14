@@ -10,6 +10,7 @@ import {
   applyTrustedPreferredSpellingAliases,
   CleanupFidelityError,
 } from "./cleanupFidelity";
+import { repairMisrecognizedSpokenQuoteBoundary } from "./cleanupInputRepairs";
 import { repairCleanupOutput } from "./cleanupOutputRepairs";
 import { getCustomDictionaryArray } from "../transcription/customDictionary";
 import {
@@ -180,16 +181,20 @@ export class ReasoningCleanupService {
     // occurrence-bound, dictionary-backed person-name spelling repair. Prepare
     // that source before asking the model to edit it so ordinary punctuation or
     // filler changes cannot make token-count alignment suppress the name fix.
-    const preparedText = preferredSourceAssessment.accepted ? preferredSourceCandidate : text;
-    const preparedCorrectionCount = preferredSourceAssessment.accepted
+    const trustedBaselineText = preferredSourceAssessment.accepted
+      ? preferredSourceCandidate
+      : text;
+    const preparedText = repairMisrecognizedSpokenQuoteBoundary(trustedBaselineText);
+    const preferredSpellingCorrectionCount = preferredSourceAssessment.accepted
       ? preferredSourceAssessment.metrics.preferredSpellingCorrectionCount || 0
       : 0;
-    const includePreparedCorrectionMetrics = (assessment) => ({
+    const includePreferredSpellingMetrics = (assessment) => ({
       ...assessment,
       metrics: {
         ...assessment.metrics,
         preferredSpellingCorrectionCount:
-          (assessment.metrics.preferredSpellingCorrectionCount || 0) + preparedCorrectionCount,
+          (assessment.metrics.preferredSpellingCorrectionCount || 0) +
+          preferredSpellingCorrectionCount,
       },
     });
     const signal = runtime?.signal || null;
@@ -213,8 +218,11 @@ export class ReasoningCleanupService {
         preferredSpellings
       );
       throwIfTranscriptionCancelled(signal);
-      const firstAssessment = includePreparedCorrectionMetrics(
-        assessCleanupFidelity(preparedText, firstResult, fidelityOptions)
+      // The recognizer transcript remains the trust baseline apart from an
+      // independently authorized dictionary spelling. Quote-input preparation
+      // may guide the model, but never becomes the final fidelity baseline.
+      const firstAssessment = includePreferredSpellingMetrics(
+        assessCleanupFidelity(trustedBaselineText, firstResult, fidelityOptions)
       );
 
       if (firstAssessment.accepted) {
@@ -277,22 +285,18 @@ export class ReasoningCleanupService {
                 : "auto",
           })
         : generatedRetryResult;
-      const retrySemanticAssessment = includePreparedCorrectionMetrics(
-        assessCleanupFidelity(preparedText, retryResult, fidelityOptions)
+      const retrySemanticAssessment = includePreferredSpellingMetrics(
+        assessCleanupFidelity(trustedBaselineText, retryResult, fidelityOptions)
       );
       // The strict retry is allowed to repair mechanics only. Enforce that
       // contract after sanitization and deterministic repairs so neither the
       // model nor a post-processor can silently add, remove, or reorder words.
-      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(
-        preparedText,
-        retryResult,
-        {
+      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(preparedText, retryResult, {
         language:
           typeof localStorage !== "undefined"
             ? localStorage.getItem("preferredLanguage") || "auto"
             : "auto",
-        }
-      );
+      });
       // A token-locked retry cannot repair a source-inherent trailing workflow
       // fragment without violating its lexical contract. Once exact lexical
       // preservation is proven, keep the source-formatted result instead of
