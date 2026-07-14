@@ -29,18 +29,23 @@ async function checkDictionaryUi(panel, record, exportDir, runId) {
   const batchText = `${expectedWords[0]}\n${expectedWords[1]}\n${expectedWords[0].toLowerCase()}\n;${expectedWords[2]},  \n\n`;
   await panel.setInputValue('textarea[placeholder^="Paste one word"]', batchText);
   await sleep(250);
-  const previewText = await panel.eval(`
+  const preview = await panel.eval(`
       (function () {
-        const nodes = Array.from(document.querySelectorAll("p"));
-        const preview = nodes.find((n) => (n.textContent || "").includes("Preview:"));
-        return preview ? preview.textContent : "";
+        const node = document.querySelector('[data-testid="dictionary-batch-preview"]');
+        return node ? {
+          text: node.textContent || "",
+          uniqueCount: Number(node.dataset.uniqueCount),
+          duplicateCount: Number(node.dataset.duplicateCount),
+          invalidCount: Number(node.dataset.invalidCount),
+        } : null;
       })()
     `);
   record(
     "Dictionary preview shows dedupe counts",
-    safeString(previewText).includes("duplicates removed") &&
-      safeString(previewText).includes("1 duplicates removed"),
-    safeString(previewText)
+    preview?.uniqueCount === expectedWords.length &&
+      preview?.duplicateCount === 1 &&
+      preview?.invalidCount === 0,
+    JSON.stringify(preview)
   );
 
   // Apply merge

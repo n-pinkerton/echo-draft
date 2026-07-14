@@ -99,7 +99,7 @@ async function runWindowsReleaseGate() {
 
   const foregroundBeforeSafeLaunch = allowForegroundAutomation
     ? null
-    : await getForegroundWindowInfo();
+    : await getForegroundWindowInfo({ allowMissing: true });
 
   const appProc = spawn(exePath, [`--remote-debugging-port=${port}`], {
     env,
@@ -221,17 +221,39 @@ try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
 
     if (foregroundBeforeSafeLaunch) {
       await sleep(250);
-      const foregroundAfterSafeConnect = await getForegroundWindowInfo();
+      const foregroundAfterSafeConnect = await getForegroundWindowInfo({ allowMissing: true });
       const foregroundUnchanged =
+        foregroundAfterSafeConnect !== null &&
         Number(foregroundAfterSafeConnect.hwnd) === Number(foregroundBeforeSafeLaunch.hwnd);
       record(
         "Safe gate launch and CDP connection leave the foreground window unchanged",
         foregroundUnchanged,
-        `${foregroundBeforeSafeLaunch.processName} (${foregroundBeforeSafeLaunch.hwnd}) -> ${foregroundAfterSafeConnect.processName} (${foregroundAfterSafeConnect.hwnd})`
+        `${foregroundBeforeSafeLaunch.processName} (${foregroundBeforeSafeLaunch.hwnd}) -> ${
+          foregroundAfterSafeConnect
+            ? `${foregroundAfterSafeConnect.processName} (${foregroundAfterSafeConnect.hwnd})`
+            : "none"
+        }`
       );
       assert(
         foregroundUnchanged,
         "Safe gate changed the foreground window. No typing automation ran; inspect packaged window presentation before retrying."
+      );
+    } else if (!allowForegroundAutomation) {
+      await sleep(250);
+      const foregroundAfterSafeConnect = await getForegroundWindowInfo({ allowMissing: true });
+      const echoDraftTookForeground =
+        Number(foregroundAfterSafeConnect?.pid) === Number(appProc.pid) ||
+        foregroundAfterSafeConnect?.processName?.toLowerCase() === "echodraft";
+      record(
+        "Safe gate does not take foreground when the desktop starts without one",
+        !echoDraftTookForeground,
+        foregroundAfterSafeConnect
+          ? `${foregroundAfterSafeConnect.processName} (${foregroundAfterSafeConnect.hwnd})`
+          : "foreground remained empty"
+      );
+      assert(
+        !echoDraftTookForeground,
+        "Safe gate gave EchoDraft foreground on a desktop that started without a foreground window."
       );
     }
 

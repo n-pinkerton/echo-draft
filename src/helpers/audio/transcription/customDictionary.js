@@ -7,9 +7,9 @@
  * Keeping this logic in one place avoids subtle inconsistencies between providers.
  */
 
-const MAX_DICTIONARY_ENTRIES = 200;
-const { sanitizeLexicalDictionaryEntries } = require("../../../utils/dictionaryLexicon.cjs");
+import { sanitizeLexicalDictionaryEntries } from "../../../utils/dictionaryLexicon.cjs";
 
+const MAX_DICTIONARY_ENTRIES = 200;
 const MAX_ENTRY_LENGTH = 80;
 
 const sanitizeDictionaryEntries = (entries = []) =>

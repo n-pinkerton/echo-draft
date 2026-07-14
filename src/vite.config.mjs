@@ -5,6 +5,8 @@ import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
 
+import RENDERER_EXTERNAL_MODULES from './config/rendererExternalModules.cjs'
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const DEFAULT_DEV_SERVER_PORT = 5183
@@ -61,22 +63,7 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       assetsDir: 'assets',
       rollupOptions: {
-        external: [
-          'electron',
-          'fs',
-          'path',
-          'child_process',
-          'https',
-          'http',
-          'crypto',
-          'os',
-          'stream',
-          'util',
-          'zlib',
-          'tar',
-          'unzipper',
-          '@aws-sdk/client-s3'
-        ]
+        external: RENDERER_EXTERNAL_MODULES
       }
     }
   }

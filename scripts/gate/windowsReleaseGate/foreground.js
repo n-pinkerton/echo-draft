@@ -1,7 +1,27 @@
 const { assert, safeString, sleep } = require("./utils");
 const { psJson } = require("./powershell");
 
-async function getForegroundWindowInfo() {
+function parseForegroundWindowResult(result, { allowMissing = false } = {}) {
+  assert(result.code === 0, `getForegroundWindowInfo failed: ${result.stderr}`);
+  if (result.parsed?.success) {
+    assert(
+      Number.isSafeInteger(result.parsed.hwnd) &&
+        result.parsed.hwnd > 0 &&
+        Number.isSafeInteger(result.parsed.pid) &&
+        result.parsed.pid > 0 &&
+        typeof result.parsed.processName === "string" &&
+        result.parsed.processName.trim().length > 0,
+      `getForegroundWindowInfo returned an invalid window identity: ${result.stdout} ${result.stderr}`
+    );
+    return result.parsed;
+  }
+  if (allowMissing && result.parsed?.reason === "no_foreground_window") {
+    return null;
+  }
+  assert(false, `getForegroundWindowInfo returned failure: ${result.stdout} ${result.stderr}`);
+}
+
+async function getForegroundWindowInfo({ allowMissing = false } = {}) {
   const script = `
 Add-Type @"
 using System;
@@ -18,28 +38,42 @@ if ($hwnd -eq [IntPtr]::Zero) {
   [pscustomobject]@{ success = $false; reason = "no_foreground_window" } | ConvertTo-Json -Compress
   exit 0
 }
-$pid = 0
-[void][WinApiFg]::GetWindowThreadProcessId($hwnd, [ref]$pid)
+$foregroundProcessId = 0
+[void][WinApiFg]::GetWindowThreadProcessId($hwnd, [ref]$foregroundProcessId)
 $titleBuilder = New-Object System.Text.StringBuilder 512
 [void][WinApiFg]::GetWindowText($hwnd, $titleBuilder, $titleBuilder.Capacity)
 $processName = ""
-try { $processName = (Get-Process -Id $pid -ErrorAction Stop).ProcessName } catch {}
+try {
+  $processName = (Get-Process -Id $foregroundProcessId -ErrorAction Stop).ProcessName
+} catch {
+  [pscustomobject]@{
+    success = $false
+    reason = "process_lookup_failed"
+    hwnd = [Int64]$hwnd
+    pid = [Int32]$foregroundProcessId
+  } | ConvertTo-Json -Compress
+  exit 0
+}
+if ([String]::IsNullOrWhiteSpace($processName)) {
+  [pscustomobject]@{
+    success = $false
+    reason = "process_identity_empty"
+    hwnd = [Int64]$hwnd
+    pid = [Int32]$foregroundProcessId
+  } | ConvertTo-Json -Compress
+  exit 0
+}
 [pscustomobject]@{
   success = $true
   hwnd = [Int64]$hwnd
-  pid = [Int32]$pid
+  pid = [Int32]$foregroundProcessId
   processName = $processName
   title = $titleBuilder.ToString()
 } | ConvertTo-Json -Compress
 `.trim();
 
   const result = await psJson(script);
-  assert(result.code === 0, `getForegroundWindowInfo failed: ${result.stderr}`);
-  assert(
-    result.parsed?.success,
-    `getForegroundWindowInfo returned failure: ${result.stdout} ${result.stderr}`
-  );
-  return result.parsed;
+  return parseForegroundWindowResult(result, { allowMissing });
 }
 
 async function setForegroundWindow(hwnd, focusHwnd = null) {
@@ -160,6 +194,7 @@ $sb = New-Object System.Text.StringBuilder ($len + 1)
 module.exports = {
   ensureForegroundWindow,
   getForegroundWindowInfo,
+  parseForegroundWindowResult,
   readEditText,
   setForegroundWindow,
 };

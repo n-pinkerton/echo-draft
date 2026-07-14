@@ -30,6 +30,9 @@ type Props = {
   onExportDictionary: () => void;
 };
 
+const countLabel = (count: number, singular: string, plural: string) =>
+  `${count} ${count === 1 ? singular : plural}`;
+
 export default function DictionaryBatchPanel(props: Props) {
   const {
     customDictionaryLength,
@@ -124,9 +127,15 @@ export default function DictionaryBatchPanel(props: Props) {
           </div>
 
           <div className="rounded-md border border-border/40 dark:border-border-subtle bg-muted/40 dark:bg-surface-2/70 px-3 py-2 space-y-1">
-            <p className="text-[10px] text-muted-foreground/80">
+            <p
+              className="text-[10px] text-muted-foreground/80"
+              data-testid="dictionary-batch-preview"
+              data-unique-count={preview.uniqueWordsCount}
+              data-duplicate-count={preview.duplicatesRemoved}
+              data-invalid-count={preview.invalidEntriesRemoved}
+            >
               {preview.parsedCount > 0
-                ? `Preview: ${preview.uniqueWordsCount} valid unique terms (${preview.duplicatesRemoved} duplicates and ${preview.invalidEntriesRemoved} unsupported entries removed).`
+                ? `Preview: ${countLabel(preview.uniqueWordsCount, "valid unique term", "valid unique terms")} (${countLabel(preview.duplicatesRemoved, "duplicate", "duplicates")} and ${countLabel(preview.invalidEntriesRemoved, "unsupported entry", "unsupported entries")} removed).`
                 : "Preview: Add words to see import counts."}
             </p>
             {importedDictionaryFileName && (
