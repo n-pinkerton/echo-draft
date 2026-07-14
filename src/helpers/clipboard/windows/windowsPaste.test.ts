@@ -192,6 +192,56 @@ describe("windowsPaste", () => {
     expect(manager.scheduleClipboardRestore).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [1, false],
+    [2, true],
+    [3, true],
+  ])(
+    "reports whether a %i-event partial SendInput may already have inserted text",
+    async (inputEventsSent, insertionMayHaveOccurred) => {
+      const processHandle = createProcess();
+      const manager: any = {
+        deps: { spawn: vi.fn(() => processHandle) },
+        parsePowerShellJsonOutput: (stdout: string) => JSON.parse(stdout),
+        safeLog: vi.fn(),
+      };
+      const pending = pasteSecurelyToTarget(
+        manager,
+        { formats: [] },
+        {
+          insertionTarget: {
+            hwnd: 42,
+            pid: 7,
+            processStartTimeUtcTicks: "638800000000000000",
+          },
+        }
+      );
+      processHandle.stdout.emit(
+        "data",
+        Buffer.from(
+          JSON.stringify({
+            success: false,
+            injected: false,
+            reason: "partial_send_input_recovered",
+            inputEventsSent,
+          })
+        )
+      );
+      processHandle.emit("close", 0);
+
+      const error: any = await pending.catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.code).toBe("WINDOWS_SECURE_PASTE_PARTIAL_SEND_INPUT_RECOVERED");
+      expect(error.insertionMayHaveOccurred === true).toBe(insertionMayHaveOccurred);
+      if (insertionMayHaveOccurred) {
+        expect(error.message).toMatch(/may have inserted/i);
+        expect(error.message).not.toMatch(/paste it manually/i);
+      } else {
+        expect(error.message).toMatch(/paste it manually/i);
+      }
+    }
+  );
+
   it("requires an authenticated target instead of using a global paste fallback", async () => {
     const manager: any = {};
     await expect(pasteWindows(manager, {}, {})).rejects.toThrow(/authenticated target/i);

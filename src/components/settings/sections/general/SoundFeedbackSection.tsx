@@ -29,7 +29,7 @@ const CUE_PREVIEWS = [
   { label: "Start", description: "Recording started", play: playStartCue },
   { label: "Stop", description: "Recording stopped; queued or processing", play: playStopCue },
   { label: "Ready", description: "Text delivered", play: playCompletionCue },
-  { label: "Warning", description: "Text delivered with a warning", play: playWarningCue },
+  { label: "Warning", description: "Check the on-screen status", play: playWarningCue },
   { label: "Error", description: "Action failed", play: playErrorCue },
   { label: "Cancel", description: "Action cancelled", play: playCancelCue },
 ] as const;

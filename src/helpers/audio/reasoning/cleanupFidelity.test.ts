@@ -334,6 +334,14 @@ describe("assessCleanupFidelity", () => {
     "From the server, send Rilji the report.",
     "Inside the service, give Rilji the analysis.",
     "From the database, show Rilji the report.",
+    "The service should send the JSON payload to Rilji.",
+    "The server can send network packets to Rilji.",
+    "The server can send database records to Rilji.",
+    "The server can send HTTP headers to Rilji.",
+    "The API should send JSON bytes to Rilji.",
+    "The service can send logs to Rilji.",
+    "The server, after startup, can send HTTP headers to Rilji.",
+    "The service, when ready, can send logs to Rilji.",
   ])("keeps ambiguous technical verbs from authorizing a person alias: %s", (original) => {
     const changed = original.replace("Rilji", "Rilje");
 
@@ -415,6 +423,18 @@ describe("assessCleanupFidelity", () => {
       "Send the report through the secure channel to Rilje.",
     ],
     ["Send Rilji a copy of the report.", "Send Rilje a copy of the report."],
+    [
+      "The server can send HTTP headers to Rilji Patterson.",
+      "The server can send HTTP headers to Rilje Patterson.",
+    ],
+    [
+      "Nigel, after checking the server, can send the report to Rilji.",
+      "Nigel, after checking the server, can send the report to Rilje.",
+    ],
+    [
+      "After the server restarts, Nigel, who owns the report, can send it to Rilji.",
+      "After the server restarts, Nigel, who owns the report, can send it to Rilje.",
+    ],
     ["Give Rilji a call about the review.", "Give Rilje a call about the review."],
     ["I called Rilji, asking about the review.", "I called Rilje, asking about the review."],
     ["Email Rilji. Rilji approved the draft.", "Email Rilje. Rilje approved the draft."],

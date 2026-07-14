@@ -75,6 +75,7 @@ function registerClipboardHandlers(
         errorCode: normalizePasteFailureCode(error),
         clipboardWriteCommitted,
         clipboardRetained,
+        ...(error?.insertionMayHaveOccurred === true ? { insertionMayHaveOccurred: true } : {}),
       };
     }
   });

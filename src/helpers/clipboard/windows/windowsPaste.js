@@ -529,13 +529,19 @@ async function pasteSecurelyToTarget(manager, originalClipboardSnapshot, options
         const parsed = manager.parsePowerShellJsonOutput(stdout);
         if (code !== 0 || parsed?.success !== true || parsed?.injected !== true) {
           const reason = normalizeSecurePasteReason(parsed?.reason);
+          const inputEventsSent = Number(parsed?.inputEventsSent) || 0;
+          // Ctrl+V may already have reached the target once the V-down event was sent.
+          // Preserve that uncertainty across IPC so the renderer never encourages a
+          // second paste that could duplicate the dictation.
+          const insertionMayHaveOccurred = inputEventsSent >= 2 && inputEventsSent < 4;
           manager.safeLog("Windows secure target paste rejected", {
             code,
             reason,
             phase: parsed?.phase || "unknown",
             inputSize: Number(parsed?.inputSize) || null,
             expectedInputSize: Number(parsed?.expectedInputSize) || null,
-            inputEventsSent: Number(parsed?.inputEventsSent) || 0,
+            inputEventsSent,
+            insertionMayHaveOccurred,
             recoveryAttempted: parsed?.recoveryAttempted === true,
             recoveryEventsAttempted: Number(parsed?.recoveryEventsAttempted) || 0,
             recoveryEventsSent: Number(parsed?.recoveryEventsSent) || 0,
@@ -543,12 +549,16 @@ async function pasteSecurelyToTarget(manager, originalClipboardSnapshot, options
               typeof parsed?.recoverySucceeded === "boolean" ? parsed.recoverySucceeded : null,
             hasStderr: Boolean(stderr.trim()),
           });
-          reject(
-            createSecurePasteError(
-              `WINDOWS_SECURE_PASTE_${reason.toUpperCase()}`,
-              "The original app lost focus or could not be authenticated. Text is copied to the clipboard; paste it manually with Ctrl+V."
-            )
+          const pasteError = createSecurePasteError(
+            `WINDOWS_SECURE_PASTE_${reason.toUpperCase()}`,
+            insertionMayHaveOccurred
+              ? "Windows may have inserted the text, but could not confirm the complete shortcut. Check the target before pasting again."
+              : "The original app lost focus or could not be authenticated. Text is copied to the clipboard; paste it manually with Ctrl+V."
           );
+          if (insertionMayHaveOccurred) {
+            pasteError.insertionMayHaveOccurred = true;
+          }
+          reject(pasteError);
           return;
         }
 

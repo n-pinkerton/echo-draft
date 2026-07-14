@@ -157,6 +157,30 @@ describe("clipboardHandlers", () => {
     });
   });
 
+  it("propagates an unconfirmed partial insertion without exposing native detail", async () => {
+    const { handlers, sender, clipboardManager, opaqueTarget } = createHarness();
+    clipboardManager.pasteText.mockRejectedValueOnce(
+      Object.assign(new Error("private native detail"), {
+        code: "WINDOWS_SECURE_PASTE_PARTIAL_SEND_INPUT_RECOVERED",
+        clipboardWriteCommitted: true,
+        insertionMayHaveOccurred: true,
+      })
+    );
+
+    await expect(
+      handlers.get("paste-text")?.({ sender, senderFrame: sender.mainFrame }, "dictated text", {
+        sessionId: "session-1",
+        insertionTarget: opaqueTarget,
+      })
+    ).resolves.toEqual({
+      success: false,
+      errorCode: "WINDOWS_SECURE_PASTE_PARTIAL_SEND_INPUT_RECOVERED",
+      clipboardWriteCommitted: true,
+      clipboardRetained: true,
+      insertionMayHaveOccurred: true,
+    });
+  });
+
   it("reports insertion success separately from a clipboard-restoration warning", async () => {
     const { handlers, sender, clipboardManager, opaqueTarget } = createHarness();
     clipboardManager.pasteText.mockResolvedValueOnce({

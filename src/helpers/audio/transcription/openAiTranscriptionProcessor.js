@@ -921,6 +921,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
 
     const attempts = [];
     let recoveredFromIncompleteStream = false;
+    let suspectedIncomplete = false;
     let primary;
     try {
       primary = await transcribeWithDictionaryRetry({
@@ -1146,8 +1147,15 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         if (retryError?.code === "TRANSCRIPTION_ATTEMPTS_DISAGREE") {
           throw retryError;
         }
+        suspectedIncomplete = true;
+        timings.transcriptionSuspectedIncomplete = true;
+        timings.transcriptionRecoveryFailed = true;
+        timings.transcriptionRecoveryFailureCode =
+          typeof retryError?.code === "string" && /^[A-Z0-9_]{1,64}$/.test(retryError.code)
+            ? retryError.code
+            : "error";
         transcriber.logger?.warn?.(
-          "Truncation retry failed; continuing with primary transcription",
+          "Truncation retry failed; preserving primary transcription with an incomplete warning",
           { error: retryError?.message || String(retryError) },
           "transcription"
         );
@@ -1244,6 +1252,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       rawText: finalRawText,
       source,
       timings,
+      ...(suspectedIncomplete ? { suspectedIncomplete: true } : {}),
       ...(cleanup ? { cleanup } : {}),
     };
   } catch (error) {

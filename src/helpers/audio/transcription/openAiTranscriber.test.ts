@@ -895,6 +895,12 @@ describe("OpenAiTranscriber", () => {
     const result = await t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 45 });
 
     expect(result.rawText).toBe(primaryText);
+    expect((result as any).suspectedIncomplete).toBe(true);
+    expect(result.timings).toMatchObject({
+      transcriptionSuspectedIncomplete: true,
+      transcriptionRecoveryFailed: true,
+      transcriptionRecoveryFailureCode: "TRANSCRIPTION_HTTP_ERROR",
+    });
     expect(result.timings.transcriptionAttemptCount).toBe(2);
     expect(result.timings.transcriptionTransportAttemptCount).toBe(2);
     expect(result.timings.transcriptionAttempts).toEqual([

@@ -33,6 +33,16 @@ const DELIVERY_PRESENTATION: Record<
     detail: "Inserted; previous clipboard recovery is pending",
     tone: "warning",
   },
+  insert_uncertain: {
+    badge: "Insert unconfirmed",
+    detail: "Windows may have inserted the text; check the target before pasting again",
+    tone: "warning",
+  },
+  transcription_incomplete: {
+    badge: "Transcript may be incomplete",
+    detail: "Automatic insertion was skipped because recovery could not confirm the full text",
+    tone: "warning",
+  },
   clipboard_protected: {
     badge: "Insert paused · clipboard protected",
     detail: "Insert paused to protect existing clipboard data",

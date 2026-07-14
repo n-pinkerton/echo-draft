@@ -330,6 +330,8 @@ describe("TranscriptionItem", () => {
 
   it.each([
     ["inserted_clipboard_warning", "Inserted · clipboard recovery"],
+    ["insert_uncertain", "Insert unconfirmed"],
+    ["transcription_incomplete", "Transcript may be incomplete"],
     ["clipboard_protected", "Insert paused · clipboard protected"],
     ["clipboard_changed", "Insert failed · newer clipboard kept"],
   ])("explains the %s delivery state in history", (deliveryStatus, badge) => {

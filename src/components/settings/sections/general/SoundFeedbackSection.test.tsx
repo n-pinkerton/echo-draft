@@ -46,7 +46,7 @@ describe("SoundFeedbackSection", () => {
     expect(cueMocks.playStartCue).toHaveBeenCalledWith({ force: true, volume: 45 });
 
     await user.click(
-      screen.getByRole("button", { name: "Preview text delivered with a warning sound" })
+      screen.getByRole("button", { name: "Preview check the on-screen status sound" })
     );
     expect(cueMocks.playWarningCue).toHaveBeenCalledWith({ force: true, volume: 45 });
 

@@ -1,6 +1,7 @@
 import logger from "../../utils/logger";
 import { ECHO_DRAFT_CLOUD_SOURCE, normalizeEchoDraftSource } from "../../utils/branding";
 import { throwIfTranscriptionCancelled } from "../../helpers/audio/pipeline/cancellation";
+import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 import { countWords } from "./textMetrics";
 
 const CLIPBOARD_PROTECTION_FAILURE_CODES = new Set([
@@ -11,14 +12,11 @@ const CLIPBOARD_PROTECTION_FAILURE_CODES = new Set([
 export const getCleanupFallbackFeedback = (
   fallbackReason,
   retryCount = 0,
-  preferredSpellingCorrectionCount = 0
+  preferredSpellingApplied = false
 ) => {
-  const spellingCount = Math.max(0, Number(preferredSpellingCorrectionCount) || 0);
-  const appliedDictionarySpelling = spellingCount > 0;
+  const appliedDictionarySpelling = preferredSpellingApplied === true;
   const preservedDescription = appliedDictionarySpelling
-    ? `EchoDraft applied ${spellingCount === 1 ? "one" : spellingCount} verified dictionary ${
-        spellingCount === 1 ? "spelling" : "spellings"
-      } and otherwise kept the original transcript.`
+    ? "EchoDraft applied a verified dictionary spelling and otherwise kept the original transcript."
     : "EchoDraft kept every original word.";
   const title = appliedDictionarySpelling
     ? "Transcript preserved with dictionary spelling"
@@ -153,7 +151,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       ? getCleanupFallbackFeedback(
           cleanup?.fallbackReason,
           cleanup?.retryCount,
-          cleanup?.metrics?.preferredSpellingCorrectionCount
+          cleanupAppliedPreferredSpelling(cleanup)
         )
       : null;
     logger.info(
@@ -211,7 +209,49 @@ export const createTranscriptionCompleteHandler = (deps) => {
       let pasteMs = null;
       const isForegroundAvailable = () => !recordingSessionIdRef.current;
 
-      if (session.outputMode === "insert") {
+      const suspectedIncomplete = result?.suspectedIncomplete === true;
+      if (suspectedIncomplete) {
+        deliveryStatus = "transcription_incomplete";
+        deliveryReasonCode = "TRANSCRIPTION_RECOVERY_FAILED";
+        deliveryError =
+          "The transcript may be incomplete because an independent recovery attempt failed.";
+        // Insert mode may be protecting custom clipboard formats or a pending
+        // restoration from an earlier insertion. Keep the incomplete text in
+        // History/Copy Last Dictation without touching either target or clipboard.
+        if (session.outputMode === "clipboard") {
+          try {
+            assertDeliveryActive();
+            if (typeof electronAPI?.writeClipboard !== "function") {
+              throw new Error("Clipboard API unavailable");
+            }
+            const clipboardResult = await electronAPI.writeClipboard(result.text);
+            assertDeliveryActive();
+            if (clipboardResult?.success === false) {
+              throw new Error(clipboardResult.error || "Clipboard write failed");
+            }
+            clipboardSucceeded = true;
+          } catch (error) {
+            assertDeliveryActive();
+            deliveryError = `${deliveryError} Clipboard recovery also failed: ${error?.message || String(error)}`;
+            logger.warn(
+              "Failed to retain a suspected-incomplete transcript in the clipboard",
+              { error: error?.message || String(error) },
+              "clipboard"
+            );
+          }
+        }
+        toast({
+          title: "Transcript may be incomplete",
+          description:
+            session.outputMode === "insert"
+              ? "EchoDraft did not insert it or replace your clipboard. Review it in History or Copy Last Dictation, and retry the recording if needed."
+              : clipboardSucceeded
+                ? "Review the clipboard copy or History before using it, and retry the recording if needed."
+                : "Review the text in History, and retry the recording if needed.",
+          variant: "default",
+          duration: 8000,
+        });
+      } else if (session.outputMode === "insert") {
         assertDeliveryActive();
         if (isForegroundAvailable()) {
           updateStage("inserting", {
@@ -252,6 +292,9 @@ export const createTranscriptionCompleteHandler = (deps) => {
                 errorCode: null,
               };
         pasteSucceeded = pasteResult?.success === true;
+        const insertionMayHaveOccurred = Boolean(
+          !pasteSucceeded && pasteResult?.insertionMayHaveOccurred === true
+        );
         const clipboardRestoreWarning = Boolean(
           pasteSucceeded &&
           pasteResult?.inserted === true &&
@@ -283,6 +326,24 @@ export const createTranscriptionCompleteHandler = (deps) => {
           });
         } else if (pasteSucceeded) {
           deliveryStatus = "inserted";
+        } else if (insertionMayHaveOccurred) {
+          // A partial SendInput can include Ctrl-down and V-down, which may already
+          // have pasted the text. Keep recovery available without inviting a second,
+          // potentially duplicate paste.
+          clipboardSucceeded = transcriptAlreadyInClipboard;
+          deliveryStatus = "insert_uncertain";
+          deliveryError =
+            "Windows may have inserted the text, but could not confirm the complete shortcut.";
+          toast({
+            title: "Insert may have completed",
+            description: transcriptAlreadyInClipboard
+              ? "Check the target before pasting again. A recovery copy remains in the clipboard and History."
+              : clipboardChangedAfterPaste
+                ? "Check the target before pasting again. Newer clipboard contents were preserved; this dictation remains in History."
+                : "Check the target before pasting again. This dictation remains in History and under Copy Last Dictation.",
+            variant: "default",
+            duration: 7000,
+          });
         } else if (CLIPBOARD_PROTECTION_FAILURE_CODES.has(deliveryReasonCode)) {
           // This failure is intentionally raised before the main process touches a clipboard
           // it cannot safely mutate. A generic clipboard fallback here would defeat that
@@ -542,9 +603,13 @@ export const createTranscriptionCompleteHandler = (deps) => {
             ? deliveryStatus === "inserted_clipboard_warning"
               ? "Text was inserted, but clipboard restoration and history saving failed."
               : "Text was inserted, but saving to history failed."
-            : deliveryStatus === "clipboard" || deliveryStatus === "clipboard_fallback"
-              ? "Text is in the clipboard, but saving to history failed."
-              : "Clipboard delivery and history saving both failed. Use Copy Last Dictation in the EchoDraft tray menu to recover the text.";
+            : deliveryStatus === "transcription_incomplete"
+              ? "The transcript may be incomplete, and saving it to History failed. Use Copy Last Dictation from the tray to recover the text."
+              : deliveryStatus === "insert_uncertain"
+                ? "Windows may have inserted the text, but confirmation and history saving both failed. Check the target before pasting again; use Copy Last Dictation from the tray to recover it."
+                : deliveryStatus === "clipboard" || deliveryStatus === "clipboard_fallback"
+                  ? "Text is in the clipboard, but saving to history failed."
+                  : "Clipboard delivery and history saving both failed. Use Copy Last Dictation in the EchoDraft tray menu to recover the text.";
         toast({
           title: "History Save Failed",
           description: fallbackDescription,
@@ -592,6 +657,8 @@ export const createTranscriptionCompleteHandler = (deps) => {
           deliveryStatus === "failed"
             ? "error"
             : deliveryStatus === "clipboard_fallback" ||
+                deliveryStatus === "transcription_incomplete" ||
+                deliveryStatus === "insert_uncertain" ||
                 deliveryStatus === "inserted_clipboard_warning" ||
                 deliveryStatus === "clipboard_protected" ||
                 deliveryStatus === "clipboard_changed" ||
@@ -599,15 +666,36 @@ export const createTranscriptionCompleteHandler = (deps) => {
                 cleanupFallback
               ? "warning"
               : "done";
+        const terminalStageLabel =
+          deliveryStatus === "clipboard_protected"
+            ? "Insert paused"
+            : deliveryStatus === "clipboard_fallback" || deliveryStatus === "clipboard_changed"
+              ? "Insert failed"
+              : deliveryStatus === "insert_uncertain"
+                ? "Insert unconfirmed"
+                : deliveryStatus === "transcription_incomplete"
+                  ? "Transcript needs review"
+                  : deliveryStatus === "inserted_clipboard_warning"
+                    ? "Inserted with warning"
+                    : deliveryStatus === "failed"
+                      ? "Delivery failed"
+                      : undefined;
         updateStage(terminalStage, {
           outputMode: session.outputMode,
           sessionId: session.sessionId,
           ...(jobId !== null ? { jobId } : {}),
           stageProgress: 1,
           overallProgress: 1,
+          ...(terminalStageLabel ? { stageLabel: terminalStageLabel } : {}),
           message:
             deliveryStatus === "clipboard_fallback"
               ? "Insert failed; text kept in clipboard."
+              : deliveryStatus === "transcription_incomplete"
+                ? session.outputMode === "insert"
+                  ? "Transcript may be incomplete; automatic insertion was skipped."
+                  : "Transcript may be incomplete; review it before use."
+              : deliveryStatus === "insert_uncertain"
+                ? "Insert may have completed; check before pasting again."
               : deliveryStatus === "inserted_clipboard_warning"
                 ? "Inserted; previous clipboard recovery is pending."
                 : deliveryStatus === "clipboard_protected"
@@ -665,6 +753,8 @@ export const createTranscriptionCompleteHandler = (deps) => {
           void playErrorCue?.();
         } else if (
           deliveryStatus === "clipboard_fallback" ||
+          deliveryStatus === "transcription_incomplete" ||
+          deliveryStatus === "insert_uncertain" ||
           deliveryStatus === "inserted_clipboard_warning" ||
           deliveryStatus === "clipboard_protected" ||
           deliveryStatus === "clipboard_changed" ||

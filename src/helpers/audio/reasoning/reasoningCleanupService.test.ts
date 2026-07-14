@@ -999,6 +999,55 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
+  it.each([
+    ["accepted no-op", (text: string) => text, null],
+    [
+      "provider fallback",
+      () => {
+        throw new Error("Provider unavailable");
+      },
+      "provider_error",
+    ],
+    ["fidelity fallback", () => "Keep the important details.", "fidelity_rejected"],
+  ])(
+    "keeps a technical recipient alias literal during %s",
+    async (_scenario, processText, fallbackReason) => {
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(async (text: string) => processText(text)),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+      localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
+
+      for (const original of [
+        "The service should send the JSON payload to Rilji.",
+        "The server can send database records to Rilji.",
+        "The server can send HTTP headers to Rilji.",
+        "The API should send JSON bytes to Rilji.",
+        "The service can send logs to Rilji.",
+        "The server, after startup, can send HTTP headers to Rilji.",
+        "The service, when ready, can send logs to Rilji.",
+      ]) {
+        reasoningService.processText.mockClear();
+        const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
+
+        expect(result.text).toBe(original);
+        expect(result.cleanup.preferredSpellingApplied).not.toBe(true);
+        expect(reasoningService.processText.mock.calls[0][0]).toBe(original);
+        if (fallbackReason) {
+          expect(result.cleanup).toMatchObject({ status: "fallback", fallbackReason });
+        }
+      }
+    }
+  );
+
   it("rejects a strict retry when relation-marker wording changes", async () => {
     const original =
       "Review the draft, then bring the wording back before making the change. Keep reference 42, the budget caveat, the customer example, the fallback owner, and the Friday deadline in the review, because both teams must approve the final wording before publication.";

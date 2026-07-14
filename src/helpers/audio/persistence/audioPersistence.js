@@ -15,6 +15,7 @@ export async function safePasteWithResult(_manager, text, options = {}) {
         errorCode: code,
         clipboardWriteCommitted: result?.clipboardWriteCommitted === true,
         clipboardRetained: result?.clipboardRetained === true,
+        ...(result?.insertionMayHaveOccurred === true ? { insertionMayHaveOccurred: true } : {}),
       };
     }
     return {

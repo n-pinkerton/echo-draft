@@ -14,6 +14,7 @@ export interface ElectronAPIWindow {
     errorCode?: string;
     clipboardWriteCommitted?: boolean;
     clipboardRetained?: boolean;
+    insertionMayHaveOccurred?: boolean;
     inserted?: boolean;
     clipboardRestored?: boolean;
     warningCode?: string;

@@ -442,7 +442,10 @@ describe("createTranscriptionCompleteHandler", () => {
     );
     expect(harness.updateStage).toHaveBeenCalledWith(
       "warning",
-      expect.objectContaining({ message: "Insert paused; existing clipboard left unchanged." })
+      expect.objectContaining({
+        stageLabel: "Insert paused",
+        message: "Insert paused; existing clipboard left unchanged.",
+      })
     );
     expect(harness.playWarningCue).toHaveBeenCalledOnce();
   });
@@ -474,7 +477,10 @@ describe("createTranscriptionCompleteHandler", () => {
     );
     expect(harness.updateStage).toHaveBeenCalledWith(
       "warning",
-      expect.objectContaining({ message: "Insert failed; newer clipboard contents preserved." })
+      expect.objectContaining({
+        stageLabel: "Insert failed",
+        message: "Insert failed; newer clipboard contents preserved.",
+      })
     );
     expect(harness.playWarningCue).toHaveBeenCalledOnce();
   });
@@ -498,6 +504,104 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Insert failed—text kept in clipboard" })
     );
+  });
+
+  it("warns without suggesting another paste when partial SendInput may have inserted text", async () => {
+    const safePasteWithResult = vi.fn(async () => ({
+      success: false,
+      errorCode: "WINDOWS_SECURE_PASTE_PARTIAL_SEND_INPUT_RECOVERED",
+      clipboardWriteCommitted: true,
+      clipboardRetained: true,
+      insertionMayHaveOccurred: true,
+    }));
+    const harness = createDeliveryHarness({ outputMode: "insert", safePasteWithResult });
+
+    await harness.run();
+
+    expect(harness.writeClipboard).not.toHaveBeenCalled();
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
+      status: "delivery_issue",
+      pasteSucceeded: false,
+      clipboardSucceeded: true,
+      delivery: {
+        status: "insert_uncertain",
+        succeeded: false,
+        reasonCode: "WINDOWS_SECURE_PASTE_PARTIAL_SEND_INPUT_RECOVERED",
+      },
+    });
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Insert may have completed",
+        description: expect.stringContaining("Check the target before pasting again"),
+      })
+    );
+    expect(harness.toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringMatching(/paste it manually/i) })
+    );
+    expect(harness.updateStage).toHaveBeenCalledWith(
+      "warning",
+      expect.objectContaining({
+        message: "Insert may have completed; check before pasting again.",
+      })
+    );
+    expect(harness.playWarningCue).toHaveBeenCalledOnce();
+  });
+
+  it("withholds automatic insertion and preserves recovery text when a transcript may be incomplete", async () => {
+    const harness = createDeliveryHarness({ outputMode: "insert" });
+
+    await harness.run({ suspectedIncomplete: true });
+
+    expect(harness.safePaste).not.toHaveBeenCalled();
+    expect(harness.writeClipboard).not.toHaveBeenCalled();
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
+      status: "delivery_issue",
+      pasteSucceeded: false,
+      clipboardSucceeded: false,
+      delivery: {
+        status: "transcription_incomplete",
+        succeeded: false,
+        reasonCode: "TRANSCRIPTION_RECOVERY_FAILED",
+      },
+    });
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Transcript may be incomplete",
+        description: expect.stringContaining("did not insert it or replace your clipboard"),
+      })
+    );
+    expect(harness.updateStage).toHaveBeenCalledWith(
+      "warning",
+      expect.objectContaining({
+        stageLabel: "Transcript needs review",
+        message: "Transcript may be incomplete; automatic insertion was skipped.",
+      })
+    );
+    expect(harness.playWarningCue).toHaveBeenCalledOnce();
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "WINDOWS_CLIPBOARD_RESTORE_PENDING",
+    "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
+  ])("does not touch a protected insert clipboard when truncation recovery fails: %s", async (code) => {
+    const safePasteWithResult = vi.fn(async () => ({ success: false, errorCode: code }));
+    const writeClipboard = vi.fn(async () => ({ success: false }));
+    const harness = createDeliveryHarness({
+      outputMode: "insert",
+      safePasteWithResult,
+      writeClipboard,
+    });
+
+    await harness.run({ suspectedIncomplete: true });
+
+    expect(safePasteWithResult).not.toHaveBeenCalled();
+    expect(writeClipboard).not.toHaveBeenCalled();
+    expect(harness.saveTranscription).toHaveBeenCalledOnce();
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta.delivery).toMatchObject({
+      status: "transcription_incomplete",
+      succeeded: false,
+    });
   });
 
   it("records successful insertion with a clipboard-restoration warning without copying again", async () => {
@@ -790,6 +894,30 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.playErrorCue).not.toHaveBeenCalled();
   });
 
+  it("does not claim a dictionary spelling when the authoritative cleanup flag is false", async () => {
+    const harness = createDeliveryHarness({ outputMode: "clipboard" });
+
+    await harness.run({
+      cleanup: {
+        requested: true,
+        status: "fallback",
+        fallbackReason: "provider_error",
+        preferredSpellingApplied: false,
+        metrics: { preferredSpellingCorrectionCount: 3 },
+      },
+    });
+
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Original transcript preserved",
+        description: expect.stringContaining("kept every original word"),
+      })
+    );
+    expect(harness.toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringMatching(/dictionary spelling/i) })
+    );
+  });
+
   it("keeps terminal cues silent when an earlier job finishes behind a live recording", async () => {
     const harness = createDeliveryHarness({
       outputMode: "clipboard",
@@ -913,12 +1041,12 @@ describe("getCleanupFallbackFeedback", () => {
   });
 
   it("truthfully describes a verified dictionary spelling retained during fallback", () => {
-    expect(getCleanupFallbackFeedback("fidelity_rejected", 1, 1)).toMatchObject({
+    expect(getCleanupFallbackFeedback("fidelity_rejected", 1, true)).toMatchObject({
       title: "Transcript preserved with dictionary spelling",
-      description: expect.stringContaining("one verified dictionary spelling"),
+      description: expect.stringContaining("a verified dictionary spelling"),
       stageMessage: expect.stringContaining("verified dictionary spelling applied"),
     });
-    expect(getCleanupFallbackFeedback("fidelity_rejected", 1, 1).description).toContain(
+    expect(getCleanupFallbackFeedback("fidelity_rejected", 1, true).description).toContain(
       "otherwise kept the original transcript"
     );
   });

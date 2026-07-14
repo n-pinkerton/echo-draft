@@ -62,6 +62,26 @@ describe("audioPersistence", () => {
     });
   });
 
+  it("preserves an unconfirmed partial insertion for delivery orchestration", async () => {
+    (window as any).electronAPI = {
+      pasteText: vi.fn(async () => ({
+        success: false,
+        errorCode: "WINDOWS_SECURE_PASTE_PARTIAL_SEND_INPUT_RECOVERED",
+        clipboardWriteCommitted: true,
+        clipboardRetained: true,
+        insertionMayHaveOccurred: true,
+      })),
+    };
+
+    await expect(safePasteWithResult({}, "hello", {})).resolves.toEqual({
+      success: false,
+      errorCode: "WINDOWS_SECURE_PASTE_PARTIAL_SEND_INPUT_RECOVERED",
+      clipboardWriteCommitted: true,
+      clipboardRetained: true,
+      insertionMayHaveOccurred: true,
+    });
+  });
+
   it("keeps overlapping paste failure reasons isolated by invocation", async () => {
     const pasteText = vi.fn(async (text: string) => ({
       success: false,
