@@ -152,12 +152,17 @@ function showLegacyDictationPanel(manager, options = {}) {
   }
 }
 
-function showRecordingIndicator(manager, { screenModule = screen } = {}) {
+function showRecordingIndicator(
+  manager,
+  { screenModule = screen, sizeKey = "RECORDING_INDICATOR" } = {}
+) {
   if (!manager.mainWindow || manager.mainWindow.isDestroyed()) {
     return { success: false, message: "Recording indicator window is unavailable" };
   }
 
-  resizeMainWindow(manager, "RECORDING_INDICATOR", { screenModule });
+  const allowedSizeKeys = new Set(["RECORDING_INDICATOR", "WITH_COMPACT_TOAST", "WITH_TOAST"]);
+  const resolvedSizeKey = allowedSizeKeys.has(sizeKey) ? sizeKey : "RECORDING_INDICATOR";
+  resizeMainWindow(manager, resolvedSizeKey, { screenModule });
   setMainWindowInteractivity(manager, false);
   void moveWindowToCurrentVirtualDesktop(manager.mainWindow).then((result) => {
     if (!result.success || !manager.mainWindow || manager.mainWindow.isDestroyed()) return;

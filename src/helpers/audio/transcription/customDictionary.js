@@ -7,14 +7,22 @@
  * Keeping this logic in one place avoids subtle inconsistencies between providers.
  */
 
-import { sanitizeLexicalDictionaryEntries } from "../../../utils/dictionaryLexicon.cjs";
+import {
+  MAX_USER_DICTIONARY_ENTRIES,
+  sanitizeLexicalDictionaryEntries,
+} from "../../../utils/dictionaryLexicon.cjs";
+import {
+  BUILT_IN_CLEANUP_DICTIONARY,
+  getTrustedCleanupDictionary,
+} from "../../../config/cleanupPolicy.cjs";
 
-const MAX_DICTIONARY_ENTRIES = 200;
 const MAX_ENTRY_LENGTH = 80;
+const MAX_TRUSTED_DICTIONARY_ENTRIES =
+  BUILT_IN_CLEANUP_DICTIONARY.length + MAX_USER_DICTIONARY_ENTRIES;
 
 const sanitizeDictionaryEntries = (entries = []) =>
   sanitizeLexicalDictionaryEntries(entries, {
-    maxEntries: MAX_DICTIONARY_ENTRIES,
+    maxEntries: MAX_USER_DICTIONARY_ENTRIES,
     maxEntryLength: MAX_ENTRY_LENGTH,
     maxWords: 1,
   });
@@ -36,6 +44,12 @@ export function getCustomDictionaryArray(
   }
 }
 
+export function getTrustedTranscriptionDictionaryArray(
+  storage = typeof localStorage !== "undefined" ? localStorage : null
+) {
+  return getTrustedCleanupDictionary(getCustomDictionaryArray(storage));
+}
+
 /**
  * @param {{ getItem: (key: string) => string | null } | null | undefined} storage
  * @returns {string|null}
@@ -52,25 +66,32 @@ export function getCustomDictionaryPrompt(
  * Build a provider/model-specific prompt from custom dictionary entries.
  *
  * Notes:
- * - Cloud transcription free-text prompts are intentionally disabled. Even a comma-separated
- *   token list is still natural-language prompt content and can corrupt a transcript.
+ * - The renderer sends only sanitized lexical entries. The trusted main process constructs
+ *   OpenAI's fixed context sentence, so renderer-controlled free text never crosses IPC.
  * - Structured provider context-bias fields are handled separately by their provider adapter.
  *
  * @param {{
  *   model?: string,
  *   entries?: string[],
  * }} options
- * @returns {{ prompt: string | null, entriesUsed: string[], mode: "none" | "disabled-cloud" }}
+ * @returns {{ prompt: null, entriesUsed: string[], mode: "none" | "structured-openai" | "disabled-cloud" }}
  */
 export function buildCustomDictionaryPromptForTranscription(options = {}) {
   const model = options?.model || "";
   const rawEntries = Array.isArray(options?.entries) ? options.entries : [];
-  const entries = sanitizeDictionaryEntries(rawEntries);
+  const entries = sanitizeLexicalDictionaryEntries(rawEntries, {
+    maxEntries: MAX_TRUSTED_DICTIONARY_ENTRIES,
+    maxEntryLength: MAX_ENTRY_LENGTH,
+    maxWords: 1,
+  });
 
   if (entries.length === 0) {
     return { prompt: null, entriesUsed: [], mode: "none" };
   }
 
-  void model;
+  if (model === "gpt-4o-transcribe" || model.startsWith("gpt-4o-mini-transcribe")) {
+    return { prompt: null, entriesUsed: entries, mode: "structured-openai" };
+  }
+
   return { prompt: null, entriesUsed: [], mode: "disabled-cloud" };
 }

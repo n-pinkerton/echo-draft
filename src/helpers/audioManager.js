@@ -11,9 +11,7 @@ import {
   stopStreamingRecording,
   warmupStreamingConnection,
 } from "./audio/streaming/assemblyAiStreamingController";
-import {
-  cancelStreamingStartup as cancelStreamingStartupImpl,
-} from "./audio/streaming/assemblyAiStreamingStart";
+import { cancelStreamingStartup as cancelStreamingStartupImpl } from "./audio/streaming/assemblyAiStreamingStart";
 import { StreamingWorkletManager } from "./audio/streaming/streamingWorkletManager";
 import {
   cancelNonStreamingRecording,
@@ -35,6 +33,7 @@ import {
 import { saveDebugAudioCaptureIfEnabled as saveDebugAudioCapture } from "./audio/debug/debugAudioCaptureClient";
 import {
   safePaste as safePasteImpl,
+  safePasteWithResult as safePasteWithResultImpl,
   saveTranscription as saveTranscriptionImpl,
 } from "./audio/persistence/audioPersistence";
 const REASONING_CACHE_TTL = 30000; // 30 seconds
@@ -110,6 +109,23 @@ class AudioManager {
       processJob: async (audioBlob, metadata, context) => {
         await this.processAudio(audioBlob, metadata, context);
       },
+      onJobError: (error, context) => {
+        const description = `Transcription failed: ${error?.message || String(error)}`;
+        this.emitProgress({
+          stage: "error",
+          stageLabel: "Error",
+          message: description,
+          context,
+        });
+        this.emitError(
+          {
+            title: "Transcription Error",
+            description,
+            context,
+          },
+          error
+        );
+      },
     });
     this._onApiKeyChanged = () => {
       this.openAiTranscriber.resetApiKeyCache();
@@ -123,6 +139,10 @@ class AudioManager {
     this.streamingMainStopPromise = null;
     this.pendingNonStreamingStopContext = null;
     this.pendingNonStreamingStopRequestedAt = null;
+    this.nonStreamingStopPromise = null;
+    this.resolveNonStreamingStop = null;
+    this.nonStreamingStopWatchdog = null;
+    this.nonStreamingRecorderGeneration = 0;
     this.isStopping = false;
     this.pendingStopContext = null;
     this.streamingAudioForwarding = false;
@@ -283,6 +303,16 @@ class AudioManager {
     return stopNonStreamingRecording(this, stopContext) || startupCancelled;
   }
 
+  async stopRecordingAndWaitForClose(stopContext = null) {
+    const startupCancelled = this.cancelStreamingStartup();
+    const didStop = stopNonStreamingRecording(this, stopContext);
+    const closePromise = this.nonStreamingStopPromise;
+    if (!didStop) {
+      return startupCancelled;
+    }
+    return closePromise ? await closePromise : true;
+  }
+
   cancelRecording() {
     const startupCancelled = this.cancelStreamingStartup();
     return cancelNonStreamingRecording(this) || startupCancelled;
@@ -290,18 +320,30 @@ class AudioManager {
 
   cancelProcessing() {
     if (this.isProcessing || this.processingQueue.length > 0) {
+      const cancelledContext = this.activeProcessingContext || this.streamingContext || null;
+      const retainsProcessingLock = Boolean(
+        this.streamingStopPromise || this.processingQueue.isRunning
+      );
       this.activeProcessingAbortController?.abort();
-      this.isProcessing = false;
-      this.processingQueue.cancel();
+      // Cancellation is user-visible immediately, but the internal lock belongs
+      // to the in-flight streaming finalizer or queue runner until that owner
+      // settles. Releasing it here lets new work start under a stale finalizer.
+      if (!retainsProcessingLock) {
+        this.isProcessing = false;
+      }
       this.emitProgress({
         stage: "cancelled",
         stageLabel: "Cancelled",
-        message: "Processing cancelled",
+        message:
+          this.processingQueue.length > 0
+            ? "Current dictation cancelled; queued dictations preserved"
+            : "Processing cancelled",
+        context: cancelledContext,
       });
       this.activeProcessingContext = null;
       this.emitStateChange({
         isRecording: this.isRecording,
-        isProcessing: false,
+        isProcessing: this.isProcessing,
         isStreaming: this.isStreaming,
       });
       return true;
@@ -310,7 +352,7 @@ class AudioManager {
   }
 
   enqueueProcessingJob(audioBlob, metadata = {}, context = null) {
-    this.processingQueue.enqueue(audioBlob, metadata, context);
+    return this.processingQueue.enqueue(audioBlob, metadata, context);
   }
 
   startQueuedProcessingIfPossible() {
@@ -339,6 +381,10 @@ class AudioManager {
     return await safePasteImpl(this, text, options);
   }
 
+  async safePasteWithResult(text, options = {}) {
+    return await safePasteWithResultImpl(this, text, options);
+  }
+
   async saveTranscription(payload) {
     return await saveTranscriptionImpl(payload);
   }
@@ -348,6 +394,7 @@ class AudioManager {
       isRecording: this.isRecording,
       isProcessing: this.isProcessing,
       isStreaming: this.isStreaming,
+      queuedProcessingJobs: this.processingQueue?.length || 0,
     };
   }
 

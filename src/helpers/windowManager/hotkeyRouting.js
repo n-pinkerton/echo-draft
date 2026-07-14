@@ -40,9 +40,9 @@ function sendStartDictation(manager, payload, { logger } = {}) {
 }
 
 function sendStopDictation(manager, payload, { logger } = {}) {
-  if (manager?.hotkeyManager?.isInListeningMode?.()) {
-    return;
-  }
+  // Listening mode owns new keyboard input while a shortcut is being captured, but it must
+  // never suppress an explicit stop. The tray, safety timers, and listener teardown all use
+  // this route to make sure a live microphone cannot be stranded during shortcut editing.
   if (manager?.mainWindow && !manager.mainWindow.isDestroyed()) {
     logger?.debug?.("[Dictation] sendStopDictation", payload, "hotkey");
     emitDictationEvent(manager, "stop-dictation", payload);

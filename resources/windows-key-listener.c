@@ -25,6 +25,10 @@ static BOOL g_requireAlt = FALSE;
 static BOOL g_requireShift = FALSE;
 static BOOL g_requireWin = FALSE;
 static BOOL g_useModifiersOnly = FALSE;
+static BOOL g_tapMode = FALSE;
+static BOOL g_useRegisteredHotKey = FALSE;
+
+#define ECHODRAFT_HOTKEY_ID 1
 
 // Check if required modifiers are currently pressed
 BOOL AreModifiersPressed(void) {
@@ -252,6 +256,22 @@ DWORD ParseCompoundHotkey(const char* hotkey) {
     return mainKeyVk;
 }
 
+UINT GetRegisterHotKeyModifiers(void) {
+    UINT modifiers = MOD_NOREPEAT;
+    if (g_requireCtrl) modifiers |= MOD_CONTROL;
+    if (g_requireAlt) modifiers |= MOD_ALT;
+    if (g_requireShift) modifiers |= MOD_SHIFT;
+    if (g_requireWin) modifiers |= MOD_WIN;
+    return modifiers;
+}
+
+BOOL IsModifierVirtualKey(DWORD virtualKey) {
+    return virtualKey == VK_CONTROL || virtualKey == VK_LCONTROL || virtualKey == VK_RCONTROL ||
+           virtualKey == VK_MENU || virtualKey == VK_LMENU || virtualKey == VK_RMENU ||
+           virtualKey == VK_SHIFT || virtualKey == VK_LSHIFT || virtualKey == VK_RSHIFT ||
+           virtualKey == VK_LWIN || virtualKey == VK_RWIN;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <key>\n", argv[0]);
@@ -261,7 +281,12 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "  %s F13                      (extended function key F13-F24)\n", argv[0]);
         fprintf(stderr, "  %s CommandOrControl+F11     (with modifier)\n", argv[0]);
         fprintf(stderr, "  %s Ctrl+Shift+Space         (multiple modifiers)\n", argv[0]);
+        fprintf(stderr, "  %s F10 --tap                (repeat-safe global tap hotkey)\n", argv[0]);
         return 1;
+    }
+
+    if (argc >= 3 && _stricmp(argv[2], "--tap") == 0) {
+        g_tapMode = TRUE;
     }
 
     g_targetVk = ParseCompoundHotkey(argv[1]);
@@ -274,12 +299,40 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // RegisterHotKey is focus-independent and MOD_NOREPEAT guarantees one event per
+    // physical press. Keep the low-level hook for push-to-talk and modifier-only keys,
+    // where key-up events are required or RegisterHotKey cannot represent the shortcut.
+    g_useRegisteredHotKey =
+        g_tapMode && !g_useModifiersOnly && g_targetVk != 0 && !IsModifierVirtualKey(g_targetVk);
+
     // Log what we're listening for
-    fprintf(stderr, "Listening for: %s (VK=0x%02X, Ctrl=%d, Alt=%d, Shift=%d, Win=%d, ModOnly=%d)\n",
-            argv[1], g_targetVk, g_requireCtrl, g_requireAlt, g_requireShift, g_requireWin, g_useModifiersOnly);
+    fprintf(stderr, "Listening for: %s (VK=0x%02X, Ctrl=%d, Alt=%d, Shift=%d, Win=%d, ModOnly=%d, Tap=%d, Registered=%d)\n",
+            argv[1], g_targetVk, g_requireCtrl, g_requireAlt, g_requireShift, g_requireWin,
+            g_useModifiersOnly, g_tapMode, g_useRegisteredHotKey);
 
     // Set up console handler for clean shutdown
     SetConsoleCtrlHandler(ConsoleHandler, TRUE);
+
+    if (g_useRegisteredHotKey) {
+        if (!RegisterHotKey(NULL, ECHODRAFT_HOTKEY_ID, GetRegisterHotKeyModifiers(), g_targetVk)) {
+            fprintf(stderr, "Error: Failed to register tap hotkey (error %lu)\n", GetLastError());
+            return 1;
+        }
+
+        printf("READY\n");
+        fflush(stdout);
+
+        MSG tapMessage;
+        while (GetMessage(&tapMessage, NULL, 0, 0) > 0) {
+            if (tapMessage.message == WM_HOTKEY && tapMessage.wParam == ECHODRAFT_HOTKEY_ID) {
+                printf("KEY_DOWN\n");
+                fflush(stdout);
+            }
+        }
+
+        UnregisterHotKey(NULL, ECHODRAFT_HOTKEY_ID);
+        return 0;
+    }
 
     // Install the low-level keyboard hook
     g_hook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, NULL, 0);

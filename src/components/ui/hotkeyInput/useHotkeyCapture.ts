@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getPlatform } from "../../../utils/platform";
 import { mapKeyboardEventToHotkey } from "./keyboardEventToHotkey";
-import { buildModifierOnlyHotkey, type HeldModifiers, type ModifierCodes } from "./modifierOnlyHotkey";
+import {
+  buildModifierOnlyHotkey,
+  type HeldModifiers,
+  type ModifierCodes,
+} from "./modifierOnlyHotkey";
 
 const MODIFIER_CODES = new Set([
   "ShiftLeft",
@@ -17,13 +21,14 @@ const MODIFIER_CODES = new Set([
 ]);
 
 const MODIFIER_HOLD_THRESHOLD_MS = 200;
+const HOTKEY_UPDATE_SETTLE_TIMEOUT_MS = 3000;
 
 export interface UseHotkeyCaptureParams {
   disabled: boolean;
   autoFocus: boolean;
   validate?: (hotkey: string) => string | null | undefined;
   captureTarget: "insert" | "clipboard";
-  onChange: (hotkey: string) => void;
+  onChange: (hotkey: string) => void | Promise<void>;
   onBlur?: () => void;
 }
 
@@ -46,7 +51,14 @@ export function useHotkeyCapture({
   const warningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fnHeldRef = useRef(false);
   const fnCapturedKeyRef = useRef(false);
-  const heldModifiersRef = useRef<HeldModifiers>({ ctrl: false, meta: false, alt: false, shift: false });
+  const isFinalizingRef = useRef(false);
+  const captureReleasedRef = useRef(true);
+  const heldModifiersRef = useRef<HeldModifiers>({
+    ctrl: false,
+    meta: false,
+    alt: false,
+    shift: false,
+  });
   const modifierCodesRef = useRef<ModifierCodes>({});
 
   const platform = getPlatform();
@@ -59,8 +71,25 @@ export function useHotkeyCapture({
     fnCapturedKeyRef.current = false;
   }, []);
 
+  const releaseCapture = useCallback(() => {
+    if (captureReleasedRef.current) return;
+    captureReleasedRef.current = true;
+    setIsCapturing(false);
+    setActiveModifiers(new Set());
+    setValidationWarning(null);
+    clearFnHeld();
+    window.electronAPI?.setHotkeyListeningMode?.(
+      false,
+      lastCapturedHotkeyRef.current,
+      captureTarget
+    );
+    lastCapturedHotkeyRef.current = null;
+    onBlur?.();
+  }, [captureTarget, onBlur, clearFnHeld]);
+
   const finalizeCapture = useCallback(
-    (hotkey: string) => {
+    async (hotkey: string) => {
+      if (isFinalizingRef.current) return;
       if (warningTimeoutRef.current) {
         clearTimeout(warningTimeoutRef.current);
         warningTimeoutRef.current = null;
@@ -80,15 +109,39 @@ export function useHotkeyCapture({
         }
       }
 
+      isFinalizingRef.current = true;
       setValidationWarning(null);
       lastCapturedHotkeyRef.current = hotkey;
-      onChange(hotkey);
-      setIsCapturing(false);
-      setActiveModifiers(new Set());
-      clearFnHeld();
-      containerRef.current?.blur();
+      let settleTimer: ReturnType<typeof setTimeout> | null = null;
+      try {
+        // Persist/register first so the main process can recover the accepted shortcut on blur.
+        // Calling blur immediately used to race the update IPC and restart a stale native route.
+        let update: Promise<void>;
+        try {
+          update = Promise.resolve(onChange(hotkey));
+        } catch (error) {
+          update = Promise.reject(error);
+        }
+        const settledUpdate = update.catch(() => undefined);
+        await Promise.race([
+          settledUpdate,
+          new Promise<void>((resolve) => {
+            // A lost renderer/main-process reply must not leave all dictation shortcuts disabled.
+            // The update promise keeps its rejection handler if it settles after this deadline.
+            settleTimer = setTimeout(resolve, HOTKEY_UPDATE_SETTLE_TIMEOUT_MS);
+          }),
+        ]);
+      } catch {
+        // Registration failures are presented by the owning settings flow; blur still has to
+        // release capture mode so the previously accepted shortcut can be recovered.
+      } finally {
+        if (settleTimer) clearTimeout(settleTimer);
+        isFinalizingRef.current = false;
+        releaseCapture();
+        containerRef.current?.blur();
+      }
     },
-    [validate, onChange, clearFnHeld]
+    [validate, onChange, clearFnHeld, releaseCapture]
   );
 
   const handleKeyDown = useCallback(
@@ -137,9 +190,9 @@ export function useHotkeyCapture({
         keyDownTimeRef.current = 0;
         if (fnHeldRef.current) {
           fnCapturedKeyRef.current = true;
-          finalizeCapture(`Fn+${hotkey}`);
+          void finalizeCapture(`Fn+${hotkey}`);
         } else {
-          finalizeCapture(hotkey);
+          void finalizeCapture(hotkey);
         }
       }
     },
@@ -163,14 +216,18 @@ export function useHotkeyCapture({
         const holdDuration = Date.now() - keyDownTimeRef.current;
 
         if (holdDuration >= MODIFIER_HOLD_THRESHOLD_MS) {
-          const modifierHotkey = buildModifierOnlyHotkey(heldModifiersRef.current, modifierCodesRef.current, { isMac });
+          const modifierHotkey = buildModifierOnlyHotkey(
+            heldModifiersRef.current,
+            modifierCodesRef.current,
+            { isMac }
+          );
           if (modifierHotkey) {
             attempted = true;
             if (fnHeldRef.current) {
               fnCapturedKeyRef.current = true;
-              finalizeCapture(`Fn+${modifierHotkey}`);
+              void finalizeCapture(`Fn+${modifierHotkey}`);
             } else {
-              finalizeCapture(modifierHotkey);
+              void finalizeCapture(modifierHotkey);
             }
           }
         }
@@ -191,24 +248,16 @@ export function useHotkeyCapture({
       return;
     }
     setIsCapturing(true);
+    captureReleasedRef.current = false;
     setValidationWarning(null);
     clearFnHeld();
     window.electronAPI?.setHotkeyListeningMode?.(true, null, captureTarget);
   }, [captureTarget, disabled, clearFnHeld]);
 
   const handleBlur = useCallback(() => {
-    setIsCapturing(false);
-    setActiveModifiers(new Set());
-    setValidationWarning(null);
-    clearFnHeld();
-    window.electronAPI?.setHotkeyListeningMode?.(
-      false,
-      lastCapturedHotkeyRef.current,
-      captureTarget
-    );
-    lastCapturedHotkeyRef.current = null;
-    onBlur?.();
-  }, [captureTarget, onBlur, clearFnHeld]);
+    if (isFinalizingRef.current) return;
+    releaseCapture();
+  }, [releaseCapture]);
 
   useEffect(() => {
     if (autoFocus && containerRef.current) {
@@ -236,7 +285,7 @@ export function useHotkeyCapture({
 
     const disposeUp = window.electronAPI?.onGlobeKeyReleased?.(() => {
       if (fnHeldRef.current && !fnCapturedKeyRef.current) {
-        finalizeCapture("GLOBE");
+        void finalizeCapture("GLOBE");
       }
       setIsFnHeld(false);
       fnHeldRef.current = false;
@@ -262,4 +311,3 @@ export function useHotkeyCapture({
     validationWarning,
   };
 }
-

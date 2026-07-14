@@ -1,8 +1,100 @@
 import { describe, expect, it } from "vitest";
 
-import { assessCleanupFidelity } from "./cleanupFidelity.js";
+import {
+  assessCleanupFidelity,
+  assessStrictCleanupLexicalFidelity,
+  applyStrictCleanupTokensToOriginalPunctuation,
+  applyTrustedPreferredSpellingAliases,
+} from "./cleanupFidelity.js";
 
 describe("assessCleanupFidelity", () => {
+  it("applies only counted trusted aliases toward a saved canonical spelling", () => {
+    expect(
+      applyTrustedPreferredSpellingAliases(
+        "Ask Rilji and Rilji to review this.",
+        "Ask Rilji and Rilji to review this.",
+        ["Rilje"]
+      )
+    ).toBe("Ask Rilje and Rilje to review this.");
+    expect(
+      applyTrustedPreferredSpellingAliases(
+        "Ask Rilje and Benge to review this.",
+        "Ask Rilji and Benge to review this.",
+        ["Rilje"]
+      )
+    ).toBe("Ask Rilji and Benge to review this.");
+    expect(
+      applyTrustedPreferredSpellingAliases(
+        "Form is a heading; keep the form attached.",
+        "Form is a heading; keep the form attached.",
+        ["Farm"]
+      )
+    ).toBe("Form is a heading; keep the form attached.");
+  });
+
+  it("binds a trusted Rilje repair to the same lexical position", () => {
+    expect(
+      applyTrustedPreferredSpellingAliases(
+        "Ask Rilji to brief Morgan today.",
+        "Ask Morgan to brief Rilji today.",
+        ["Rilje"]
+      )
+    ).toBe("Ask Morgan to brief Rilji today.");
+    expect(
+      applyTrustedPreferredSpellingAliases(
+        "Ask rilji to brief Morgan today.",
+        "Ask rilji to brief Morgan today.",
+        ["Rilje"]
+      )
+    ).toBe("Ask rilji to brief Morgan today.");
+  });
+
+  it.each([
+    "Keep Rilji unchanged.",
+    "Leave Rilji exactly as written.",
+    "Do not alter Rilji.",
+    'Keep " Rilji " exactly.',
+    "Keep ` Rilji ` exactly.",
+    "Rilji is still the identifier.",
+    "Rilji remains an identifier.",
+    "Keep the identifier in this example set to Rilji.",
+    "Rilji should not be corrected.",
+    "Rilji should not be respelled.",
+    "Rilji should not be renamed.",
+    "Rilji shouldn't be corrected.",
+    "Rilji is not to be changed.",
+    "Rilji must never be renamed.",
+    "Rilji has not been respelled.",
+    "Call Rilji the identifier in this example.",
+    "Please call Rilji a literal token.",
+    "Show Rilji as the label in the interface.",
+  ])("does not deterministically rewrite protected Rilji text: %s", (original) => {
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
+  });
+
+  it.each([
+    ["Tell Rilji about the review.", "Tell Rilje about the review."],
+    ["I spoke with Rilji about the proposal.", "I spoke with Rilje about the proposal."],
+    ["Rilji, please review the proposal.", "Rilje, please review the proposal."],
+    ["Hello Rilji.", "Hello Rilje."],
+  ])("repairs Rilji only in positive person-name grammar: %s", (original, expected) => {
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(expected);
+  });
+
+  it.each([
+    ["Sushi is ready.", "Sushe"],
+    ["Bikini was approved.", "Bikine"],
+    ["Houdini reviewed the proposal.", "Houdine"],
+    ["Delhi remains available.", "Delhe"],
+    ["Sushi says fresh on the label.", "Sushe"],
+    ["Houdini says the render failed.", "Houdine"],
+  ])(
+    "does not rewrite a non-person subject from dictionary shape alone: %s",
+    (original, preferred) => {
+      expect(applyTrustedPreferredSpellingAliases(original, original, [preferred])).toBe(original);
+    }
+  );
+
   it("accepts punctuation, spelling, and local clarity edits", () => {
     const original =
       "please check item 42 and ask did we preserve every caveat because i do not want the exception removed";
@@ -284,26 +376,186 @@ describe("assessCleanupFidelity", () => {
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
   });
 
-  it("allows explicit spoken punctuation and a transposition spelling repair", () => {
+  it("allows explicit spoken punctuation without authorizing unrelated spelling changes", () => {
     expect(
       assessCleanupFidelity(
         "Do not move the Friday deadline question mark",
         "Do not move the Friday deadline?"
       )
     ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it.each([
+    ["Please read this question mark", "Please read this?"],
+    ["Can you enter this question mark", "Can you enter this?"],
+    ["This is final full stop", "This is final."],
+  ])("accepts spoken punctuation after a positively complete clause: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: true,
+      reasons: [],
+    });
+  });
+
+  it("accepts occurrence-aligned full-stop and paragraph conversions", () => {
+    expect(assessCleanupFidelity("Keep Alpha full stop", "Keep Alpha.")).toMatchObject({
+      accepted: true,
+      reasons: [],
+    });
     expect(
-      assessCleanupFidelity(
-        "Please keep the formta settings and preserve every note",
-        "Please keep the format settings and preserve every note."
-      )
+      assessCleanupFidelity("Keep Alpha new paragraph Keep Beta", "Keep Alpha\n\nKeep Beta.")
     ).toMatchObject({ accepted: true, reasons: [] });
   });
 
-  it("allows harmless inflection and one-character spelling repairs in long text", () => {
+  it.each([
+    ["Ask whether the phrase question mark is confusing.", "Ask whether the phrase is confusing."],
+    ["Explain why the words full stop are formal.", "Explain why the words are formal."],
+    [
+      "Keep the term new paragraph in the interface label.",
+      "Keep the term in the interface label.",
+    ],
+  ])("rejects deletion of a literal spoken-formatting phrase: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it.each([
+    [
+      "Ask whether the phrase question mark is confusing.",
+      "Ask whether the phrase is confusing. No.",
+    ],
+    ["Ask whether the term full stop is formal.", "Ask whether the term is formal. OK."],
+    [
+      "Ask whether the words new paragraph belong in the label.",
+      "Ask whether the words belong in the label. 4.",
+    ],
+  ])(
+    "rejects literal formatting deletion even when an answer is appended: %s",
+    (original, cleaned) => {
+      expect(assessCleanupFidelity(original, cleaned).accepted).toBe(false);
+    }
+  );
+
+  it.each([
+    [
+      "Ask whether the phrase called question mark is confusing.",
+      "Ask whether the phrase called? is confusing.",
+    ],
+    ["Ask whether the term for question mark is correct.", "Ask whether the term for? is correct."],
+    ["Write question mark as two words.", "Write? as two words."],
+    ["Explain why question mark is written as two words.", "Explain why? is written as two words."],
+    [
+      "Keep the label named new paragraph in the interface.",
+      "Keep the label named\n\nin the interface.",
+    ],
+  ])("rejects relational or named formatting terminology: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it.each([
+    ["Can you type question mark", "Can you type?"],
+    ["Can you enter question mark", "Can you enter?"],
+    ["Can you pronounce question mark", "Can you pronounce?"],
+    ["Please write down question mark", "Please write down?"],
+    ["Please read me question mark", "Please read me?"],
+    ["Can you explain to me question mark", "Can you explain to me?"],
+    ["Can you pronounce out loud question mark", "Can you pronounce out loud?"],
+    ["Please read to Sam question mark", "Please read to Sam?"],
+    ["Can you explain to Sam question mark", "Can you explain to Sam?"],
+    ["Please write down for the team question mark", "Please write down for the team?"],
+    ["Can you pronounce for Sam question mark", "Can you pronounce for Sam?"],
+    ["Do you read to Sam question mark", "Do you read to Sam?"],
+    ["Did you write for the team question mark", "Did you write for the team?"],
+    ["Please read question mark", "Please read?"],
+    ["Please retain question mark", "Please retain?"],
+    ["Please write question mark", "Please write?"],
+    ["Do not replace question mark", "Do not replace?"],
+    ["Please preserve full stop", "Please preserve."],
+    ["Please include exclamation mark", "Please include!"],
+  ])("rejects a terminal formatting phrase used as a verb object: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it.each([
+    ["Please write down the answer question mark", "Please write down the answer?"],
+    ["Please read me the note question mark", "Please read me the note?"],
+    ["Can you explain the issue to me question mark", "Can you explain the issue to me?"],
+    ["Can you pronounce the name out loud question mark", "Can you pronounce the name out loud?"],
+    ["Please read this to Sam question mark", "Please read this to Sam?"],
+    ["Can you explain the issue to Sam question mark", "Can you explain the issue to Sam?"],
+    [
+      "Please write down the answer for the team question mark",
+      "Please write down the answer for the team?",
+    ],
+    ["Can you pronounce the name for Sam question mark", "Can you pronounce the name for Sam?"],
+    ["Do you read this to Sam question mark", "Do you read this to Sam?"],
+    [
+      "Did you write the answer for the team question mark",
+      "Did you write the answer for the team?",
+    ],
+  ])(
+    "accepts spoken punctuation when the formatting verb has a real object: %s",
+    (original, cleaned) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: true,
+        reasons: [],
+      });
+    }
+  );
+
+  it.each([
+    ["Should we proceed question mark", "Should we proceed?"],
+    ["Can we start question mark", "Can we start?"],
+    ["Will it work question mark", "Will it work?"],
+  ])(
+    "accepts spoken punctuation after a complete intransitive question: %s",
+    (original, cleaned) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: true,
+        reasons: [],
+      });
+    }
+  );
+
+  it.each([
+    ["The tool is called New Line. Beta is optional.", "The tool is called.\nBeta is optional."],
+    [
+      "The feature was named New Paragraph. Beta is optional.",
+      "The feature was named.\n\nBeta is optional.",
+    ],
+  ])("rejects a named structural term converted into formatting: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it.each([
+    [
+      "Ask whether the phrases called question mark are confusing.",
+      "Ask whether the phrases called? are confusing. No.",
+    ],
+    [
+      "Explain whether the term for full stop is formal.",
+      "Explain whether the term for. is formal. OK.",
+    ],
+    ["Write new paragraph as two words.", "Write\n\nas two words. 4."],
+  ])("rejects relational formatting deletion with an appended answer: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned).accepted).toBe(false);
+  });
+
+  it("allows punctuation and function-word grammar repairs without lexical substitutions", () => {
     const original =
-      "Please keep the reviewers work aligned with the agreed workflow, preserve every caveat, record the customer examples, name the fallback owner, retain the unresolved timing question, and bring the proposed wording back before making a change. The teams has asked that grammer errors be corrected while every substantive point remains in its original sequence.";
+      "Please keep the reviewers work aligned with the agreed workflow, preserve every caveat, record the customer examples, name the fallback owner, retain the unresolved timing question, and bring the proposed wording back before making a change. The teams has asked that every substantive point remain in its original sequence.";
     const cleaned =
-      "Please keep the reviewers' work aligned with the agreed workflow, preserve every caveat, record the customer example, name the fallback owner, retain the unresolved timing question, and bring the proposed wording back before making a change. The teams have asked that grammar errors be corrected while every substantive point remains in its original sequence.";
+      "Please keep the reviewers' work aligned with the agreed workflow, preserve every caveat, record the customer examples, name the fallback owner, retain the unresolved timing question, and bring the proposed wording back before making a change. The teams have asked that every substantive point remain in its original sequence.";
 
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
       accepted: true,
@@ -312,6 +564,21 @@ describe("assessCleanupFidelity", () => {
         semanticMissingContentWordCount: 0,
         semanticAddedContentWordCount: 0,
       },
+    });
+  });
+
+  it.each([
+    ["The price is final.", "The prize is final."],
+    ["Use three samples.", "Use there samples."],
+    ["Correct the grammer errors.", "Correct the grammar errors."],
+    [
+      "Please keep the formta settings and preserve every note.",
+      "Please keep the format settings and preserve every note.",
+    ],
+  ])("rejects an unauthorised one-edit lexical substitution: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
     });
   });
 
@@ -362,6 +629,51 @@ describe("assessCleanupFidelity", () => {
       accepted: false,
       reasons: expect.arrayContaining(["request-execution-output"]),
     });
+  });
+
+  it.each(["4", "No", "OK"])(
+    "rejects a short answer appended to an otherwise retained request: %s",
+    (answer) => {
+      const original = "Should we publish the release today?";
+      const cleaned = `Should we publish the release today? ${answer}.`;
+
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining(["request-execution-output"]),
+      });
+    }
+  );
+
+  it.each(["4", "No", "OK"])(
+    "rejects an appended answer after converting spoken question punctuation: %s",
+    (answer) => {
+      const original = "Should we publish today question mark";
+      const cleaned = `Should we publish today? ${answer}.`;
+
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining(["request-execution-output"]),
+      });
+    }
+  );
+
+  it("rejects a symbol-only answer appended to a retained request", () => {
+    expect(
+      assessCleanupFidelity("Should we publish today question mark", "Should we publish today? ✅")
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["request-execution-output"]),
+    });
+  });
+
+  it("rejects an appended answer when spoken punctuation and a dictionary spelling both change", () => {
+    expect(
+      assessCleanupFidelity(
+        "Should Rilji publish today question mark",
+        "Should Rilje publish today? No.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({ accepted: false });
   });
 
   it.each([
@@ -476,7 +788,7 @@ describe("assessCleanupFidelity", () => {
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
   });
 
-  it("allows a near-homophone repair only when its target is a trusted preferred spelling", () => {
+  it("does not treat an ordinary lowercase word as a product-name alias", () => {
     const original = "Use the codecs agent to review the release note today.";
     const cleaned = "Use the Codex agent to review the release note today.";
 
@@ -487,11 +799,10 @@ describe("assessCleanupFidelity", () => {
     expect(
       assessCleanupFidelity(original, cleaned, { preferredSpellings: ["Codex"] })
     ).toMatchObject({
-      accepted: true,
-      reasons: [],
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk", "technical-token-change"]),
       metrics: expect.objectContaining({
-        preferredSpellingCorrectionCount: 1,
-        missingProtectedTechnicalTokenCount: 0,
+        preferredSpellingCorrectionCount: 0,
       }),
     });
   });
@@ -514,6 +825,20 @@ describe("assessCleanupFidelity", () => {
       assessCleanupFidelity(
         "Please keep the form attached to the request today.",
         "Please keep the farm attached to the request today.",
+        { preferredSpellings: ["Farm"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
+  it("does not let an unchanged capitalized decoy authorize a lowercase dictionary substitution", () => {
+    expect(
+      assessCleanupFidelity(
+        "Form is the heading, and keep the form attached today.",
+        "Form is the heading, and keep the Farm attached today.",
         { preferredSpellings: ["Farm"] }
       )
     ).toMatchObject({
@@ -591,25 +916,19 @@ describe("assessCleanupFidelity", () => {
     ["Deploy the release.", "Everything is in order."],
     ["Deploy the release.", "Everything is under control."],
     ["Should we deploy the release?", "Everything looks good."],
-  ])(
-    "rejects a short action rewritten as an unrelated declarative: %s",
-    (original, cleaned) => {
-      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
-        accepted: false,
-        reasons: expect.arrayContaining(["request-execution-output"]),
-      });
-    }
-  );
+  ])("rejects a short action rewritten as an unrelated declarative: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["request-execution-output"]),
+    });
+  });
 
   it.each([
     ["everything looks good", "Everything looks good."],
     ["the release is under control", "The release is under control."],
     ["deployment is in order", "Deployment is in order."],
     ["should we deploy the release", "Should we deploy the release?"],
-    [
-      "what should we do with the stale draft",
-      "What should we do with the stale draft?",
-    ],
+    ["what should we do with the stale draft", "What should we do with the stale draft?"],
   ])("accepts a genuine declarative or retained-intent question: %s", (original, cleaned) => {
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
   });
@@ -626,10 +945,288 @@ describe("assessCleanupFidelity", () => {
     "Nigel sent the invoice.",
     "The answer is in the release note.",
   ])("preserves originally dictated declarative statements: %s", (original) => {
-    expect(assessCleanupFidelity(original, original)).toMatchObject({ accepted: true, reasons: [] });
+    expect(assessCleanupFidelity(original, original)).toMatchObject({
+      accepted: true,
+      reasons: [],
+    });
   });
 
   it("allows filler-only empty input to remain empty", () => {
     expect(assessCleanupFidelity("", "")).toMatchObject({ accepted: true });
+  });
+
+  it("allows correction toward Rilje but never away from the canonical dictionary spelling", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please ask Rilji to review the release note today.",
+        "Please ask Rilje to review the release note today.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({
+      accepted: true,
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+
+    expect(
+      assessCleanupFidelity(
+        "Please ask Rilje to review the release note today.",
+        "Please ask Rilji to review the release note today.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it("does not authorize an unrelated terminal-vowel name change from the dictionary alone", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please ask Mary to review the release note today.",
+        "Please ask Mara to review the release note today.",
+        { preferredSpellings: ["Mara"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
+  it.each([
+    ["Sushi is ready.", "Sushe is ready.", "Sushe"],
+    ["Bikini was approved.", "Bikine was approved.", "Bikine"],
+    ["Houdini reviewed the proposal.", "Houdine reviewed the proposal.", "Houdine"],
+    ["Delhi remains available.", "Delhe remains available.", "Delhe"],
+    ["Sushi says fresh on the label.", "Sushe says fresh on the label.", "Sushe"],
+    ["Houdini says the render failed.", "Houdine says the render failed.", "Houdine"],
+  ])(
+    "rejects a dictionary-shaped correction to a non-person subject: %s",
+    (original, cleaned, preferred) => {
+      expect(
+        assessCleanupFidelity(original, cleaned, { preferredSpellings: [preferred] })
+      ).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+        metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+      });
+    }
+  );
+
+  it.each([
+    ["Keep identifier RILJI unchanged.", "Keep identifier Rilje unchanged."],
+    ["Keep variable RilJi unchanged.", "Keep variable Rilje unchanged."],
+    ["Please preserve the literal Rilji exactly.", "Please preserve the literal Rilje exactly."],
+    ["Keep the label Rilji unchanged.", "Keep the label Rilje unchanged."],
+    ["Rilji is the identifier in this example.", "Rilje is the identifier in this example."],
+    ["Keep Rilji unchanged.", "Keep Rilje unchanged."],
+    ["Leave Rilji exactly as written.", "Leave Rilje exactly as written."],
+    ["Do not alter Rilji.", "Do not alter Rilje."],
+    ['Keep " Rilji " exactly.', 'Keep " Rilje " exactly.'],
+    ["Keep ` Rilji ` exactly.", "Keep ` Rilje ` exactly."],
+    ["Rilji is still the identifier.", "Rilje is still the identifier."],
+    ["Rilji remains an identifier.", "Rilje remains an identifier."],
+    ["Rilji should not be corrected.", "Rilje should not be corrected."],
+    ["Rilji should not be respelled.", "Rilje should not be respelled."],
+    ["Rilji should not be renamed.", "Rilje should not be renamed."],
+    ["Rilji shouldn't be corrected.", "Rilje shouldn't be corrected."],
+    ["Rilji is not to be changed.", "Rilje is not to be changed."],
+    ["Rilji must never be renamed.", "Rilje must never be renamed."],
+    ["Rilji has not been respelled.", "Rilje has not been respelled."],
+    ["Call Rilji the identifier in this example.", "Call Rilje the identifier in this example."],
+    ["Please call Rilji a literal token.", "Please call Rilje a literal token."],
+    ["Show Rilji as the label in the interface.", "Show Rilje as the label in the interface."],
+    [
+      "Keep the identifier in this example set to Rilji.",
+      "Keep the identifier in this example set to Rilje.",
+    ],
+  ])("does not apply the Rilje alias in technical or literal context: %s", (original, cleaned) => {
+    expect(
+      assessCleanupFidelity(original, cleaned, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: false,
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
+  it("binds each Rilje correction to an authorized source occurrence", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please ask Rilji and Benge to review the release note today.",
+        "Please ask Rilje and Rilje to review the release note today.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+
+    expect(
+      assessCleanupFidelity(
+        "Please ask Rilji and Rilji to review the release note today.",
+        "Please ask Rilje and Rilje to review the release note today.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 2 }),
+    });
+  });
+
+  it("does not let a displaced exact match authorize a Rilje correction", () => {
+    expect(
+      assessCleanupFidelity("Ask Rilji and Benge today.", "Ask Benge and Rilje today.", {
+        preferredSpellings: ["Rilje"],
+      })
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
+  it("does not mistake repeated authorized Rilje corrections for reordered clauses", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please ask Rilji to review the proposal and send Rilji the figures.",
+        "Please ask Rilje to review the proposal and send Rilje the figures.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({
+        preferredSpellingCorrectionCount: 2,
+        orderedBigramRetention: 1,
+      }),
+    });
+  });
+});
+
+describe("assessStrictCleanupLexicalFidelity", () => {
+  it("keeps source punctuation while accepting safe casing from a token-locked retry", () => {
+    const original = "please keep the caveat, then ask did both teams approve.";
+    const cleaned = "Please keep the caveat. Then ask, did both teams approve?";
+
+    expect(applyStrictCleanupTokensToOriginalPunctuation(original, cleaned)).toBe(
+      "Please keep the caveat, then ask did both teams approve."
+    );
+  });
+
+  it("preserves acronym and mixed-case tokens during strict sentence casing", () => {
+    const original = "US leads this. IT supports PowerShell.";
+    const cleaned = "Us leads this. It supports Powershell.";
+
+    expect(applyStrictCleanupTokensToOriginalPunctuation(original, cleaned)).toBe(original);
+    expect(
+      applyStrictCleanupTokensToOriginalPunctuation(
+        "please retain this. then send it.",
+        "Please retain this. Then send it."
+      )
+    ).toBe("Please retain this. Then send it.");
+  });
+
+  it("returns the source unchanged when the retry changes a lexical token", () => {
+    const original = "Keep the budget caveat.";
+    const cleaned = "Keep the pricing caveat.";
+
+    expect(applyStrictCleanupTokensToOriginalPunctuation(original, cleaned)).toBe(original);
+  });
+
+  it("accepts punctuation, capitalization, paragraphs, and apostrophe glyph changes only", () => {
+    const original = "she said keep O’Reilly ready then call me";
+    const cleaned = "She said, ‘Keep O'Reilly ready.’\n\nThen call me.";
+
+    expect(assessStrictCleanupLexicalFidelity(original, cleaned)).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: {
+        strictLexicalOriginalTokenCount: 8,
+        strictLexicalCleanedTokenCount: 8,
+        strictLexicalFirstMismatchIndex: null,
+      },
+    });
+  });
+
+  it.each([
+    ["addition", "keep every caveat", "please keep every caveat"],
+    ["removal", "keep every caveat", "keep caveat"],
+    ["replacement", "keep every caveat", "retain every caveat"],
+    ["reordering", "keep every caveat", "keep caveat every"],
+    ["contraction expansion", "we can't ship today", "we can not ship today"],
+  ])("rejects lexical %s", (_change, original, cleaned) => {
+    expect(assessStrictCleanupLexicalFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
+      metrics: {
+        strictLexicalFirstMismatchIndex: expect.any(Number),
+      },
+    });
+  });
+
+  it.each([
+    ["ordinary Unicode case", "Māori café déjà", "MĀORI, Café; déjà.", undefined],
+    ["Turkish dotted-I case", "İstanbul IĞDIR", "istanbul ığdır", { language: "tr" }],
+    ["apostrophe glyphs", "OʼReilly O’Connor", "O'Reilly O'Connor", undefined],
+    ["canonical accents", "café", "cafe\u0301", undefined],
+  ])("accepts permitted %s changes", (_kind, original, cleaned, options) => {
+    expect(assessStrictCleanupLexicalFidelity(original, cleaned, options)).toMatchObject({
+      accepted: true,
+      reasons: [],
+    });
+  });
+
+  it.each([
+    ["dotless to dotted", "Keep ı unchanged", "Keep i unchanged"],
+    ["dotted to dotless", "Keep İ unchanged", "Keep ı unchanged"],
+  ])("rejects a Turkish %s substitution", (_kind, original, cleaned) => {
+    expect(assessStrictCleanupLexicalFidelity(original, cleaned, { language: "tr" })).toMatchObject(
+      {
+        accepted: false,
+        reasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
+      }
+    );
+  });
+
+  it.each([
+    ["currency replacement", "Keep the budget at $100", "Keep the budget at €100"],
+    ["percent deletion", "Keep the threshold at 50%", "Keep the threshold at 50"],
+    ["operator replacement", "Keep x+y unchanged", "Keep x-y unchanged"],
+    ["email delimiter", "Send it to a@b.com", "Send it to a.b.com"],
+    ["Windows path", "Use C:/tmp today", "Use C tmp today"],
+    ["model number", "Keep GPT-5.6 selected", "Keep GPT 5.6 selected"],
+    ["currency relocation", "Pay $100 and 200 later", "Pay 100 and $200 later"],
+    ["percentage relocation", "Keep 50% on A and 40 on B", "Keep 50 on A and 40% on B"],
+    ["operator relocation", "Keep x + y z", "Keep x y + z"],
+    ["hashtag relocation", "Use #Alpha then Beta", "Use Alpha then #Beta"],
+    ["ampersand relocation", "Keep A & B C", "Keep A B & C"],
+    ["duplicate email relocation", "Use a@a a", "Use a a@a"],
+    ["UNC root deletion", "Use \\\\server\\share", "Use server\\share"],
+    ["POSIX root deletion", "Use /usr/local", "Use usr/local"],
+    ["trailing path delimiter deletion", "Use C:\\tmp\\", "Use C:\\tmp"],
+    ["URL query delimiter replacement", "Open https://x.test?a=1", "Open https://x.test/a=1"],
+    ["astral symbol replacement", "Keep ✅ beside Alpha", "Keep ❌ beside Alpha"],
+  ])("rejects a changed or relocated protected %s token", (_kind, original, cleaned) => {
+    expect(assessStrictCleanupLexicalFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["strict-significant-token-change"]),
+    });
+  });
+
+  it.each([
+    ["Devanagari vowel mark", "कि", "की"],
+    ["Arabic vowel mark", "بَ", "بِ"],
+    ["Hebrew vowel mark", "בַ", "בָ"],
+    ["circled number", "Keep ①", "Keep 1"],
+    ["superscript number", "Keep x²", "Keep x2"],
+    ["full-width identifier", "Keep ＡＢＣ", "Keep ABC"],
+    ["compatibility ligature", "Keep ﬁle", "Keep file"],
+  ])("rejects a Unicode compatibility or mark change: %s", (_kind, original, cleaned) => {
+    expect(assessStrictCleanupLexicalFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
+    });
   });
 });

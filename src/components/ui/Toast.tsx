@@ -129,10 +129,11 @@ const ToastViewport: React.FC<{
 
   return (
     <div
+      data-testid="toast-viewport"
       className={cn(
         "fixed z-50 flex flex-col gap-1.5 pointer-events-none",
         isDictationPanel
-          ? "bottom-44 right-4 items-end" // Clear the status widget in the dictation panel
+          ? "bottom-20 right-4 items-end" // Reserve the fixed 72px status zone plus an 8px gap.
           : "bottom-5 right-5" // Standard position in control panel
       )}
     >
@@ -140,9 +141,12 @@ const ToastViewport: React.FC<{
         <Toast
           key={toast.id}
           {...toast}
-          onClose={() => onDismiss(toast.id)}
-          onPauseTimer={() => onPauseTimer(toast.id)}
-          onResumeTimer={(remaining) => onResumeTimer(toast.id, remaining)}
+          interactive={!isDictationPanel}
+          onClose={isDictationPanel ? undefined : () => onDismiss(toast.id)}
+          onPauseTimer={isDictationPanel ? undefined : () => onPauseTimer(toast.id)}
+          onResumeTimer={
+            isDictationPanel ? undefined : (remaining) => onResumeTimer(toast.id, remaining)
+          }
         />
       ))}
     </div>
@@ -193,9 +197,10 @@ const variantConfig = {
 
 const Toast: React.FC<
   ToastState & {
+    interactive?: boolean;
     onClose?: () => void;
-    onPauseTimer: () => void;
-    onResumeTimer: (remaining: number) => void;
+    onPauseTimer?: () => void;
+    onResumeTimer?: (remaining: number) => void;
   }
 > = ({
   title,
@@ -206,6 +211,7 @@ const Toast: React.FC<
   duration = 3500,
   isExiting,
   createdAt,
+  interactive = true,
   onClose,
   onPauseTimer,
   onResumeTimer,
@@ -216,15 +222,16 @@ const Toast: React.FC<
   const isCompact = size === "compact";
 
   const handleMouseEnter = () => {
+    if (!interactive) return;
     pausedAtRef.current = Date.now();
-    onPauseTimer();
+    onPauseTimer?.();
   };
 
   const handleMouseLeave = () => {
-    if (pausedAtRef.current && duration > 0) {
+    if (interactive && pausedAtRef.current && duration > 0) {
       const elapsed = pausedAtRef.current - createdAt;
       const remaining = Math.max(duration - elapsed, 500);
-      onResumeTimer(remaining);
+      onResumeTimer?.(remaining);
     }
     pausedAtRef.current = null;
   };
@@ -235,7 +242,8 @@ const Toast: React.FC<
       aria-live={variant === "destructive" ? "assertive" : "polite"}
       aria-atomic="true"
       className={cn(
-        "pointer-events-auto relative flex items-start overflow-hidden",
+        interactive ? "pointer-events-auto" : "pointer-events-none",
+        "relative flex items-start overflow-hidden",
         isCompact
           ? "gap-2 w-[220px] px-2.5 py-1.5 pr-6 rounded-[999px]"
           : "gap-2.5 w-[320px] px-3 py-2.5 pr-8 rounded-[6px]",
@@ -246,8 +254,8 @@ const Toast: React.FC<
           : "opacity-100 translate-x-0 scale-100 animate-in slide-in-from-right-4 fade-in-0 duration-300",
         config.containerClass
       )}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={interactive ? handleMouseEnter : undefined}
+      onMouseLeave={interactive ? handleMouseLeave : undefined}
     >
       <Icon
         className={cn(

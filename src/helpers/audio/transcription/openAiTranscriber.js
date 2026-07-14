@@ -188,9 +188,9 @@ export class OpenAiTranscriber {
 
       if (provider === "groq") return "whisper-large-v3-turbo";
       if (provider === "mistral") return "voxtral-mini-latest";
-      return "gpt-4o-mini-transcribe";
+      return "gpt-4o-transcribe";
     } catch {
-      return "gpt-4o-mini-transcribe";
+      return "gpt-4o-transcribe";
     }
   }
 

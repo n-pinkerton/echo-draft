@@ -1,6 +1,14 @@
 const { requireTrustedRenderer } = require("../trustedRenderer");
 
 const MAX_CLIPBOARD_TEXT_CHARS = 1_000_000;
+const SAFE_PASTE_FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,95}$/;
+
+const normalizePasteFailureCode = (error) => {
+  const code = typeof error?.code === "string" ? error.code.trim() : "";
+  return SAFE_PASTE_FAILURE_CODE.test(code) ? code : "AUTOMATIC_INSERTION_FAILED";
+};
+
+const pasteFailure = (errorCode) => ({ success: false, errorCode });
 
 const validateText = (text) => {
   if (typeof text !== "string" || text.length > MAX_CLIPBOARD_TEXT_CHARS) {
@@ -23,32 +31,41 @@ function registerClipboardHandlers(
       webContents: event.sender,
     };
     if (platform === "win32" && !options?.insertionTarget) {
-      const error = new Error(
-        "Automatic insertion requires the authenticated window captured when dictation started."
-      );
-      error.code = "MISSING_INSERTION_TARGET";
-      throw error;
+      return pasteFailure("MISSING_INSERTION_TARGET");
     }
     if (options?.insertionTarget) {
       const sessionId = typeof options?.sessionId === "string" ? options.sessionId.trim() : "";
       if (!sessionId || !windowManager?.isIssuedDictationSession?.(sessionId, "insert")) {
-        const error = new Error("The insertion target session is invalid or expired.");
-        error.code = "INVALID_INSERTION_SESSION";
-        throw error;
+        return pasteFailure("INVALID_INSERTION_SESSION");
       }
       const target = clipboardManager.consumeInsertionTargetCapability(options.insertionTarget, {
         ownerId: event.sender.id,
         sessionId,
       });
       if (!target) {
-        const error = new Error("The insertion target is invalid, expired, or already used.");
-        error.code = "INVALID_INSERTION_TARGET";
-        throw error;
+        return pasteFailure("INVALID_INSERTION_TARGET");
       }
       normalizedOptions.insertionTarget = target;
     }
 
-    return clipboardManager.pasteText(text, normalizedOptions);
+    try {
+      const pasteResult = await clipboardManager.pasteText(text, normalizedOptions);
+      return {
+        success: true,
+        ...(pasteResult?.injected === true ? { inserted: true } : {}),
+        ...(pasteResult?.clipboardRestored === false
+          ? {
+              clipboardRestored: false,
+              warningCode: normalizePasteFailureCode({ code: pasteResult.warningCode }),
+            }
+          : {}),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        errorCode: normalizePasteFailureCode(error),
+      };
+    }
   });
 
   ipcMain.handle("write-clipboard", async (event, text) => {

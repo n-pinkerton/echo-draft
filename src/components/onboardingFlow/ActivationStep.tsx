@@ -40,7 +40,7 @@ export function OnboardingActivationStep({
           </div>
           <HotkeyInput
             value={hotkey}
-            onChange={(newHotkey) => void onHotkeyChange(newHotkey)}
+            onChange={onHotkeyChange}
             disabled={isHotkeyRegistering}
             variant="hero"
             validate={validateHotkey}
@@ -88,4 +88,3 @@ export function OnboardingActivationStep({
     </div>
   );
 }
-

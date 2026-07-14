@@ -52,7 +52,7 @@ describe("TrayManager recovery copy", () => {
     });
 
     expect(trayManager.getStatusLabel(false)).toBe(
-      "Status: OpenAI is taking longer than usual 0:12"
+      "Status: OpenAI is taking longer than usual 0:12 · Insert"
     );
     const cancelItem = trayManager
       .buildContextMenuTemplate()
@@ -61,5 +61,53 @@ describe("TrayManager recovery copy", () => {
 
     cancelItem?.click();
     expect(sendCancelProcessing).toHaveBeenCalledOnce();
+  });
+
+  it("identifies the destination and waiting work in active status text", () => {
+    const trayManager = new TrayManager();
+    trayManager.updateDictationStatus({
+      stage: "cleaning",
+      stageLabel: "Cleaning",
+      stageElapsedMs: 7_000,
+      outputMode: "clipboard",
+      waitingJobCount: 2,
+      isProcessing: true,
+    });
+
+    expect(trayManager.getStatusLabel(false)).toBe("Status: Cleaning 0:07 · Clipboard · 2 waiting");
+  });
+
+  it("keeps clipboard dictation available while earlier jobs process", () => {
+    const trayManager = new TrayManager();
+    const sendStartDictation = vi.fn();
+    const createSessionPayload = vi.fn(() => ({
+      sessionId: "stacked-clipboard",
+      outputMode: "clipboard",
+    }));
+    trayManager.setWindowManager({
+      sendStartDictation,
+      createSessionPayload,
+      windowsPushToTalkAvailable: true,
+    });
+    trayManager.updateDictationStatus({
+      stage: "transcribing",
+      stageLabel: "Transcribing",
+      queuedJobCount: 1,
+      isProcessing: true,
+      isRecording: false,
+    });
+
+    const menu = trayManager.buildContextMenuTemplate();
+    const queueItem = menu.find((item: any) => String(item.label).startsWith("Queue:"));
+    const startItem = menu.find((item: any) => item.label === "Start Clipboard Dictation");
+
+    expect(queueItem).toMatchObject({ visible: true, enabled: false });
+    expect(queueItem?.label).toContain("1 dictation processing or waiting");
+    expect(startItem?.enabled).toBe(true);
+    startItem?.click();
+    expect(createSessionPayload).toHaveBeenCalledWith("clipboard");
+    expect(sendStartDictation).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "stacked-clipboard", outputMode: "clipboard" })
+    );
   });
 });

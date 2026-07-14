@@ -12,6 +12,7 @@ export class ProcessingQueue {
    *   setIsProcessing: (value: boolean) => void,
    *   setActiveContext: (context: any) => void,
    *   processJob: (audioBlob: Blob, metadata: any, context: any) => Promise<void>,
+   *   onJobError?: (error: any, context: any) => Promise<void> | void,
    * }} deps
    */
   constructor(deps) {
@@ -20,6 +21,7 @@ export class ProcessingQueue {
     this.setIsProcessing = deps.setIsProcessing;
     this.setActiveContext = deps.setActiveContext;
     this.processJob = deps.processJob;
+    this.onJobError = deps.onJobError;
 
     /** @type {{audioBlob: Blob, metadata: any, context: any}[]} */
     this._queue = [];
@@ -31,9 +33,18 @@ export class ProcessingQueue {
     return this._queue.length;
   }
 
+  get isRunning() {
+    return Boolean(this._runner);
+  }
+
   enqueue(audioBlob, metadata = {}, context = null) {
+    const jobsAhead = this._queue.length + (this.getIsProcessing() ? 1 : 0);
     this._queue.push({ audioBlob, metadata, context });
     this.startIfPossible();
+    return {
+      jobsAhead,
+      position: jobsAhead + 1,
+    };
   }
 
   cancel() {
@@ -63,8 +74,30 @@ export class ProcessingQueue {
         if (!job) continue;
 
         this.setActiveContext(job.context || null);
-        await this.processJob(job.audioBlob, job.metadata, job.context);
-        this.setActiveContext(null);
+        try {
+          await this.processJob(job.audioBlob, job.metadata, job.context);
+        } catch (error) {
+          this.logger.error(
+            "Processing queue job failed",
+            {
+              error: error?.message || String(error),
+              sessionId: job.context?.sessionId || null,
+              jobId: job.context?.jobId ?? null,
+            },
+            "audio"
+          );
+          try {
+            await this.onJobError?.(error, job.context || null);
+          } catch (handlerError) {
+            this.logger.error(
+              "Processing queue error handler failed",
+              { error: handlerError?.message || String(handlerError) },
+              "audio"
+            );
+          }
+        } finally {
+          this.setActiveContext(null);
+        }
       }
     })()
       .catch((error) => {

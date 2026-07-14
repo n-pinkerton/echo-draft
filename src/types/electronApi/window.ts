@@ -9,10 +9,21 @@ export interface ElectronAPIWindow {
       insertionTarget?: InsertionTargetSnapshot | null;
       sessionId?: string;
     }
-  ) => Promise<void>;
+  ) => Promise<{
+    success: boolean;
+    errorCode?: string;
+    inserted?: boolean;
+    clipboardRestored?: boolean;
+    warningCode?: string;
+  }>;
   hideWindow: () => Promise<void>;
   showDictationPanel: () => Promise<void>;
-  showRecordingIndicator?: () => Promise<{ success: boolean; message?: string }>;
+  showRecordingIndicator?: (
+    sizeKey?: "RECORDING_INDICATOR" | "WITH_COMPACT_TOAST" | "WITH_TOAST"
+  ) => Promise<{ success: boolean; message?: string }>;
+  resizeMainWindow?: (
+    sizeKey: "RECORDING_INDICATOR" | "WITH_COMPACT_TOAST" | "WITH_TOAST"
+  ) => Promise<{ success: boolean; message?: string }>;
   showControlPanel: () => Promise<{ success: boolean }>;
   getControlPanelShortcutStatus?: () => Promise<{
     accelerator: string;
@@ -36,6 +47,13 @@ export interface ElectronAPIWindow {
   startWindowDrag: () => Promise<void>;
   stopWindowDrag: () => Promise<void>;
   setMainWindowInteractivity: (interactive: boolean) => Promise<void>;
+  updateTrayStatus?: (status: {
+    stage: string;
+    stageLabel?: string;
+    message?: string;
+    transcriptToCopy?: string;
+    [key: string]: unknown;
+  }) => void;
 
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   beginOAuthSession: () => Promise<{ state: string; expiresAt: number }>;

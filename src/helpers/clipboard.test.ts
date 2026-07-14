@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const ClipboardManager = require("./clipboard");
 
 describe("ClipboardManager", () => {
+  afterEach(() => vi.useRealTimers());
+
   const createManager = (overrides: Record<string, unknown> = {}) =>
     new ClipboardManager({
       platform: "win32",
@@ -132,5 +134,112 @@ describe("ClipboardManager", () => {
 
     expect(error.message).toMatch(/original app/i);
     expect(error.message).not.toMatch(/SecretApp|Private patient record|42|9/);
+  });
+
+  it("serializes stacked Windows insertions through clipboard restoration", async () => {
+    vi.useFakeTimers();
+    let clipboardText = "original clipboard";
+    const inserted: string[] = [];
+    const clipboard = {
+      readText: vi.fn(() => clipboardText),
+      readHTML: vi.fn(() => ""),
+      readRTF: vi.fn(() => ""),
+      readImage: vi.fn(() => ({ isEmpty: () => true })),
+      availableFormats: vi.fn(() => ["text/plain"]),
+      write: vi.fn((data: { text?: string }) => {
+        clipboardText = data.text || "";
+      }),
+      writeText: vi.fn((text: string) => {
+        clipboardText = text;
+      }),
+    };
+    const manager = createManager({ clipboard });
+    manager.pasteWindows = vi.fn(async (snapshot, options) => {
+      inserted.push(clipboardText);
+      await manager.scheduleClipboardRestore(snapshot, 50, null, {
+        expectedText: options.expectedClipboardText,
+      });
+    });
+
+    const first = manager.pasteText("first dictation");
+    const second = manager.pasteText("second dictation");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inserted).toEqual(["first dictation"]);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inserted).toEqual(["first dictation", "second dictation"]);
+    await vi.advanceTimersByTimeAsync(50);
+    await Promise.all([first, second]);
+
+    expect(clipboardText).toBe("original clipboard");
+    expect(manager.pasteWindows).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps newer user clipboard text copied during a delayed restore", async () => {
+    vi.useFakeTimers();
+    let clipboardText = "original clipboard";
+    const clipboard = {
+      readText: vi.fn(() => clipboardText),
+      readHTML: vi.fn(() => ""),
+      readRTF: vi.fn(() => ""),
+      readImage: vi.fn(() => ({ isEmpty: () => true })),
+      availableFormats: vi.fn(() => ["text/plain"]),
+      write: vi.fn((data: { text?: string }) => {
+        clipboardText = data.text || "";
+      }),
+      writeText: vi.fn((text: string) => {
+        clipboardText = text;
+      }),
+    };
+    const manager = createManager({ clipboard });
+    manager.pasteWindows = vi.fn(async (snapshot, options) => {
+      await manager.scheduleClipboardRestore(snapshot, 50, null, {
+        expectedText: options.expectedClipboardText,
+      });
+    });
+
+    const pending = manager.pasteText("dictation");
+    await vi.advanceTimersByTimeAsync(0);
+    clipboardText = "newer user copy";
+    await vi.advanceTimersByTimeAsync(50);
+    await pending;
+
+    expect(clipboardText).toBe("newer user copy");
+  });
+
+  it("refuses a custom-format Windows clipboard before writing", async () => {
+    const manager = createManager();
+    manager.snapshotClipboard = vi.fn(() => ({
+      text: "keep",
+      html: "",
+      rtf: "",
+      imagePng: null,
+      formats: [{ format: "application/x-private" }],
+      restorable: false,
+    }));
+    manager.pasteWindows = vi.fn();
+
+    await expect(manager.pasteText("dictation")).rejects.toMatchObject({
+      code: "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
+    });
+    expect(manager.deps.clipboard.writeText).not.toHaveBeenCalled();
+    expect(manager.pasteWindows).not.toHaveBeenCalled();
+  });
+
+  it("blocks a later insertion while a previous clipboard snapshot cannot be recovered", async () => {
+    const manager = createManager();
+    manager.pendingWindowsClipboardRestoration = {
+      snapshot: { text: "previous clipboard", formats: [] },
+      expectedText: "first dictation",
+    };
+    manager.scheduleClipboardRestore = vi.fn(async () => ({ success: false, reason: "locked" }));
+    manager.snapshotClipboard = vi.fn();
+
+    await expect(manager.pasteText("second dictation")).rejects.toMatchObject({
+      code: "WINDOWS_CLIPBOARD_RESTORE_PENDING",
+    });
+    expect(manager.snapshotClipboard).not.toHaveBeenCalled();
+    expect(manager.deps.clipboard.writeText).not.toHaveBeenCalled();
   });
 });

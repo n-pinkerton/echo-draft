@@ -4,6 +4,7 @@ import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import {
   buildCustomDictionaryPromptForTranscription,
   getCustomDictionaryArray,
+  getTrustedTranscriptionDictionaryArray,
 } from "./customDictionary";
 import { isLikelyDictionaryPromptEcho } from "./dictionaryPromptEcho";
 import { countWords } from "../utils/wordCount";
@@ -489,14 +490,16 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     }) => {
       const mimeType = optimizedAudio.type || "audio/webm";
 
-      const dictionaryEntries = attemptSkipDictionaryPrompt ? [] : getCustomDictionaryArray();
+      const customDictionaryEntries = attemptSkipDictionaryPrompt ? [] : getCustomDictionaryArray();
+      const dictionaryEntries = attemptSkipDictionaryPrompt
+        ? []
+        : getTrustedTranscriptionDictionaryArray();
       const dictionaryPromptPlan = buildCustomDictionaryPromptForTranscription({
         model,
         entries: dictionaryEntries,
       });
-      const dictionaryPrompt = dictionaryPromptPlan.prompt;
       const dictionaryEntriesUsed = dictionaryPromptPlan.entriesUsed;
-      const shouldAttachDictionaryPrompt = Boolean(dictionaryPrompt);
+      const shouldAttachDictionaryPrompt = dictionaryPromptPlan.mode === "structured-openai";
 
       const shouldStream =
         !attemptForceNoStream && transcriber.shouldStreamTranscription(model, provider);
@@ -511,7 +514,6 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           shouldStream,
           forceNoStream: attemptForceNoStream,
           dictionaryEntriesCount: dictionaryEntriesUsed.length,
-          dictionaryPromptLength: dictionaryPrompt ? dictionaryPrompt.length : 0,
           dictionaryPromptMode: dictionaryPromptPlan.mode,
         },
         "transcription"
@@ -578,8 +580,8 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           if (!secureTransport) throw new Error("Secure transcription transport is unavailable");
           const audioBuffer = await readBlobAsArrayBuffer(optimizedAudio);
           const contextBias =
-            provider === "mistral" && dictionaryEntries.length > 0
-              ? dictionaryEntries.slice(0, 100)
+            provider === "mistral" && customDictionaryEntries.length > 0
+              ? customDictionaryEntries.slice(0, 100)
               : undefined;
           const proxyResponse = await invokeCancelableIpc(controller.signal, (ipcRequestId) =>
             secureTransport(
@@ -592,6 +594,9 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
                 language,
                 stream: shouldStream,
                 ...(contextBias?.length ? { contextBias } : {}),
+                ...(provider === "openai" && dictionaryEntriesUsed.length
+                  ? { dictionaryEntries: dictionaryEntriesUsed }
+                  : {}),
               },
               ipcRequestId,
               (progress) => {

@@ -55,7 +55,7 @@ const makeJsonResponse = (text: string) => ({
 });
 
 const LARGE_DICTIONARY = [
-  "Hello Cashflow",
+  "Example Cashflow",
   "DbMcp",
   "SlackMcp",
   "MondayMcp",
@@ -784,7 +784,7 @@ describe("OpenAiTranscriber", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not attach custom dictionary prompt for gpt-4o transcription models", async () => {
+  it("sends only sanitized lexical dictionary entries for main-process OpenAI prompting", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
     localStorage.setItem("customDictionary", JSON.stringify(LARGE_DICTIONARY));
@@ -804,6 +804,22 @@ describe("OpenAiTranscriber", () => {
 
     expect(result.rawText).toBe("hello world");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((window as any).electronAPI.providerTranscriptionRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dictionaryEntries: expect.arrayContaining([
+          "EchoDraft",
+          "Codex",
+          "DbMcp",
+          "AGENTS.md",
+          "Ciana",
+        ]),
+      }),
+      expect.any(String),
+      expect.any(Function)
+    );
+    const payload = (window as any).electronAPI.providerTranscriptionRequest.mock.calls[0][0];
+    expect(payload.dictionaryEntries).not.toContain("Example Cashflow");
+    expect(payload).not.toHaveProperty("prompt");
   });
 
   it("retries non-streaming when an OpenAI stream closes before its completion marker", async () => {

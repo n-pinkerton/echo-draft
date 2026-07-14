@@ -1,11 +1,28 @@
+function isPrimaryClipboardFormat(format) {
+  const normalized = String(format || "")
+    .trim()
+    .toLowerCase();
+  return (
+    normalized === "text/plain" ||
+    normalized.startsWith("text/plain;") ||
+    normalized === "text/html" ||
+    normalized.startsWith("text/html;") ||
+    normalized === "text/rtf" ||
+    normalized.startsWith("text/rtf;") ||
+    normalized.startsWith("image/")
+  );
+}
+
 function snapshotClipboard(manager) {
   const { clipboard } = manager.deps;
+  const requireExactCustomFormatPreservation = manager.deps.platform === "win32";
   const snapshot = {
     text: "",
     html: "",
     rtf: "",
     imagePng: null,
     formats: [],
+    restorable: true,
   };
 
   try {
@@ -35,43 +52,51 @@ function snapshotClipboard(manager) {
     snapshot.imagePng = null;
   }
 
-  try {
-    const formats = clipboard.availableFormats();
-    for (const format of formats) {
-      try {
-        const buffer = clipboard.readBuffer(format);
-        if (Buffer.isBuffer(buffer)) {
-          snapshot.formats.push({ format, buffer: Buffer.from(buffer) });
+  if (typeof clipboard.availableFormats === "function") {
+    try {
+      const formats = clipboard.availableFormats();
+      for (const format of formats) {
+        // Stable Electron APIs above preserve the primary representations. Electron cannot
+        // atomically replay arbitrary Windows formats with them, so record their presence and
+        // let the insertion path fail before touching the user's clipboard.
+        if (isPrimaryClipboardFormat(format)) continue;
+        if (requireExactCustomFormatPreservation) {
+          snapshot.restorable = false;
+          snapshot.formats.push({ format: String(format) });
         }
-      } catch {
-        // Ignore unreadable formats and preserve what we can.
+      }
+    } catch {
+      if (requireExactCustomFormatPreservation) {
+        snapshot.restorable = false;
+        snapshot.formatEnumerationFailed = true;
       }
     }
-  } catch {
-    // Ignore format enumeration failures and fall back to plain text.
   }
 
   return snapshot;
 }
 
+function isClipboardSnapshotRestorable(snapshot) {
+  return Boolean(
+    snapshot &&
+    snapshot.restorable !== false &&
+    snapshot.formatEnumerationFailed !== true &&
+    (!Array.isArray(snapshot.formats) || snapshot.formats.length === 0)
+  );
+}
+
 function restoreClipboardSnapshot(manager, snapshot, webContents = null) {
   if (!snapshot) {
-    return;
+    return { success: false, reason: "missing_snapshot" };
+  }
+  if (!isClipboardSnapshotRestorable(snapshot)) {
+    manager.safeLog("⚠️ Clipboard restore skipped because custom formats cannot be preserved", {
+      formats: Array.isArray(snapshot.formats) ? snapshot.formats.length : 0,
+    });
+    return { success: false, reason: "custom_formats" };
   }
 
   const { clipboard, nativeImage, platform } = manager.deps;
-
-  if (Buffer.isBuffer(snapshot.imagePng) && snapshot.imagePng.length > 0) {
-    try {
-      clipboard.clear();
-      clipboard.writeImage(nativeImage.createFromBuffer(snapshot.imagePng));
-      return;
-    } catch (error) {
-      manager.safeLog("⚠️ Failed to restore clipboard image", {
-        error: error?.message,
-      });
-    }
-  }
 
   const data = {};
   if (typeof snapshot.text === "string" && snapshot.text.length > 0) {
@@ -91,12 +116,12 @@ function restoreClipboardSnapshot(manager, snapshot, webContents = null) {
     }
   }
 
-  const formatEntries = Array.isArray(snapshot.formats) ? snapshot.formats : [];
   let restoredSomething = false;
 
   if (Object.keys(data).length > 0) {
     try {
-      clipboard.clear();
+      // clipboard.write atomically restores all stable primary representations. Do not replay
+      // generic formats afterward: writeBuffer is experimental and may replace this content.
       clipboard.write(data);
       restoredSomething = true;
     } catch (error) {
@@ -106,52 +131,86 @@ function restoreClipboardSnapshot(manager, snapshot, webContents = null) {
     }
   }
 
-  if (formatEntries.length > 0) {
-    if (!restoredSomething) {
-      try {
-        clipboard.clear();
-      } catch {
-        // ignore
+  if (!restoredSomething && Object.keys(data).length > 0) {
+    try {
+      if (typeof data.text === "string") {
+        if (platform === "linux" && manager._isWayland()) {
+          manager._writeClipboardWayland(data.text, webContents);
+        } else {
+          clipboard.writeText(data.text);
+        }
+      } else if (typeof data.html === "string") {
+        clipboard.writeHTML(data.html);
+      } else if (typeof data.rtf === "string") {
+        clipboard.writeRTF(data.rtf);
+      } else if (data.image) {
+        clipboard.writeImage(data.image);
       }
-    }
-
-    for (const entry of formatEntries) {
-      if (!entry?.format || !Buffer.isBuffer(entry.buffer)) {
-        continue;
-      }
-      try {
-        clipboard.writeBuffer(entry.format, entry.buffer);
-        restoredSomething = true;
-      } catch {
-        // Ignore format restore failures and preserve what we can.
-      }
+      restoredSomething = true;
+    } catch (error) {
+      manager.safeLog("⚠️ Failed to restore fallback clipboard data", {
+        error: error?.message,
+      });
     }
   }
 
   if (!restoredSomething) {
     const textValue = typeof snapshot.text === "string" ? snapshot.text : "";
-    if (platform === "linux" && manager._isWayland()) {
-      manager._writeClipboardWayland(textValue, webContents);
-    } else {
-      clipboard.writeText(textValue);
+    try {
+      if (platform === "linux" && manager._isWayland()) {
+        manager._writeClipboardWayland(textValue, webContents);
+      } else {
+        clipboard.writeText(textValue);
+      }
+      restoredSomething = true;
+    } catch (error) {
+      manager.safeLog("⚠️ Failed to restore clipboard text", { error: error?.message });
     }
   }
+
+  return restoredSomething ? { success: true } : { success: false, reason: "restore_failed" };
 }
 
-function scheduleClipboardRestore(manager, snapshot, delayMs, webContents = null) {
+function scheduleClipboardRestore(
+  manager,
+  snapshot,
+  delayMs,
+  webContents = null,
+  { expectedText } = {}
+) {
   const setTimeoutFn = manager.deps.setTimeout || setTimeout;
-  setTimeoutFn(() => {
-    restoreClipboardSnapshot(manager, snapshot, webContents);
-    manager.safeLog("🔄 Clipboard restored", {
-      delayMs,
-      restoredFormats: snapshot?.formats?.length || 0,
-    });
-  }, delayMs);
+  return new Promise((resolve) => {
+    setTimeoutFn(() => {
+      if (typeof expectedText === "string") {
+        try {
+          if (manager.deps.clipboard.readText() !== expectedText) {
+            const result = { success: true, skipped: true, reason: "clipboard_changed" };
+            manager.safeLog("↪️ Clipboard restore skipped because newer content was copied", {
+              delayMs,
+            });
+            resolve(result);
+            return;
+          }
+        } catch {
+          // If the lease cannot be inspected, attempt the already-captured restoration.
+        }
+      }
+
+      const result = restoreClipboardSnapshot(manager, snapshot, webContents);
+      manager.safeLog(result.success ? "🔄 Clipboard restored" : "⚠️ Clipboard restore failed", {
+        delayMs,
+        restoredFormats: snapshot?.formats?.length || 0,
+        reason: result.reason || null,
+      });
+      resolve(result);
+    }, delayMs);
+  });
 }
 
 module.exports = {
+  isClipboardSnapshotRestorable,
+  isPrimaryClipboardFormat,
   restoreClipboardSnapshot,
   scheduleClipboardRestore,
   snapshotClipboard,
 };
-

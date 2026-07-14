@@ -14,6 +14,8 @@ type Props = {
   message?: string | null;
   canCancel?: boolean;
   isSlow?: boolean;
+  queuedWaitingCount?: number;
+  outputMode?: "insert" | "clipboard" | string;
 };
 
 const TERMINAL_ICON = {
@@ -30,20 +32,28 @@ export default function DictationStatusIndicator({
   message,
   canCancel = false,
   isSlow = false,
+  queuedWaitingCount = 0,
+  outputMode = "insert",
 }: Props) {
   const TerminalIcon = TERMINAL_ICON[stage as keyof typeof TERMINAL_ICON];
   const isSuccess = stage === "done";
   const isError = stage === "error";
   const isWarning = stage === "warning";
   const isCancelled = stage === "cancelled";
-  const detail = canCancel
+  const operationDetail = canCancel
     ? isSlow
       ? "Taking longer · cancel from the tray menu"
       : "Cancel from the EchoDraft tray menu"
     : message || (stage === "done" ? "Text delivered" : "");
+  const normalizedWaitingCount = Math.max(0, Math.floor(queuedWaitingCount));
+  const destinationLabel = outputMode === "clipboard" ? "Clipboard" : "Insert";
+  const activeContext = TerminalIcon
+    ? []
+    : [destinationLabel, ...(normalizedWaitingCount ? [`${normalizedWaitingCount} waiting`] : [])];
+  const detail = [...activeContext, operationDetail].filter(Boolean).join(" · ");
 
   return (
-    <div className="dictation-window flex h-screen w-screen items-center justify-center p-1.5 pointer-events-none select-none">
+    <div className="dictation-window pointer-events-none fixed bottom-0 right-0 flex h-[72px] w-[260px] items-center justify-center p-1.5 select-none">
       <div
         data-testid="dictation-status-indicator"
         data-stage={stage}

@@ -10,6 +10,7 @@ type CleanupOperation = {
   userPrompt: string;
   cleanupPromptMode?: CleanupPromptMode;
   language?: string;
+  dictionaryEntries?: string[];
   maxOutputTokens: number;
   temperature?: number;
   reasoningEffort?: string;
@@ -18,6 +19,7 @@ type CleanupOperation = {
 type CleanupPolicyContext = {
   cleanupPromptMode?: CleanupPromptMode;
   language?: string;
+  dictionaryEntries?: string[];
 };
 
 const asRecord = (value: unknown, label: string): Record<string, any> => {
@@ -95,6 +97,9 @@ export function parseCleanupFetchBody(
         ? { cleanupPromptMode: policyContext.cleanupPromptMode }
         : {}),
       ...(policyContext.language ? { language: policyContext.language } : {}),
+      ...(policyContext.dictionaryEntries?.length
+        ? { dictionaryEntries: policyContext.dictionaryEntries }
+        : {}),
       maxOutputTokens: body.max_output_tokens,
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     };
@@ -143,6 +148,9 @@ export function parseCleanupFetchBody(
         ? { cleanupPromptMode: policyContext.cleanupPromptMode }
         : {}),
       ...(policyContext.language ? { language: policyContext.language } : {}),
+      ...(policyContext.dictionaryEntries?.length
+        ? { dictionaryEntries: policyContext.dictionaryEntries }
+        : {}),
       maxOutputTokens: tokenBudgets[0],
       ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
       ...(body.reasoning_effort !== undefined ? { reasoningEffort: body.reasoning_effort } : {}),
@@ -181,6 +189,9 @@ export function parseCleanupFetchBody(
         ? { cleanupPromptMode: policyContext.cleanupPromptMode }
         : {}),
       ...(policyContext.language ? { language: policyContext.language } : {}),
+      ...(policyContext.dictionaryEntries?.length
+        ? { dictionaryEntries: policyContext.dictionaryEntries }
+        : {}),
       maxOutputTokens: generation.maxOutputTokens,
       ...(generation.temperature !== undefined ? { temperature: generation.temperature } : {}),
     };

@@ -7,6 +7,8 @@ const {
   createSessionPayload,
   getMacRequiredModifiers,
   handleMacPushModifierUp,
+  sendStartDictation,
+  sendStopDictation,
 } = hotkeyRouting as any;
 
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
@@ -65,6 +67,26 @@ describe("hotkeyRouting", () => {
     callback();
 
     expect(manager.sendToggleDictation).not.toHaveBeenCalled();
+  });
+
+  it("blocks starts but always delivers explicit stops while shortcut capture is active", () => {
+    const send = vi.fn();
+    const manager: any = {
+      hotkeyManager: { isInListeningMode: () => true },
+      mainWindow: {
+        isDestroyed: () => false,
+        webContents: { send },
+      },
+      showDictationPanel: vi.fn(),
+    };
+    const payload = { outputMode: "insert", sessionId: "active-recording" };
+
+    sendStartDictation(manager, payload);
+    sendStopDictation(manager, payload);
+
+    expect(manager.showDictationPanel).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith("stop-dictation", payload);
   });
 
   it("debounces rapid toggle hotkeys", () => {

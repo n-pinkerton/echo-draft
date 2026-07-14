@@ -240,24 +240,30 @@ class HotkeyManager {
       debugLogger.warn("[HotkeyManager] Failed to persist hotkey to .env file:", err.message);
     }
 
-    // Also save to localStorage for backwards compatibility
+    // Also save to localStorage for backwards compatibility. This is deliberately best-effort:
+    // the environment/.env value above is authoritative, and a wedged renderer reply must not
+    // strand hotkey-capture mode with every configured shortcut disabled.
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       try {
-        await this.mainWindow.webContents.executeJavaScript(
+        const legacyWrite = this.mainWindow.webContents.executeJavaScript(
           `localStorage.setItem("dictationKey", "${escapedHotkey}"); true;`
         );
-        debugLogger.log(`[HotkeyManager] Saved hotkey "${hotkey}" to localStorage`);
-        return true;
+        Promise.resolve(legacyWrite)
+          .then(() => {
+            debugLogger.log(`[HotkeyManager] Saved hotkey "${hotkey}" to localStorage`);
+          })
+          .catch((err) => {
+            debugLogger.warn("[HotkeyManager] Failed to save hotkey to localStorage:", err.message);
+          });
       } catch (err) {
-        debugLogger.error("[HotkeyManager] Failed to save hotkey to localStorage:", err.message);
-        return false;
+        debugLogger.warn("[HotkeyManager] Failed to save hotkey to localStorage:", err.message);
       }
     } else {
       debugLogger.warn(
         "[HotkeyManager] Main window not available for saving hotkey to localStorage"
       );
-      return false;
     }
+    return true;
   }
 
   notifyHotkeyFallback(originalHotkey, fallbackHotkey) {

@@ -177,6 +177,7 @@ class ReasoningService extends BaseReasoningService {
         fetchFn: createProviderFetch(isCustomProvider ? "custom" : "openai", {
           cleanupPromptMode: config.cleanupPromptMode,
           language: this.getPreferredLanguage(),
+          dictionaryEntries: this.getCustomDictionary(),
         }),
       });
     } catch (error) {
@@ -211,6 +212,7 @@ class ReasoningService extends BaseReasoningService {
       agentName,
       config,
       getPreferredLanguage: () => this.getPreferredLanguage(),
+      getCustomDictionary: () => this.getCustomDictionary(),
       ipcCall: (userPrompt, modelName, agent, options, requestId) =>
         window.electronAPI.processAnthropicReasoning(
           userPrompt,
@@ -242,6 +244,7 @@ class ReasoningService extends BaseReasoningService {
       agentName,
       config,
       getPreferredLanguage: () => this.getPreferredLanguage(),
+      getCustomDictionary: () => this.getCustomDictionary(),
       ipcCall: (userPrompt, modelName, agent, options, requestId) =>
         window.electronAPI.processLocalReasoning(userPrompt, modelName, agent, options, requestId),
     });
@@ -275,6 +278,7 @@ class ReasoningService extends BaseReasoningService {
         fetchFn: createProviderFetch("gemini", {
           cleanupPromptMode: config.cleanupPromptMode,
           language: this.getPreferredLanguage(),
+          dictionaryEntries: this.getCustomDictionary(),
         }),
       });
     } catch (error) {
@@ -321,6 +325,7 @@ class ReasoningService extends BaseReasoningService {
         fetchFn: createProviderFetch("groq", {
           cleanupPromptMode: config.cleanupPromptMode,
           language: this.getPreferredLanguage(),
+          dictionaryEntries: this.getCustomDictionary(),
         }),
       });
     } catch (error) {

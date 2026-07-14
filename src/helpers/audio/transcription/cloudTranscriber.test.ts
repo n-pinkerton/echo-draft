@@ -95,6 +95,7 @@ describe("CloudTranscriber", () => {
     (window as any).electronAPI.cloudReason.mockResolvedValue({
       success: true,
       text: "clean",
+      model: "gpt-5.6-luna",
     });
 
     const emitProgress = vi.fn();
@@ -127,6 +128,13 @@ describe("CloudTranscriber", () => {
     expect(result.text).toBe("clean");
     expect(result.rawText).toBe("raw");
     expect(result.source).toBe(ECHO_DRAFT_REASONED_SOURCE);
+    expect(result.cleanup).toMatchObject({
+      status: "applied",
+      model: "gpt-5.6-luna",
+      appliedModel: "gpt-5.6-luna",
+      modelSource: "managed",
+      retryCount: 0,
+    });
     expect(result.timings?.transcriptionProcessingDurationMs).toEqual(expect.any(Number));
     expect(result.timings?.reasoningProcessingDurationMs).toEqual(expect.any(Number));
   });
@@ -203,6 +211,7 @@ describe("CloudTranscriber", () => {
     (window as any).electronAPI.cloudReason.mockResolvedValue({
       success: true,
       text: "Release summary.",
+      model: "gpt-5.6-luna",
     });
     const fidelityError = Object.assign(new Error("changed too much"), {
       code: "CLEANUP_FIDELITY_REJECTED",
@@ -227,7 +236,12 @@ describe("CloudTranscriber", () => {
       status: "fallback",
       fallbackReason: "fidelity_rejected",
       applied: false,
+      model: "gpt-5.6-luna",
+      appliedModel: null,
+      modelSource: "managed",
+      retryCount: 0,
     });
+    expect((window as any).electronAPI.cloudReason).toHaveBeenCalledTimes(1);
   });
 
   it("does not accept text from an unsuccessful managed cleanup response", async () => {
@@ -260,6 +274,7 @@ describe("CloudTranscriber", () => {
       fallbackReason: "provider_error",
       applied: false,
       model: null,
+      modelSource: "managed",
       provider: ECHO_DRAFT_CLOUD_SOURCE,
     });
   });

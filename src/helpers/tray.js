@@ -285,6 +285,8 @@ class TrayManager {
       stageElapsedMs: typeof status.stageElapsedMs === "number" ? status.stageElapsedMs : null,
       generatedWords: typeof status.generatedWords === "number" ? status.generatedWords : null,
       jobCount: typeof status.jobCount === "number" ? status.jobCount : 0,
+      queuedJobCount: typeof status.queuedJobCount === "number" ? status.queuedJobCount : 0,
+      waitingJobCount: typeof status.waitingJobCount === "number" ? status.waitingJobCount : 0,
       hasTranscript: Boolean(status.hasTranscript),
       outputMode: status.outputMode === "clipboard" ? "clipboard" : "insert",
       provider: typeof status.provider === "string" ? status.provider : "",
@@ -294,6 +296,8 @@ class TrayManager {
       transportAttempt:
         typeof status.transportAttempt === "number" ? status.transportAttempt : null,
       transportRetrying: status.transportRetrying === true,
+      isRecording: status.isRecording === true,
+      isProcessing: status.isProcessing === true,
     };
   }
 
@@ -325,13 +329,18 @@ class TrayManager {
         typeof status.stageElapsedMs === "number" ? this.formatDuration(status.stageElapsedMs) : "",
       generatedWords: status.generatedWords ?? null,
       jobCount: status.jobCount ?? 0,
+      queuedJobCount: status.queuedJobCount ?? 0,
+      waitingJobCount: status.waitingJobCount ?? 0,
       hasTranscript: Boolean(status.hasTranscript),
+      outputMode: status.outputMode === "clipboard" ? "clipboard" : "insert",
       provider: status.provider || "",
       model: status.model || "",
       isSlow: status.isSlow === true,
       canCancel: status.canCancel === true,
       transportAttempt: status.transportAttempt ?? null,
       transportRetrying: status.transportRetrying === true,
+      isRecording: status.isRecording === true,
+      isProcessing: status.isProcessing === true,
     });
   }
 
@@ -341,6 +350,8 @@ class TrayManager {
         return "Starting";
       case "listening":
         return "Recording";
+      case "queued":
+        return "Queued";
       case "transcribing":
         return "Transcribing";
       case "cleaning":
@@ -528,18 +539,25 @@ class TrayManager {
     void dictationVisible;
     const status = this.dictationStatus || {};
     const label = status.stageLabel || this.getDefaultStageLabel(status.stage || "idle");
+    const destination = status.outputMode === "clipboard" ? "Clipboard" : "Insert";
+    const waitingCount = Math.max(0, Number(status.waitingJobCount) || 0);
+    const waitingSuffix = waitingCount ? ` · ${waitingCount} waiting` : "";
     if (status.stage === "listening" && typeof status.recordedMs === "number") {
-      return `Status: ${label} ${this.formatDuration(status.recordedMs)}`;
+      const queuedAhead = Math.max(0, Number(status.queuedJobCount) || 0);
+      const queueSuffix = queuedAhead
+        ? ` · ${queuedAhead} ${queuedAhead === 1 ? "dictation" : "dictations"} ahead`
+        : "";
+      return `Status: ${label} ${this.formatDuration(status.recordedMs)} · ${destination}${queueSuffix}`;
     }
     if (
-      ["transcribing", "cleaning", "inserting", "saving"].includes(status.stage) &&
+      ["queued", "transcribing", "cleaning", "inserting", "saving"].includes(status.stage) &&
       (typeof status.stageElapsedMs === "number" || typeof status.elapsedMs === "number")
     ) {
       const elapsed = this.formatDuration(status.stageElapsedMs ?? status.elapsedMs);
       if (status.message) {
-        return `Status: ${status.message} ${elapsed}`;
+        return `Status: ${status.message} ${elapsed} · ${destination}${waitingSuffix}`;
       }
-      return `Status: ${label} ${elapsed}`;
+      return `Status: ${label} ${elapsed} · ${destination}${waitingSuffix}`;
     }
     if (status.stage === "error" && status.message) {
       return `Status: Error - ${status.message}`;
@@ -605,10 +623,10 @@ class TrayManager {
       typeof latestTranscription?.text === "string" ? latestTranscription.text.trim() : "";
     const copyText = this.transientTranscript.trim() || latestText;
     const statusLabel = this.getStatusLabel(dictationVisible);
-    const isRecording = this.dictationStatus?.stage === "listening";
-    const isBusy = ["starting", "transcribing", "cleaning", "inserting", "saving"].includes(
-      this.dictationStatus?.stage
-    );
+    const isRecording =
+      this.dictationStatus?.isRecording === true || this.dictationStatus?.stage === "listening";
+    const isStarting = this.dictationStatus?.stage === "starting";
+    const queuedJobCount = Math.max(0, Number(this.dictationStatus?.queuedJobCount) || 0);
     const canCancelProcessing =
       this.dictationStatus?.canCancel === true &&
       ["transcribing", "cleaning"].includes(this.dictationStatus?.stage);
@@ -623,6 +641,13 @@ class TrayManager {
         enabled: false,
       },
       {
+        label: isRecording
+          ? `Queue: ${queuedJobCount} ${queuedJobCount === 1 ? "dictation" : "dictations"} ahead`
+          : `Queue: ${queuedJobCount} ${queuedJobCount === 1 ? "dictation" : "dictations"} processing or waiting`,
+        enabled: false,
+        visible: queuedJobCount > 0,
+      },
+      {
         label: this.windowManager?.windowsPushToTalkAvailable
           ? "Push-to-talk: Available"
           : "Push-to-talk: Standard hotkey",
@@ -632,7 +657,7 @@ class TrayManager {
       { type: "separator" },
       {
         label: isRecording ? "Stop Dictation" : "Start Clipboard Dictation",
-        enabled: !isBusy,
+        enabled: !isStarting,
         click: async () => {
           const payload = this.windowManager?.createSessionPayload?.("clipboard") || {
             outputMode: "clipboard",

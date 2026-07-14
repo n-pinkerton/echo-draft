@@ -18,6 +18,8 @@ type Props = {
   preview: {
     parsedCount: number;
     uniqueWordsCount: number;
+    importableCount: number;
+    capacitySkipped: number;
     duplicatesRemoved: number;
     invalidEntriesRemoved: number;
   };
@@ -120,7 +122,7 @@ export default function DictionaryBatchPanel(props: Props) {
               size="sm"
               className="h-7"
               onClick={onApplyBatch}
-              disabled={preview.uniqueWordsCount === 0}
+              disabled={preview.importableCount === 0}
             >
               Apply {dictionaryImportMode === "replace" ? "Replace" : "Merge"}
             </Button>
@@ -131,11 +133,13 @@ export default function DictionaryBatchPanel(props: Props) {
               className="text-[10px] text-muted-foreground/80"
               data-testid="dictionary-batch-preview"
               data-unique-count={preview.uniqueWordsCount}
+              data-importable-count={preview.importableCount}
+              data-capacity-skipped={preview.capacitySkipped}
               data-duplicate-count={preview.duplicatesRemoved}
               data-invalid-count={preview.invalidEntriesRemoved}
             >
               {preview.parsedCount > 0
-                ? `Preview: ${countLabel(preview.uniqueWordsCount, "valid unique term", "valid unique terms")} (${countLabel(preview.duplicatesRemoved, "duplicate", "duplicates")} and ${countLabel(preview.invalidEntriesRemoved, "unsupported entry", "unsupported entries")} removed).`
+                ? `Preview: ${countLabel(preview.uniqueWordsCount, "valid unique term", "valid unique terms")}; ${countLabel(preview.importableCount, "term", "terms")} will be imported${preview.capacitySkipped ? ` and ${countLabel(preview.capacitySkipped, "term", "terms")} will be skipped at the dictionary limit` : ""}. ${countLabel(preview.duplicatesRemoved, "duplicate", "duplicates")} and ${countLabel(preview.invalidEntriesRemoved, "unsupported entry", "unsupported entries")} removed.`
                 : "Preview: Add words to see import counts."}
             </p>
             {importedDictionaryFileName && (

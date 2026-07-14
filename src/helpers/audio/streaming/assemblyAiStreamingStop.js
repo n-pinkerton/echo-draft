@@ -66,27 +66,36 @@ export function stopStreamingRecording(manager) {
   manager.activeProcessingAbortController = controller;
   let guardedPromise;
   guardedPromise = performStopStreamingRecording(manager, { signal: controller.signal })
-    .catch((error) => {
-      if (!isTranscriptionCancelled(error, controller.signal)) throw error;
-
+    .catch(async (error) => {
+      // Capture has already ended, but an exception may occur anywhere from the
+      // worklet flush through delivery/history persistence. Always finish the
+      // transport teardown before releasing FIFO processing ownership.
       manager.streamingAudioForwarding = false;
       manager.isStreaming = false;
       window.electronAPI.assemblyAiStreamingForceEndpoint?.();
-      return getOrStartMainStreamingTeardown(manager).then(() => {
-        cleanupStreamingListeners(manager);
-        settleStreamingState(manager);
+      await getOrStartMainStreamingTeardown(manager);
+      cleanupStreamingListeners(manager);
+
+      if (isTranscriptionCancelled(error, controller.signal)) {
         logger.info("Streaming processing cancelled after transport teardown", {}, "streaming");
         return false;
-      });
+      }
+      throw error;
     })
     .finally(() => {
-      if (manager.activeProcessingAbortController === controller) {
-        manager.activeProcessingAbortController = null;
+      // This is the single settlement point for success, cancellation,
+      // incomplete termination, and unexpected delivery/finalization errors.
+      try {
+        settleStreamingState(manager);
+      } finally {
+        if (manager.activeProcessingAbortController === controller) {
+          manager.activeProcessingAbortController = null;
+        }
+        if (manager.streamingStopPromise === guardedPromise) {
+          manager.streamingStopPromise = null;
+        }
+        manager.streamingMainStopPromise = null;
       }
-      if (manager.streamingStopPromise === guardedPromise) {
-        manager.streamingStopPromise = null;
-      }
-      manager.streamingMainStopPromise = null;
     });
   manager.streamingStopPromise = guardedPromise;
   return guardedPromise;
@@ -109,6 +118,10 @@ async function performStopStreamingRecording(manager, runtime = {}) {
   // 1. Update UI immediately
   manager.isRecording = false;
   manager.isProcessing = true;
+  // Capture ownership ends synchronously. Streaming transport finalization has
+  // separate promise/controller ownership and must not make a newly started
+  // non-streaming recording look like it is still the old stream.
+  manager.isStreaming = false;
   manager.recordingStartTime = null;
   manager.emitStateChange({ isRecording: false, isProcessing: true, isStreaming: false });
 
@@ -165,7 +178,6 @@ async function performStopStreamingRecording(manager, runtime = {}) {
     signal
   );
   manager.streamingAudioForwarding = false;
-  manager.isStreaming = false;
 
   // 4. ForceEndpoint finalizes any in-progress turn, then Terminate closes the session.
   //    The server MUST process ALL remaining audio and send ALL Turn messages before
@@ -202,10 +214,10 @@ async function performStopStreamingRecording(manager, runtime = {}) {
         title: "Transcription incomplete",
         description:
           "EchoDraft could not confirm the end of this streaming transcription, so no partial text was inserted. Please dictate it again.",
+        context: manager.streamingContext,
       },
       error
     );
-    settleStreamingState(manager);
     return false;
   }
 
@@ -293,6 +305,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
     });
     const reasoningStart = performance.now();
     const cloudReasoningMode = localStorage.getItem("cloudReasoningMode") || ECHO_DRAFT_CLOUD_MODE;
+    let attemptedManagedCleanupModel = null;
 
     try {
       if (isEchoDraftCloudMode(cloudReasoningMode)) {
@@ -323,6 +336,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
         if (!reasonResult.text || !reasonResult.text.trim()) {
           throw new Error("Cloud reasoning returned an empty cleanup response.");
         }
+        attemptedManagedCleanupModel = reasonResult.model || null;
 
         if (typeof manager.reasoningCleanupService?.validateCleanupCandidate !== "function") {
           throw new Error("Cleanup preservation validation is unavailable.");
@@ -339,7 +353,9 @@ async function performStopStreamingRecording(manager, runtime = {}) {
           applied: true,
           status: finalText === rawText ? "unchanged" : "applied",
           fallbackReason: null,
-          model: reasonResult.model || null,
+          model: attemptedManagedCleanupModel,
+          appliedModel: attemptedManagedCleanupModel,
+          modelSource: "managed",
           provider: ECHO_DRAFT_CLOUD_SOURCE,
           retryCount: 0,
           metrics: validated.assessment.metrics,
@@ -398,6 +414,8 @@ async function performStopStreamingRecording(manager, runtime = {}) {
             status: finalText === rawText ? "unchanged" : "applied",
             fallbackReason: null,
             model: reasoningModel,
+            appliedModel: result.appliedModel || reasoningModel,
+            modelSource: "selected",
             provider: localStorage.getItem("reasoningProvider") || "auto",
             retryCount: result.retryCount,
             metrics: result.assessment?.metrics || {},
@@ -433,11 +451,18 @@ async function performStopStreamingRecording(manager, runtime = {}) {
           reasonError?.code === "CLEANUP_FIDELITY_REJECTED"
             ? "fidelity_rejected"
             : "provider_error",
-        model: managedCleanup ? null : localStorage.getItem("reasoningModel") || null,
+        model: managedCleanup
+          ? attemptedManagedCleanupModel
+          : localStorage.getItem("reasoningModel") || null,
+        appliedModel: null,
+        modelSource: managedCleanup ? "managed" : "selected",
         provider: managedCleanup
           ? ECHO_DRAFT_CLOUD_SOURCE
           : localStorage.getItem("reasoningProvider") || "auto",
-        retryCount: reasonError?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
+        retryCount: managedCleanup
+          ? 0
+          : Number(reasonError?.cleanupRetryCount) ||
+            (reasonError?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0),
         ...(reasonError?.assessment?.metrics ? { metrics: reasonError.assessment.metrics } : {}),
       };
       logger.error(
@@ -486,8 +511,6 @@ async function performStopStreamingRecording(manager, runtime = {}) {
       "streaming"
     );
   }
-
-  settleStreamingState(manager);
 
   return true;
 }

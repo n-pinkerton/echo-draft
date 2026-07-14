@@ -21,6 +21,8 @@ const MAIN_WINDOW_CONFIG = {
     contextIsolation: true,
     sandbox: true,
     webSecurity: true,
+    // Dictation capture and stop IPC must keep running when another app has focus.
+    backgroundThrottling: false,
   },
   frame: false,
   alwaysOnTop: true,
@@ -40,6 +42,8 @@ const MAIN_WINDOW_CONFIG = {
 const CONTROL_PANEL_CONFIG = {
   width: 1200,
   height: 800,
+  minWidth: 760,
+  minHeight: 600,
   webPreferences: {
     preload: path.join(__dirname, "..", "..", "preload.js"),
     nodeIntegration: false,

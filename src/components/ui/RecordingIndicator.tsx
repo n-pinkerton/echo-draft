@@ -7,18 +7,30 @@ import {
 export default function RecordingIndicator({
   recordedMs = 0,
   longRecordingReminderEnabled = true,
+  queuedAheadCount = 0,
+  outputMode = "insert",
 }: {
   recordedMs?: number;
   longRecordingReminderEnabled?: boolean;
+  queuedAheadCount?: number;
+  outputMode?: "insert" | "clipboard" | string;
 }) {
   const formattedDuration = formatRecordingDuration(recordedMs);
   const showLongReminder = shouldShowLongRecordingReminder(
     recordedMs,
     longRecordingReminderEnabled
   );
+  const normalizedQueuedAheadCount = Math.max(0, Math.floor(queuedAheadCount));
+  const queueLabel = normalizedQueuedAheadCount
+    ? `${normalizedQueuedAheadCount} ${normalizedQueuedAheadCount === 1 ? "dictation" : "dictations"} ahead`
+    : null;
+  const destinationLabel = outputMode === "clipboard" ? "Clipboard" : "Insert";
+  const compactQueueLabel = normalizedQueuedAheadCount
+    ? `${normalizedQueuedAheadCount} ahead`
+    : null;
 
   return (
-    <div className="dictation-window flex h-screen w-screen items-center justify-center p-1.5 pointer-events-none select-none">
+    <div className="dictation-window pointer-events-none fixed bottom-0 right-0 flex h-[72px] w-[260px] items-center justify-center p-1.5 select-none">
       <div
         data-testid="recording-indicator"
         data-long-recording={showLongReminder ? "true" : "false"}
@@ -28,8 +40,8 @@ export default function RecordingIndicator({
       >
         <span role="status" aria-live="polite" className="sr-only">
           {showLongReminder
-            ? "Still recording, microphone live, one minute elapsed"
-            : "Recording, microphone live"}
+            ? `Still recording, microphone live, ${destinationLabel} mode, one minute elapsed${queueLabel ? `, ${queueLabel}` : ""}`
+            : `Recording, microphone live, ${destinationLabel} mode${queueLabel ? `, ${queueLabel}` : ""}`}
         </span>
         <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500/15 text-red-500">
           <span
@@ -46,7 +58,9 @@ export default function RecordingIndicator({
               showLongReminder ? "font-medium text-warning-text" : "text-muted-foreground"
             }`}
           >
-            {showLongReminder ? "Mic live · still recording" : "Microphone live"}
+            {showLongReminder
+              ? `Mic live · ${destinationLabel} · ${compactQueueLabel || "still recording"}`
+              : `Mic live · ${destinationLabel}${compactQueueLabel ? ` · ${compactQueueLabel}` : ""}`}
           </span>
         </span>
         <time

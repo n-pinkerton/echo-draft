@@ -242,17 +242,20 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
                   <SettingsPanelRow>
                     <SettingsRow
                       label="Cleanup reasoning"
-                      description="Higher effort can preserve complex intent more reliably, but takes longer. Risky Luna or Terra output gets one strict Sol preservation retry."
+                      description="Controls cleanup and its one possible safety retry. Low is recommended for reliability; None is faster but may preserve the original more often. A safety retry is a second request using the same selected model and effort, so it can add latency and BYOK API usage."
+                      controlId="cleanup-reasoning-effort"
                     >
                       <select
+                        id="cleanup-reasoning-effort"
                         aria-label="Cleanup reasoning effort"
+                        aria-describedby="cleanup-reasoning-effort-description"
                         value={cleanupReasoningEffort}
                         onChange={(event) =>
                           setCleanupReasoningEffort(event.target.value as CleanupReasoningEffort)
                         }
                         className="h-9 min-w-[150px] rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground outline-none transition-colors focus:border-primary focus:ring-[3px] focus:ring-primary/15"
                       >
-                        <option value="none">None — fastest</option>
+                        <option value="none">None — fastest first pass</option>
                         <option value="low">Low — recommended</option>
                         <option value="medium">Medium — most thorough</option>
                       </select>

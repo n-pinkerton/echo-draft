@@ -70,7 +70,7 @@ async function checkStageAndEchoGuards(dictation, record) {
           found: Boolean(indicator),
           visible: Boolean(rect && rect.width > 0 && rect.height > 0),
           hasRecLabel: indicator?.textContent?.includes("REC") === true,
-          hasLiveLabel: indicator?.textContent?.includes("Microphone live") === true,
+          hasLiveLabel: indicator?.textContent?.includes("Mic live") === true,
           hasTimer: Boolean(indicator?.querySelector("time")),
           viewport: { width: window.innerWidth, height: window.innerHeight }
         },

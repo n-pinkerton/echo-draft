@@ -8,13 +8,16 @@ import type { CustomEndpointApprovalOutcome } from "../../types/customEndpoint";
 import { useLocalStorage } from "../useLocalStorage";
 import type { TranscriptionSettings } from "./settingsTypes";
 import { syncDictionaryOnStartup } from "./dictionarySync";
-import { sanitizeLexicalDictionaryEntries } from "../../utils/dictionaryLexicon.cjs";
+import {
+  MAX_STORED_DICTIONARY_ENTRIES,
+  sanitizeLexicalDictionaryEntries,
+} from "../../utils/dictionaryLexicon.cjs";
 
 const deserializeLocalProvider = (value: string): LocalTranscriptionProvider =>
   value === "nvidia" ? "nvidia" : "whisper";
 const sanitizeCustomDictionary = (words: unknown): string[] =>
   sanitizeLexicalDictionaryEntries(Array.isArray(words) ? words : [], {
-    maxEntries: 10_000,
+    maxEntries: MAX_STORED_DICTIONARY_ENTRIES,
     maxEntryLength: 80,
     maxWords: 1,
   });
@@ -92,7 +95,7 @@ export function useTranscriptionSettings() {
 
   const [cloudTranscriptionModel, setCloudTranscriptionModel] = useLocalStorage(
     "cloudTranscriptionModel",
-    "gpt-4o-mini-transcribe",
+    "gpt-4o-transcribe",
     {
       serialize: String,
       deserialize: String,

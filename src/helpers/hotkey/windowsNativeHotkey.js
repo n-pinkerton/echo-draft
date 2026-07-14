@@ -45,6 +45,27 @@ const NATIVE_MAIN_KEYS = new Set([
 
 const NATIVE_PUNCTUATION_KEYS = new Set(["`", "-", "=", "[", "]", "\\", ";", "'", ",", ".", "/"]);
 
+const NATIVE_HOOK_ONLY_MAIN_KEYS = new Set([
+  "rightalt",
+  "rightoption",
+  "rightcontrol",
+  "rightctrl",
+  "rightshift",
+  "rightsuper",
+  "rightwin",
+  "rightmeta",
+  "rightcommand",
+  "rightcmd",
+]);
+
+function tokenizeHotkey(hotkey) {
+  return String(hotkey || "")
+    .trim()
+    .split("+")
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
 function isNativeMainKey(token) {
   const normalized = String(token || "")
     .trim()
@@ -61,10 +82,7 @@ function isWindowsNativeHotkeySupported(hotkey) {
   const value = String(hotkey || "").trim();
   if (!value || value === "GLOBE") return false;
 
-  const tokens = value
-    .split("+")
-    .map((token) => token.trim())
-    .filter(Boolean);
+  const tokens = tokenizeHotkey(value);
   if (tokens.length === 0) return false;
 
   const mainKeys = tokens.filter((token) => !MODIFIER_TOKENS.has(token.toLowerCase()));
@@ -75,7 +93,20 @@ function isWindowsNativeHotkeySupported(hotkey) {
   return tokens.some((token) => token.toLowerCase() !== "fn");
 }
 
+function canUseWindowsRegisteredTapHotkey(hotkey) {
+  const value = String(hotkey || "").trim();
+  if (!value || value === "GLOBE") return false;
+
+  const tokens = tokenizeHotkey(value);
+  const mainKeys = tokens.filter((token) => !MODIFIER_TOKENS.has(token.toLowerCase()));
+  if (mainKeys.length !== 1) return false;
+
+  const normalizedMainKey = mainKeys[0].toLowerCase();
+  return isNativeMainKey(mainKeys[0]) && !NATIVE_HOOK_ONLY_MAIN_KEYS.has(normalizedMainKey);
+}
+
 module.exports = {
+  canUseWindowsRegisteredTapHotkey,
   isNativeMainKey,
   isWindowsNativeHotkeySupported,
 };

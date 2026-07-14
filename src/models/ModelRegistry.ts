@@ -298,7 +298,7 @@ export function getTranscriptionModels(providerId: string): TranscriptionModelDe
 
 export function getDefaultTranscriptionModel(providerId: string): string {
   const models = getTranscriptionModels(providerId);
-  return models[0]?.id || "gpt-4o-mini-transcribe";
+  return models[0]?.id || "gpt-4o-transcribe";
 }
 
 export function getWhisperModels(): WhisperModelsMap {

@@ -62,4 +62,18 @@ describe("SoundFeedbackSection", () => {
 
     expect(localStorage.getItem("longRecordingReminderEnabled")).toBe("false");
   });
+
+  it("labels the falling cue as recording stopped even when work is queued", async () => {
+    const user = userEvent.setup();
+    render(<SoundFeedbackSection />);
+
+    expect(screen.getByText("Stop falls, Ready chimes", { exact: false })).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Preview recording stopped; queued or processing sound",
+      })
+    );
+
+    expect(cueMocks.playStopCue).toHaveBeenCalledWith({ force: true, volume: 65 });
+  });
 });

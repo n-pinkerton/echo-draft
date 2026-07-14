@@ -21,6 +21,7 @@ function registerWindowsHotkeyRecovery({
   let recoveryInFlight = false;
   let pendingReason = null;
   let resolveRetryDelay = null;
+  const isHotkeyCaptureActive = () => windowManager.hotkeyManager?.isInListeningMode?.() === true;
 
   const waitForRetry = () =>
     new Promise((resolve) => {
@@ -33,6 +34,10 @@ function registerWindowsHotkeyRecovery({
     });
 
   const recover = async (reason) => {
+    if (isHotkeyCaptureActive()) {
+      debugLogger?.debug?.("[HotkeyRecovery] Skipped while hotkey capture is active", { reason });
+      return;
+    }
     recoveryInFlight = true;
     let registration = null;
     let attempt = 0;
@@ -41,6 +46,7 @@ function registerWindowsHotkeyRecovery({
       windowsHotkeyController?.forceStopActiveRoutes?.(`system-${reason}`);
 
       while (!disposed && attempt < maxAttempts) {
+        if (isHotkeyCaptureActive()) return;
         attempt += 1;
         let threw = false;
         try {
@@ -50,6 +56,7 @@ function registerWindowsHotkeyRecovery({
           threw = true;
         }
         if (disposed) return;
+        if (isHotkeyCaptureActive()) return;
 
         const insertSuccess = registration?.insert?.success === true;
         debugLogger?.debug?.("[HotkeyRecovery] Insert registration attempt finished", {
@@ -74,8 +81,11 @@ function registerWindowsHotkeyRecovery({
         });
       }
 
+      if (isHotkeyCaptureActive()) return;
       const controlPanel = controlPanelShortcutRegistration?.refresh?.(`system-${reason}`) || null;
-      windowsHotkeyController?.refreshWindowsKeyListeners?.({ reason: `system-${reason}` });
+      await windowsHotkeyController?.refreshWindowsKeyListeners?.({
+        reason: `system-${reason}`,
+      });
       debugLogger?.debug?.("[HotkeyRecovery] Recovery finished", {
         reason,
         attempts: attempt,
@@ -102,11 +112,11 @@ function registerWindowsHotkeyRecovery({
   };
 
   const scheduleRecovery = (reason) => {
-    if (disposed) return;
+    if (disposed || isHotkeyCaptureActive()) return;
     if (debounceTimer) clearTimeoutFn(debounceTimer);
     debounceTimer = setTimeoutFn(() => {
       debounceTimer = null;
-      if (disposed) return;
+      if (disposed || isHotkeyCaptureActive()) return;
       if (recoveryInFlight) {
         pendingReason = reason;
         return;

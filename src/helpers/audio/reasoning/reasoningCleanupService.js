@@ -3,15 +3,20 @@ import {
   normalizeCleanupModelId,
   sanitizeProcessedText,
 } from "../../../config/prompts";
-import { assessCleanupFidelity, CleanupFidelityError } from "./cleanupFidelity";
+import {
+  assessCleanupFidelity,
+  assessStrictCleanupLexicalFidelity,
+  applyStrictCleanupTokensToOriginalPunctuation,
+  applyTrustedPreferredSpellingAliases,
+  CleanupFidelityError,
+} from "./cleanupFidelity";
 import { repairCleanupOutput } from "./cleanupOutputRepairs";
+import { getCustomDictionaryArray } from "../transcription/customDictionary";
 import {
   createTranscriptionCancelledError,
   isTranscriptionCancelled,
   throwIfTranscriptionCancelled,
 } from "../pipeline/cancellation";
-
-const OPENAI_FIDELITY_RETRY_MODEL = "gpt-5.6-sol";
 
 /**
  * Shared cleanup/orchestration around `ReasoningService` for transcript post-processing.
@@ -73,31 +78,18 @@ export class ReasoningCleanupService {
   }
 
   _getPreferredSpellings() {
-    // User dictionary entries may bias speech recognition, but they must not authorize a
-    // model-generated semantic substitution during cleanup. Only fixed product spellings are
-    // trusted strongly enough to waive the fidelity check for a near-homophone correction.
-    return getTrustedCleanupDictionary();
+    // Dictionary entries guide the model and transcription providers, but the
+    // fidelity assessor authorizes cleanup substitutions only through its
+    // explicit, audited source-to-target alias table.
+    return getTrustedCleanupDictionary(getCustomDictionaryArray());
   }
 
   _getFidelityRetryModel(model) {
-    const provider =
-      typeof window !== "undefined" && window.localStorage
-        ? localStorage.getItem("reasoningProvider") || "auto"
-        : "auto";
-    return (provider === "openai" || provider === "auto") &&
-      /^(?:gpt-5\.6-luna|gpt-5\.6-terra)$/.test(model)
-      ? OPENAI_FIDELITY_RETRY_MODEL
-      : model;
+    return model;
   }
 
-  _getFidelityRetryReasoningEffort(retryModel, selectedEffort) {
-    const provider =
-      typeof window !== "undefined" && window.localStorage
-        ? localStorage.getItem("reasoningProvider") || "auto"
-        : "auto";
-    const isFirstPartySolRescue =
-      (provider === "openai" || provider === "auto") && retryModel === OPENAI_FIDELITY_RETRY_MODEL;
-    return isFirstPartySolRescue ? "medium" : selectedEffort;
+  _getFidelityRetryReasoningEffort(_retryModel, selectedEffort) {
+    return selectedEffort;
   }
 
   /**
@@ -179,15 +171,20 @@ export class ReasoningCleanupService {
     let attemptedRetryModel = null;
     try {
       throwIfTranscriptionCancelled(signal);
-      const firstResult = repairCleanupOutput(
+      const preferredSpellings = fidelityOptions.preferredSpellings;
+      const firstResult = applyTrustedPreferredSpellingAliases(
         text,
-        sanitizeProcessedText(
-          await this.reasoningService.processText(text, model, null, {
-            cleanupPromptMode: "preservation-first",
-            reasoningEffort,
-            ...(signal ? { signal } : {}),
-          })
-        )
+        repairCleanupOutput(
+          text,
+          sanitizeProcessedText(
+            await this.reasoningService.processText(text, model, null, {
+              cleanupPromptMode: "preservation-first",
+              reasoningEffort,
+              ...(signal ? { signal } : {}),
+            })
+          )
+        ),
+        preferredSpellings
       );
       throwIfTranscriptionCancelled(signal);
       const firstAssessment = assessCleanupFidelity(text, firstResult, fidelityOptions);
@@ -223,7 +220,7 @@ export class ReasoningCleanupService {
       retryAttempted = true;
       attemptedRetryModel = retryModel;
       throwIfTranscriptionCancelled(signal);
-      const retryResult = repairCleanupOutput(
+      const generatedRetryResult = repairCleanupOutput(
         text,
         sanitizeProcessedText(
           await this.reasoningService.processText(text, retryModel, null, {
@@ -234,7 +231,49 @@ export class ReasoningCleanupService {
         )
       );
       throwIfTranscriptionCancelled(signal);
-      const retryAssessment = assessCleanupFidelity(text, retryResult, fidelityOptions);
+      const generatedRetryLexicalAssessment = assessStrictCleanupLexicalFidelity(
+        text,
+        generatedRetryResult,
+        {
+          language:
+            typeof localStorage !== "undefined"
+              ? localStorage.getItem("preferredLanguage") || "auto"
+              : "auto",
+        }
+      );
+      const retryResult = generatedRetryLexicalAssessment.accepted
+        ? applyStrictCleanupTokensToOriginalPunctuation(text, generatedRetryResult, {
+            language:
+              typeof localStorage !== "undefined"
+                ? localStorage.getItem("preferredLanguage") || "auto"
+                : "auto",
+          })
+        : generatedRetryResult;
+      const retrySemanticAssessment = assessCleanupFidelity(text, retryResult, fidelityOptions);
+      // The strict retry is allowed to repair mechanics only. Enforce that
+      // contract after sanitization and deterministic repairs so neither the
+      // model nor a post-processor can silently add, remove, or reorder words.
+      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(text, retryResult, {
+        language:
+          typeof localStorage !== "undefined"
+            ? localStorage.getItem("preferredLanguage") || "auto"
+            : "auto",
+      });
+      // A token-locked retry cannot repair a source-inherent trailing workflow
+      // fragment without violating its lexical contract. Once exact lexical
+      // preservation is proven, keep the source-formatted result instead of
+      // reporting cleanup failure for the original recognizer's defect.
+      const retrySemanticReasons = retrySemanticAssessment.reasons.filter(
+        (reason) => reason !== "incomplete-workflow-progression" || !retryLexicalAssessment.accepted
+      );
+      const retryAssessment = {
+        accepted: retrySemanticReasons.length === 0 && retryLexicalAssessment.accepted,
+        reasons: Array.from(new Set([...retrySemanticReasons, ...retryLexicalAssessment.reasons])),
+        metrics: {
+          ...retrySemanticAssessment.metrics,
+          ...retryLexicalAssessment.metrics,
+        },
+      };
       const processingTimeMs = Date.now() - startTime;
 
       if (!retryAssessment.accepted) {
@@ -253,6 +292,7 @@ export class ReasoningCleanupService {
         model,
         retryModel,
         retryReasoningEffort,
+        sourceSeparatorsRestored: retryResult !== generatedRetryResult,
         processingTimeMs,
         resultLength: retryResult.length,
         retryCount: 1,
@@ -306,7 +346,8 @@ export class ReasoningCleanupService {
    * @returns {Promise<{text: string, cleanup: Record<string, any>}>}
    */
   async processTranscriptionWithOutcome(text, source, cleanupEnabledOverride, runtime = {}) {
-    const normalizedText = typeof text === "string" ? text.trim() : "";
+    const sourceText = typeof text === "string" ? text : "";
+    const normalizedText = sourceText.trim();
     const signal = runtime?.signal || null;
     throwIfTranscriptionCancelled(signal);
 
@@ -354,7 +395,7 @@ export class ReasoningCleanupService {
     if (!reasoningModel) {
       this.logger?.logReasoning?.("REASONING_SKIPPED", { reason: "No reasoning model selected" });
       return {
-        text: normalizedText,
+        text: requested ? sourceText : normalizedText,
         cleanup: {
           ...baseOutcome,
           status: requested ? "fallback" : "disabled",
@@ -373,7 +414,7 @@ export class ReasoningCleanupService {
 
     if (!useReasoning || !normalizedText) {
       return {
-        text: normalizedText,
+        text: requested ? sourceText : normalizedText,
         cleanup: {
           ...baseOutcome,
           status: !requested ? "disabled" : normalizedText ? "fallback" : "unchanged",
@@ -426,7 +467,10 @@ export class ReasoningCleanupService {
       });
 
       return {
-        text: sanitizeProcessedText(normalizedText),
+        // Fallback means cleanup made no accepted change. Preserve the recognizer
+        // output byte-for-byte instead of running a sanitizer that can alter its
+        // punctuation (for example converting an em dash).
+        text: sourceText,
         cleanup: {
           ...baseOutcome,
           attempted: true,

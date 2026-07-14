@@ -44,9 +44,6 @@ export const createStartRecordingHandler = (deps) => {
     if (currentState.isRecording) {
       return false;
     }
-    if (currentState.isProcessing && session.outputMode !== "clipboard") {
-      return false;
-    }
 
     logger.info(
       "Dictation start requested",
@@ -89,7 +86,10 @@ export const createStartRecordingHandler = (deps) => {
       }
     }
 
-    const shouldForceNonStreaming = currentState.isProcessing && session.outputMode === "clipboard";
+    // A live streaming session owns one backend connection. While any earlier job is
+    // processing, record locally and let the FIFO queue start it when its turn arrives.
+    const shouldForceNonStreaming =
+      currentState.isProcessing || Number(currentState.queuedProcessingJobs) > 0;
     const recordingContext = {
       sessionId: session.sessionId,
       jobId: job.jobId,
@@ -133,7 +133,12 @@ export const createStartRecordingHandler = (deps) => {
         jobId: job.jobId,
         generatedChars: 0,
         generatedWords: 0,
-        message: session.outputMode === "clipboard" ? "Clipboard mode" : null,
+        message:
+          session.outputMode === "clipboard"
+            ? "Clipboard mode"
+            : shouldForceNonStreaming
+              ? "Previous dictation processing"
+              : null,
       });
       void playStartCue?.();
     } else {
@@ -249,8 +254,7 @@ export const createStopRecordingHandler = (deps) => {
           : null;
 
       upsertJob(session.sessionId, {
-        status:
-          currentState.isProcessing && session.outputMode === "clipboard" ? "queued" : "processing",
+        status: currentState.isProcessing ? "queued" : "processing",
         ...(stopSource ? { stopSource } : {}),
         ...(stopReason ? { stopReason } : {}),
         ...(recordedMsSnapshot !== null ? { recordedMs: recordedMsSnapshot } : {}),
@@ -261,15 +265,41 @@ export const createStopRecordingHandler = (deps) => {
     recordingSessionIdRef.current = null;
 
     if (currentState.isStreaming) {
-      return await audioManager.stopStreamingRecording();
+      const completion = audioManager.stopStreamingRecording();
+      void Promise.resolve(completion).catch((error) => {
+        logger.error(
+          "Streaming finalization failed after the microphone closed",
+          {
+            error: error?.message || String(error),
+            sessionId: session?.sessionId || null,
+          },
+          "streaming"
+        );
+        audioManager.emitError?.(
+          {
+            title: "Transcription Error",
+            description: "The streaming transcription could not be finalized.",
+            context: session || null,
+          },
+          error
+        );
+      });
+      // Streaming stop closes the microphone and emits recordingClosed before its
+      // first asynchronous finalization wait. Keep finalization in the background
+      // so the recording-operation lane can accept the next hotkey immediately.
+      return true;
     }
 
-    const didStop = audioManager.stopRecording({
+    const stopContext = {
       reason: stopReason,
       source: stopSource,
       sessionId: session?.sessionId,
       outputMode: session?.outputMode,
-    });
+    };
+    const didStop =
+      typeof audioManager.stopRecordingAndWaitForClose === "function"
+        ? await audioManager.stopRecordingAndWaitForClose(stopContext)
+        : audioManager.stopRecording(stopContext);
 
     return didStop;
   };

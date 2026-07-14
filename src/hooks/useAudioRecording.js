@@ -202,42 +202,47 @@ export const useAudioRecording = (toast, options = {}) => {
     ) {
       return false;
     }
-    const cancelled = audioManagerRef.current?.cancelProcessing() || false;
+    const audioManager = audioManagerRef.current;
+    const cancelledContext =
+      audioManager?.activeProcessingContext || audioManager?.streamingContext || null;
+    const cancelled = audioManager?.cancelProcessing() || false;
     if (!cancelled) {
       return false;
     }
-    activeSessionRef.current = null;
-    sessionsByIdRef.current.clear();
-    jobsBySessionIdRef.current.clear();
-    setJobs([]);
-    updateStage("cancelled", { message: "Processing cancelled", canCancel: false });
+    const cancelledSessionId =
+      typeof cancelledContext?.sessionId === "string" && cancelledContext.sessionId.trim()
+        ? cancelledContext.sessionId.trim()
+        : null;
+    if (cancelledSessionId) {
+      sessionsByIdRef.current.delete(cancelledSessionId);
+      removeJob(cancelledSessionId);
+      if (activeSessionRef.current?.sessionId === cancelledSessionId) {
+        activeSessionRef.current = null;
+      }
+    }
+    const preservedCount = Math.max(
+      0,
+      Number(audioManager?.getState?.()?.queuedProcessingJobs) || 0
+    );
+    updateStage("cancelled", {
+      message: preservedCount
+        ? `Current dictation cancelled; ${preservedCount} queued ${
+            preservedCount === 1 ? "dictation" : "dictations"
+          } preserved.`
+        : "Processing cancelled",
+      canCancel: false,
+    });
     void playCancelCue();
     return true;
-  }, [updateStage]);
+  }, [removeJob, updateStage]);
 
   const routeToggleDictation = useCallback(
-    (payload = {}) => {
-      const managerState = audioManagerRef.current?.getState?.();
-      if (managerState?.isProcessing || latestProgressRef.current?.canCancel) {
-        return Promise.resolve(false);
-      }
-      return toggleRecording(payload);
-    },
+    (payload = {}) => toggleRecording(payload),
     [toggleRecording]
   );
 
   const routeStartDictation = useCallback(
-    (payload = {}) => {
-      const managerState = audioManagerRef.current?.getState?.();
-      if (
-        deliveryCommitCountRef.current > 0 ||
-        managerState?.isProcessing ||
-        latestProgressRef.current?.canCancel
-      ) {
-        return Promise.resolve(false);
-      }
-      return startRecording(payload);
-    },
+    (payload = {}) => startRecording(payload),
     [startRecording]
   );
 
@@ -277,6 +282,7 @@ export const useAudioRecording = (toast, options = {}) => {
       createAudioManagerCallbacks({
         activeSessionRef,
         audioManagerRef,
+        sessionsByIdRef,
         recordingSessionIdRef,
         removeJob,
         setIsProcessing,
@@ -429,16 +435,7 @@ export const useAudioRecording = (toast, options = {}) => {
   };
 
   const toggleListening = async (payload = {}) => {
-    const managerState = audioManagerRef.current?.getState?.();
-    if (managerState?.isProcessing || latestProgressRef.current?.canCancel) {
-      return;
-    }
-    const outputMode = payload?.outputMode === "clipboard" ? "clipboard" : "insert";
-    if (!isRecording && (!isProcessing || outputMode === "clipboard")) {
-      await toggleRecording(payload);
-    } else if (isRecording) {
-      await toggleRecording(payload);
-    }
+    await toggleRecording(payload);
   };
 
   const warmupStreaming = () => {

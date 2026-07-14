@@ -55,7 +55,7 @@ describe("customDictionary", () => {
     expect(getCustomDictionaryPrompt(storage as any)).toBe("Kubernetes");
   });
 
-  it("disables dictionary prompt injection for cloud transcription models", () => {
+  it("returns only structured lexical context for OpenAI transcription models", () => {
     const result = buildCustomDictionaryPromptForTranscription({
       model: "gpt-4o-transcribe",
       entries: ["Alpha", "Beta"],
@@ -63,8 +63,8 @@ describe("customDictionary", () => {
 
     expect(result).toEqual({
       prompt: null,
-      entriesUsed: [],
-      mode: "disabled-cloud",
+      entriesUsed: ["Alpha", "Beta"],
+      mode: "structured-openai",
     });
   });
 

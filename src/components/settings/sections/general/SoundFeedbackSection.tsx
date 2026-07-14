@@ -27,7 +27,7 @@ const deserializeVolume = (value: string) => {
 
 const CUE_PREVIEWS = [
   { label: "Start", description: "Recording started", play: playStartCue },
-  { label: "Process", description: "Recording stopped; processing started", play: playStopCue },
+  { label: "Stop", description: "Recording stopped; queued or processing", play: playStopCue },
   { label: "Ready", description: "Text delivered", play: playCompletionCue },
   { label: "Warning", description: "Text delivered with a warning", play: playWarningCue },
   { label: "Error", description: "Action failed", play: playErrorCue },
@@ -66,7 +66,7 @@ export default function SoundFeedbackSection() {
         <SettingsPanelRow>
           <SettingsRow
             label="Dictation sounds"
-            description="Hear distinct cues for recording, processing, completion, warnings, cancellation, and errors"
+            description="Hear distinct cues for recording, stopping or queueing, completion, warnings, cancellation, and errors"
           >
             <Toggle
               checked={soundsEnabled}
@@ -131,7 +131,7 @@ export default function SoundFeedbackSection() {
           <div>
             <p className="text-[12px] font-medium text-foreground">Preview sounds</p>
             <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground/80">
-              Start rises, Process falls, Ready chimes, and Warning uses a paired descending tone.
+              Start rises, Stop falls, Ready chimes, and Warning uses a paired descending tone.
             </p>
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               {CUE_PREVIEWS.map((cue) => (

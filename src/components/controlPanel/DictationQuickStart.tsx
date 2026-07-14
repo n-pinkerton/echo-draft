@@ -102,7 +102,9 @@ export default function DictationQuickStart(props: Props) {
       ? "Last cleanup changed too much · original kept"
       : latestCleanup?.fallbackReason === "not_configured"
         ? "Last cleanup needed setup · original kept"
-        : "Last cleanup was unavailable · original kept";
+        : latestCleanup?.fallbackReason === "unavailable"
+          ? "Last cleanup was unavailable · original kept"
+          : "Last cleanup request failed · original kept";
   const cleanupStatusLabel = cleanupFallback
     ? cleanupFallbackLabel
     : cleanupNeedsSetup

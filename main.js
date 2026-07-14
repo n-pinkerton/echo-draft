@@ -286,6 +286,7 @@ async function startApp() {
     windowsKeyManager,
     debugLogger,
   });
+  windowManager.setWindowsHotkeyController?.(windowsHotkeyController);
   disposeWindowsHotkeyRecovery = registerWindowsHotkeyRecovery({
     powerMonitor,
     windowManager,
@@ -430,6 +431,7 @@ if (gotSingleInstanceLock) {
     disposeWindowsHotkeyRecovery?.();
     disposeWindowsHotkeyRecovery = null;
     windowsHotkeyController?.dispose?.();
+    windowManager?.setWindowsHotkeyController?.(null);
     windowsHotkeyController = null;
     if (authBridgeServer) {
       authBridgeServer.close();

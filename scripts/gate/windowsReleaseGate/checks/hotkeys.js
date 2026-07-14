@@ -9,36 +9,56 @@ async function checkHotkeysRegistered(panel, record) {
 
         for (const insertHotkey of candidates) {
           try {
-            await window.electronAPI.updateHotkey(insertHotkey);
+            const result = await window.electronAPI.updateHotkey(insertHotkey);
+            if (result?.success) window.electronAPI.notifyHotkeyChanged?.(insertHotkey);
           } catch {}
 
           for (const clipboardHotkey of candidates) {
             if (clipboardHotkey === insertHotkey) continue;
             try {
-              await window.electronAPI.updateClipboardHotkey(clipboardHotkey);
+              const result = await window.electronAPI.updateClipboardHotkey(clipboardHotkey);
+              if (result?.success) {
+                window.electronAPI.notifyClipboardHotkeyChanged?.(clipboardHotkey);
+              }
             } catch {}
 
-            await new Promise((r) => setTimeout(r, 600));
+            await new Promise((r) => setTimeout(r, 900));
             const status = await window.electronAPI.e2eGetHotkeyStatus();
+            const insertReady = status?.insertUsesNativeListener
+              ? Boolean(status?.insertNativeReady) && !status?.insertGlobalRegistered
+              : Boolean(status?.insertGlobalRegistered);
+            const clipboardReady = status?.clipboardUsesNativeListener
+              ? Boolean(status?.clipboardNativeReady) && !status?.clipboardGlobalRegistered
+              : Boolean(status?.clipboardGlobalRegistered);
             const ok =
-              Boolean(status?.insertGlobalRegistered) &&
-              Boolean(status?.clipboardGlobalRegistered) &&
+              insertReady &&
+              clipboardReady &&
               status?.insertHotkey === insertHotkey &&
               status?.clipboardHotkey === clipboardHotkey;
 
-            last = { chosen: { insertHotkey, clipboardHotkey }, status, ok };
+            last = {
+              chosen: { insertHotkey, clipboardHotkey },
+              status,
+              insertReady,
+              clipboardReady,
+              ok,
+            };
             if (ok) {
               return { success: true, ...last };
             }
           }
         }
 
-        return { success: false, ...last, error: "Failed to register two distinct global hotkeys" };
+        return {
+          success: false,
+          ...last,
+          error: "Failed to activate two distinct focus-independent hotkey routes",
+        };
       })()
     `);
 
   record(
-    "Hotkeys registered (insert+clipboard)",
+    "Hotkeys active outside EchoDraft (insert+clipboard)",
     Boolean(hotkeyStatus?.success) && Boolean(hotkeyStatus?.ok),
     JSON.stringify({
       success: hotkeyStatus?.success,
@@ -55,4 +75,3 @@ async function checkHotkeysRegistered(panel, record) {
 module.exports = {
   checkHotkeysRegistered,
 };
-

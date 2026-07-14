@@ -7,6 +7,31 @@ const MAX_RENDERER_LOG_ENTRIES_PER_WINDOW = 200;
 const MAX_RENDERER_LOG_BYTES_PER_WINDOW = 2 * 1024 * 1024;
 const MAX_RENDERER_LOG_ENTRIES_GLOBAL_PER_WINDOW = 300;
 const MAX_RENDERER_LOG_BYTES_GLOBAL_PER_WINDOW = 2 * 1024 * 1024;
+const SENSITIVE_RENDERER_LOG_KEYS = new Set([
+  "cleanedtext",
+  "partialtranscript",
+  "prompttext",
+  "rawtext",
+  "rawtranscript",
+  "responsetext",
+  "text",
+  "transcript",
+]);
+
+function stripSensitiveRendererLogFields(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripSensitiveRendererLogFields(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !SENSITIVE_RENDERER_LOG_KEYS.has(key.toLowerCase()))
+      .map(([key, nestedValue]) => [key, stripSensitiveRendererLogFields(nestedValue)])
+  );
+}
 
 function registerRendererLogHandlers({ ipcMain }, { windowManager }) {
   const senderBudgets = new WeakMap();
@@ -33,7 +58,9 @@ function registerRendererLogHandlers({ ipcMain }, { windowManager }) {
     if (Buffer.byteLength(serialized, "utf8") > MAX_RENDERER_LOG_BYTES) {
       throw new Error("Renderer log entry is too large");
     }
-    const serializedBytes = Buffer.byteLength(serialized, "utf8");
+    const sanitizedEntry = stripSensitiveRendererLogFields(entry);
+    const sanitizedSerialized = JSON.stringify(sanitizedEntry);
+    const serializedBytes = Buffer.byteLength(sanitizedSerialized, "utf8");
     const now = Date.now();
     let budget = senderBudgets.get(event.sender);
     if (!budget || now - budget.startedAt >= RENDERER_LOG_WINDOW_MS) {
@@ -59,7 +86,7 @@ function registerRendererLogHandlers({ ipcMain }, { windowManager }) {
     budget.bytes += serializedBytes;
     globalBudget.entries += 1;
     globalBudget.bytes += serializedBytes;
-    debugLogger.logEntry(entry);
+    debugLogger.logEntry(sanitizedEntry);
     return { success: true };
   });
 }
@@ -72,4 +99,5 @@ module.exports = {
   MAX_RENDERER_LOG_ENTRIES_GLOBAL_PER_WINDOW,
   RENDERER_LOG_WINDOW_MS,
   registerRendererLogHandlers,
+  stripSensitiveRendererLogFields,
 };

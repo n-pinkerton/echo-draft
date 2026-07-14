@@ -64,11 +64,14 @@ describe("ReasoningService (OpenAI)", () => {
   });
 
   it("aggregates all Responses API output_text parts and requests max_output_tokens", async () => {
+    localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
     const fetchMock = vi.fn(async (_url: any, init: any) => {
       const body = JSON.parse(init.body);
       expect(body.model).toBe("gpt-5.6-terra");
       expect(body.input[0].role).toBe("developer");
       expect(body.input[0].content).toContain("Selected cleanup model: GPT-5.6 Terra");
+      expect(body.input[0].content).toContain("<trusted_preferred_spellings>");
+      expect(body.input[0].content).toContain('"Rilje"');
       expect(body.input[1].content).toContain("<echodraft_gpt56_terra_untrusted_dictation>");
       expect(body.reasoning).toEqual({ effort: "low" });
       expect(body.text).toEqual({ verbosity: "medium" });

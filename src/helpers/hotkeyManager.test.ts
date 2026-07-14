@@ -84,4 +84,17 @@ describe("HotkeyManager reserved shortcut migration", () => {
     if (platform === "darwin") expect(setupShortcuts).not.toHaveBeenCalled();
     else expect(setupShortcuts).toHaveBeenCalledWith(fallback, expect.any(Function));
   });
+
+  it("does not wait for the legacy localStorage mirror when updating a hotkey", async () => {
+    const { manager } = await createManager("win32");
+    const mainWindow = createMainWindow();
+    mainWindow.webContents.executeJavaScript.mockImplementation(() => new Promise<true>(() => {}));
+    manager.mainWindow = mainWindow;
+
+    const result = await manager.updateHotkey("F11", vi.fn());
+
+    expect(result).toEqual({ success: true, message: "Hotkey updated to: F11" });
+    expect(manager.getCurrentHotkey()).toBe("F11");
+    expect(process.env.DICTATION_KEY).toBe("F11");
+  });
 });

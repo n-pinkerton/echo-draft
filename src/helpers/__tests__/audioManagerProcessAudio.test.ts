@@ -145,4 +145,46 @@ describe("AudioManager.processAudio", () => {
     );
     manager.cleanup();
   });
+
+  it("cancels only the active queue job and preserves later jobs in FIFO order", async () => {
+    const manager = new AudioManager();
+    const processed: string[] = [];
+    let resolveActive!: () => void;
+    const activeCancelled = new Promise<void>((resolve) => {
+      resolveActive = resolve;
+    });
+
+    vi.spyOn(manager, "processAudio").mockImplementation(async (_blob, _metadata, context: any) => {
+      processed.push(`start:${context.sessionId}`);
+      if (context.sessionId === "first") {
+        const controller = new AbortController();
+        (manager as any).activeProcessingAbortController = controller;
+        controller.signal.addEventListener("abort", resolveActive, { once: true });
+        await activeCancelled;
+        processed.push("cancelled:first");
+        return;
+      }
+      processed.push(`commit:${context.sessionId}`);
+    });
+
+    manager.enqueueProcessingJob(new Blob(["one"]), {}, { sessionId: "first", jobId: 1 });
+    manager.enqueueProcessingJob(new Blob(["two"]), {}, { sessionId: "second", jobId: 2 });
+    manager.enqueueProcessingJob(new Blob(["three"]), {}, { sessionId: "third", jobId: 3 });
+    await vi.waitFor(() => expect(processed).toEqual(["start:first"]));
+
+    expect(manager.cancelProcessing()).toBe(true);
+
+    await vi.waitFor(() =>
+      expect(processed).toEqual([
+        "start:first",
+        "cancelled:first",
+        "start:second",
+        "commit:second",
+        "start:third",
+        "commit:third",
+      ])
+    );
+    expect(manager.getState().queuedProcessingJobs).toBe(0);
+    manager.cleanup();
+  });
 });

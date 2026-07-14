@@ -2,6 +2,7 @@ export const STAGE_META = {
   idle: { label: "Ready", overallProgress: 0 },
   starting: { label: "Starting", overallProgress: 0.05 },
   listening: { label: "Listening", overallProgress: 0.1 },
+  queued: { label: "Queued", overallProgress: 0.2 },
   transcribing: { label: "Transcribing", overallProgress: 0.45 },
   cleaning: { label: "Cleaning up", overallProgress: 0.7 },
   delivering: { label: "Delivering", overallProgress: 0.82 },

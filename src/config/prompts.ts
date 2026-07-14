@@ -1,10 +1,11 @@
-import { sanitizeLexicalDictionaryEntries } from "../utils/dictionaryLexicon.cjs";
 import {
+  BUILT_IN_CLEANUP_DICTIONARY as SHARED_BUILT_IN_CLEANUP_DICTIONARY,
   CLEANUP_PROMPT_PROFILES as SHARED_CLEANUP_PROMPT_PROFILES,
   DEFAULT_CLEANUP_MODEL_ID as SHARED_DEFAULT_CLEANUP_MODEL_ID,
   GENERIC_WRAPPER_TAG,
   SUPPORTED_CLEANUP_MODEL_IDS as SHARED_SUPPORTED_CLEANUP_MODEL_IDS,
   buildCleanupSystemPrompt,
+  getTrustedCleanupDictionary as getSharedTrustedCleanupDictionary,
   getUntrustedTranscriptionTagName as getSharedUntrustedTranscriptionTagName,
   stripUntrustedTranscriptionWrapper as stripSharedUntrustedTranscriptionWrapper,
   wrapUntrustedTranscription as wrapSharedUntrustedTranscription,
@@ -16,32 +17,12 @@ export const LEGACY_PROMPTS = Object.freeze({
 });
 
 export const BUILT_IN_CLEANUP_DICTIONARY = Object.freeze([
-  "EchoDraft",
-  "OpenAI",
-  "ChatGPT",
-  "Codex",
-  "AssemblyAI",
-  "PowerShell",
-  "GitHub",
-  "OneDrive",
-  "TypeScript",
-  "JavaScript",
-  "Node.js",
-]);
-
-const MAX_TRUSTED_DICTIONARY_ENTRIES = 100;
-const MAX_TRUSTED_DICTIONARY_ENTRY_LENGTH = 80;
+  ...SHARED_BUILT_IN_CLEANUP_DICTIONARY,
+] as string[]);
 export const FIXED_CLEANUP_AGENT_NAME = "EchoDraft Editor";
 
 export function getTrustedCleanupDictionary(customDictionary?: unknown): string[] {
-  return sanitizeLexicalDictionaryEntries(
-    [...BUILT_IN_CLEANUP_DICTIONARY, ...(Array.isArray(customDictionary) ? customDictionary : [])],
-    {
-      maxEntries: MAX_TRUSTED_DICTIONARY_ENTRIES,
-      maxEntryLength: MAX_TRUSTED_DICTIONARY_ENTRY_LENGTH,
-      maxWords: 1,
-    }
-  );
+  return getSharedTrustedCleanupDictionary(customDictionary) as string[];
 }
 
 export function normalizeCleanupAgentName(_agentName?: unknown): string {
@@ -123,12 +104,12 @@ export function sanitizeProcessedText(text: string): string {
 
 export function getSystemPrompt(
   _agentName: string | null,
-  _customDictionary?: string[],
+  customDictionary?: string[],
   language?: string,
   modelId?: string | null,
   mode: CleanupPromptMode = "standard"
 ): string {
-  return buildCleanupSystemPrompt(modelId, mode, language);
+  return buildCleanupSystemPrompt(modelId, mode, language, customDictionary);
 }
 
 export function getUserPrompt(text: string, modelId?: string | null): string {

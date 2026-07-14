@@ -1,4 +1,5 @@
 import { getSystemPrompt, type CleanupPromptMode } from "../config/prompts";
+import { getCustomDictionaryArray } from "../helpers/audio/transcription/customDictionary";
 
 export type CleanupReasoningEffort = "none" | "low" | "medium";
 
@@ -19,13 +20,20 @@ export abstract class BaseReasoningService {
     return window.localStorage.getItem("preferredLanguage") || "auto";
   }
 
+  protected getCustomDictionary(): string[] {
+    const customEntries = getCustomDictionaryArray(
+      typeof window !== "undefined" ? window.localStorage : null
+    );
+    return customEntries;
+  }
+
   protected getSystemPrompt(
     agentName: string | null,
     modelId?: string | null,
     mode: CleanupPromptMode = "standard"
   ): string {
     const language = this.getPreferredLanguage();
-    return getSystemPrompt(agentName, undefined, language, modelId, mode);
+    return getSystemPrompt(agentName, this.getCustomDictionary(), language, modelId, mode);
   }
 
   protected calculateMaxTokens(

@@ -19,6 +19,11 @@ function sha256(content) {
   return crypto.createHash("sha256").update(content).digest("hex").toUpperCase();
 }
 
+function sha256Source(content) {
+  const normalized = Buffer.from(content).toString("utf8").replace(/\r\n?/g, "\n");
+  return sha256(Buffer.from(normalized, "utf8"));
+}
+
 function verifyPinnedArtifacts({ manifest, sourceBuffer, binaryBuffer } = {}) {
   if (!manifest?.version || !manifest?.sourceSha256 || !manifest?.binarySha256) {
     throw new Error("Windows key listener integrity manifest is incomplete.");
@@ -30,7 +35,7 @@ function verifyPinnedArtifacts({ manifest, sourceBuffer, binaryBuffer } = {}) {
     throw new Error("Pinned Windows key listener executable is missing.");
   }
 
-  const sourceHash = sha256(sourceBuffer);
+  const sourceHash = sha256Source(sourceBuffer);
   const binaryHash = sha256(binaryBuffer);
   if (sourceHash !== String(manifest.sourceSha256).toUpperCase()) {
     throw new Error(
@@ -81,6 +86,7 @@ if (require.main === module) {
 module.exports = {
   main,
   sha256,
+  sha256Source,
   verifyPinnedArtifacts,
   verifyRepositoryArtifacts,
 };

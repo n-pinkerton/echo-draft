@@ -4,7 +4,11 @@ const {
   stripDictionaryHeader,
 } = require("../utils/dictionaryUtils");
 const { requireTrustedRenderer } = require("../trustedRenderer");
-const { sanitizeLexicalDictionaryEntries } = require("../../../utils/dictionaryLexicon.cjs");
+const {
+  MAX_STORED_DICTIONARY_ENTRIES,
+  MAX_USER_DICTIONARY_ENTRIES,
+  sanitizeLexicalDictionaryEntries,
+} = require("../../../utils/dictionaryLexicon.cjs");
 
 const MAX_IMPORTED_DICTIONARY_BYTES = 1024 * 1024;
 const MAX_IMPORTED_DICTIONARY_ENTRIES = 10_000;
@@ -103,13 +107,15 @@ function registerDictionaryHandlers(
     requireControlPanel(event);
     if (
       !Array.isArray(words) ||
-      words.length > 10_000 ||
+      words.length > MAX_STORED_DICTIONARY_ENTRIES ||
       words.some((word) => typeof word !== "string" || word.length > 200)
     ) {
-      throw new Error("Dictionary must contain at most 10,000 words of 200 characters or fewer");
+      throw new Error(
+        `Dictionary must contain at most ${MAX_STORED_DICTIONARY_ENTRIES} words of 200 characters or fewer`
+      );
     }
     const safeWords = sanitizeLexicalDictionaryEntries(words, {
-      maxEntries: 10_000,
+      maxEntries: MAX_STORED_DICTIONARY_ENTRIES,
       maxEntryLength: 80,
       maxWords: 1,
     });
@@ -155,11 +161,12 @@ function registerDictionaryHandlers(
         );
       }
       const uniqueWords = dedupeDictionaryWords(parsedWords);
-      const safeWords = sanitizeLexicalDictionaryEntries(uniqueWords, {
+      const lexicallySafeWords = sanitizeLexicalDictionaryEntries(uniqueWords, {
         maxEntries: MAX_IMPORTED_DICTIONARY_ENTRIES,
         maxEntryLength: 80,
         maxWords: 1,
       });
+      const safeWords = lexicallySafeWords.slice(0, MAX_USER_DICTIONARY_ENTRIES);
       return {
         success: true,
         filePath: fileName,
@@ -167,7 +174,8 @@ function registerDictionaryHandlers(
         parsedCount: parsedWords.length,
         uniqueCount: safeWords.length,
         duplicatesRemoved: Math.max(0, parsedWords.length - uniqueWords.length),
-        unsupportedRemoved: Math.max(0, uniqueWords.length - safeWords.length),
+        unsupportedRemoved: Math.max(0, uniqueWords.length - lexicallySafeWords.length),
+        capacityRemoved: Math.max(0, lexicallySafeWords.length - safeWords.length),
       };
     } catch (error) {
       return {

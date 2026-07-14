@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "./button";
 import { Copy, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
+import { getReasoningModelLabel } from "../../models/ModelRegistry";
 import { sanitizeOpaqueRequestId } from "../../utils/diagnosticSanitizers";
 import { cn } from "../lib/utils";
 
@@ -86,6 +87,7 @@ export default function TranscriptionItem({
   onDelete,
 }: TranscriptionItemProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const detailsPanelId = `transcription-details-${item.id}`;
 
   const meta = item.meta || {};
   const timings = (meta.timings || {}) as Record<string, unknown>;
@@ -95,6 +97,18 @@ export default function TranscriptionItem({
   const model = meta.model || "";
   const cleanup = meta.cleanup ?? null;
   const cleanupFallback = cleanup?.status === "fallback";
+  const cleanupRetryCount =
+    typeof cleanup?.retryCount === "number" && cleanup.retryCount > 0 ? cleanup.retryCount : 0;
+  const cleanupSelectedModel = cleanup?.model
+    ? getReasoningModelLabel(String(cleanup.model))
+    : null;
+  const cleanupAppliedModel = cleanup?.appliedModel
+    ? getReasoningModelLabel(String(cleanup.appliedModel))
+    : null;
+  const cleanupModelLabel = cleanup?.modelSource === "managed" ? "Managed model" : "Selected";
+  const cleanupRetryAccepted = Boolean(
+    !cleanupFallback && cleanupRetryCount > 0 && cleanupAppliedModel
+  );
   const cleanupFallbackDetail =
     cleanup?.fallbackReason === "fidelity_rejected"
       ? "safety check rejected the rewrite"
@@ -324,6 +338,8 @@ export default function TranscriptionItem({
               size="sm"
               variant="ghost"
               onClick={() => setIsExpanded((prev) => !prev)}
+              aria-expanded={isExpanded}
+              aria-controls={detailsPanelId}
               className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
             >
               {isExpanded ? (
@@ -350,7 +366,10 @@ export default function TranscriptionItem({
           </div>
 
           {isExpanded && (
-            <div className="mt-2 space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+            <div
+              id={detailsPanelId}
+              className="mt-2 space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5"
+            >
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Raw Transcript
@@ -405,7 +424,10 @@ export default function TranscriptionItem({
                     Cleanup:{" "}
                     {cleanupFallback ? "original transcript preserved" : String(cleanup.status)}
                     {cleanupFallback ? ` · ${cleanupFallbackDetail}` : ""}
-                    {cleanup.model ? ` · ${String(cleanup.model)}` : ""}
+                    {cleanupSelectedModel ? ` · ${cleanupModelLabel}: ${cleanupSelectedModel}` : ""}
+                    {cleanupRetryAccepted ? " · Safety retry: accepted" : ""}
+                    {cleanupRetryAccepted ? ` · Retry model: ${cleanupAppliedModel}` : ""}
+                    {cleanupFallback && cleanupRetryCount > 0 ? " · Safety retry: not applied" : ""}
                   </p>
                 ) : null}
               </div>

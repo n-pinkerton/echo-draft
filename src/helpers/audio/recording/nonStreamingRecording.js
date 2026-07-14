@@ -2,6 +2,11 @@ import logger from "../../../utils/logger";
 import { getRendererLogLevel } from "../../../utils/branding";
 import { describeRecordingStartError } from "./nonStreamingRecordingErrors";
 import { waitForNonStreamingStopFlush } from "./nonStreamingStopFlush";
+import {
+  armNonStreamingStopWatchdog,
+  clearNonStreamingStopWatchdog,
+  retireNonStreamingRecorderWithoutEnqueue,
+} from "./nonStreamingStopWatchdog";
 
 export async function startNonStreamingRecording(manager, context = null) {
   let acquiredStream = null;
@@ -87,6 +92,8 @@ export async function startNonStreamingRecording(manager, context = null) {
     }
 
     const mediaRecorder = new MediaRecorder(stream);
+    const recorderGeneration = (Number(manager.nonStreamingRecorderGeneration) || 0) + 1;
+    manager.nonStreamingRecorderGeneration = recorderGeneration;
     const audioChunks = [];
     const recordingStartedAt = Date.now();
     const recordingMimeType = mediaRecorder.mimeType || "audio/webm";
@@ -128,17 +135,28 @@ export async function startNonStreamingRecording(manager, context = null) {
       }
     };
 
+    let stopEventHandled = false;
     mediaRecorder.onstop = async () => {
+      if (stopEventHandled || manager.nonStreamingRecorderGeneration !== recorderGeneration) {
+        return;
+      }
+      stopEventHandled = true;
+      clearNonStreamingStopWatchdog(manager);
       const stopContext =
         manager.pendingNonStreamingStopContext || manager.pendingStopContext || {};
-      const flushContext = await waitForNonStreamingStopFlush(manager, stopContext);
       const startTimings = manager.pendingNonStreamingStartTimings || null;
+      let flushContext = null;
+      let recordingClosedSuccessfully = false;
+
+      // The browser has closed this recorder even if flushing or queueing later
+      // fails. Never leave EchoDraft believing a dead recorder is still live.
+      manager.isRecording = false;
+      if (manager.mediaRecorder === mediaRecorder) {
+        manager.mediaRecorder = null;
+      }
 
       try {
-        manager.isRecording = false;
-        if (manager.mediaRecorder === mediaRecorder) {
-          manager.mediaRecorder = null;
-        }
+        flushContext = await waitForNonStreamingStopFlush(manager, stopContext);
         const stopRequestedAt =
           typeof stopContext.requestedAt === "number" ? stopContext.requestedAt : null;
         const stopLatencyMs = stopRequestedAt ? Math.max(0, Date.now() - stopRequestedAt) : null;
@@ -189,7 +207,7 @@ export async function startNonStreamingRecording(manager, context = null) {
         const durationSeconds = recordingStartedAt
           ? (Date.now() - recordingStartedAt) / 1000
           : null;
-        manager.enqueueProcessingJob(
+        const queueResult = manager.enqueueProcessingJob(
           audioBlob,
           {
             durationSeconds,
@@ -210,10 +228,14 @@ export async function startNonStreamingRecording(manager, context = null) {
           },
           recordingContext
         );
+        const jobsAhead = Math.max(0, Number(queueResult?.jobsAhead) || 0);
+        const queued = jobsAhead > 0;
         manager.emitProgress({
-          stage: "transcribing",
-          stageLabel: "Transcribing",
-          message: "Recording stopped",
+          stage: queued ? "queued" : "transcribing",
+          stageLabel: queued ? "Queued" : "Transcribing",
+          message: queued
+            ? `${jobsAhead} ${jobsAhead === 1 ? "dictation" : "dictations"} ahead`
+            : "Recording stopped",
           context: recordingContext,
           recordingClosed: true,
         });
@@ -225,11 +247,44 @@ export async function startNonStreamingRecording(manager, context = null) {
           isStreaming: manager.isStreaming,
         });
 
-        stream.getTracks().forEach((track) => track.stop());
+        recordingClosedSuccessfully = true;
+      } catch (error) {
+        logger.error(
+          "Failed to close and enqueue recording",
+          {
+            error: error?.message || String(error),
+            sessionId: recordingContext?.sessionId || null,
+            jobId: recordingContext?.jobId ?? null,
+          },
+          "audio"
+        );
+        manager.emitError(
+          {
+            title: "Recording Error",
+            description:
+              "The recording closed, but EchoDraft could not queue it for transcription.",
+            context: recordingContext,
+          },
+          error
+        );
       } finally {
+        stream.getTracks().forEach((track) => track.stop());
         manager.isStopping = false;
+        manager.pendingNonStreamingStopRequestedAt = null;
+        manager.pendingNonStreamingStartTimings = null;
         manager.pendingNonStreamingStopContext = null;
         manager.pendingStopContext = null;
+        if (!recordingClosedSuccessfully) {
+          manager.emitStateChange({
+            isRecording: false,
+            isProcessing: manager.isProcessing,
+            isStreaming: manager.isStreaming,
+          });
+        }
+        const resolveStop = manager.resolveNonStreamingStop;
+        manager.resolveNonStreamingStop = null;
+        manager.nonStreamingStopPromise = null;
+        resolveStop?.(recordingClosedSuccessfully);
       }
     };
 
@@ -305,6 +360,7 @@ export async function startNonStreamingRecording(manager, context = null) {
       {
         title: errorInfo.title,
         description: errorInfo.description,
+        context,
       },
       error
     );
@@ -353,14 +409,28 @@ export function stopNonStreamingRecording(manager, stopContext = null) {
   manager.pendingNonStreamingStopContext = nextContext;
   manager.pendingStopContext = nextContext;
   manager.isStopping = true;
+  manager.nonStreamingStopPromise = new Promise((resolve) => {
+    manager.resolveNonStreamingStop = resolve;
+  });
 
   try {
     if (typeof manager.mediaRecorder.requestData === "function") {
       manager.mediaRecorder.requestData();
     }
-    manager.mediaRecorder.stop();
+    const mediaRecorder = manager.mediaRecorder;
+    armNonStreamingStopWatchdog(manager, {
+      mediaRecorder,
+      stream: mediaRecorder.stream,
+      recorderGeneration: manager.nonStreamingRecorderGeneration,
+      context: nextContext,
+    });
+    mediaRecorder.stop();
     return true;
   } catch (error) {
+    clearNonStreamingStopWatchdog(manager);
+    manager.resolveNonStreamingStop?.(false);
+    manager.resolveNonStreamingStop = null;
+    manager.nonStreamingStopPromise = null;
     manager.isStopping = false;
     manager.pendingNonStreamingStopContext = null;
     manager.pendingStopContext = null;
@@ -375,31 +445,54 @@ export function stopNonStreamingRecording(manager, stopContext = null) {
 
 export function cancelNonStreamingRecording(manager) {
   if (manager.mediaRecorder && manager.mediaRecorder.state === "recording") {
+    const mediaRecorder = manager.mediaRecorder;
+    const recorderGeneration = manager.nonStreamingRecorderGeneration;
+    const stream = mediaRecorder.stream;
     manager.pendingNonStreamingStopRequestedAt = Date.now();
     manager.pendingNonStreamingStartTimings = null;
-    manager.pendingNonStreamingStopContext = {
+    const cancellationContext = {
       requestedAt: manager.pendingNonStreamingStopRequestedAt,
       reason: "cancel",
       source: "cancelled",
     };
-    manager.mediaRecorder.onstop = () => {
-      manager.isRecording = false;
-      manager.audioChunks = [];
-      manager.emitStateChange({
-        isRecording: false,
-        isProcessing: manager.isProcessing,
-        isStreaming: false,
+    manager.pendingNonStreamingStopContext = cancellationContext;
+    manager.pendingStopContext = cancellationContext;
+    manager.isStopping = true;
+
+    let cancellationSettled = false;
+    const settleCancellation = () => {
+      if (cancellationSettled) {
+        return;
+      }
+      cancellationSettled = true;
+      const retired = retireNonStreamingRecorderWithoutEnqueue(manager, {
+        mediaRecorder,
+        stream,
+        recorderGeneration,
       });
+      if (!retired) {
+        return;
+      }
       manager.emitProgress({
         stage: "cancelled",
         stageLabel: "Cancelled",
       });
     };
+    mediaRecorder.onstop = settleCancellation;
 
-    manager.mediaRecorder.stop();
-
-    if (manager.mediaRecorder.stream) {
-      manager.mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+    try {
+      mediaRecorder.stop();
+    } catch (error) {
+      logger.warn(
+        "Cancelled recorder could not dispatch stop; retiring it without audio",
+        { error: error?.message || String(error) },
+        "audio"
+      );
+    } finally {
+      // Cancellation intentionally discards every chunk, so it does not need to
+      // wait for MediaRecorder.onstop. Retire immediately and generation-fence
+      // any callback the browser may already have queued.
+      settleCancellation();
     }
 
     return true;

@@ -124,8 +124,40 @@ using System.Runtime.InteropServices;
 public static class WinApiActivate {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+  public static bool ActivateTarget(IntPtr target) {
+    IntPtr foreground = GetForegroundWindow();
+    if (foreground == target) return true;
+
+    uint ignoredPid = 0;
+    uint currentThread = GetCurrentThreadId();
+    uint foregroundThread = foreground == IntPtr.Zero
+      ? 0
+      : GetWindowThreadProcessId(foreground, out ignoredPid);
+    uint targetThread = GetWindowThreadProcessId(target, out ignoredPid);
+    bool attachedForeground = false;
+    bool attachedTarget = false;
+
+    try {
+      if (foregroundThread != 0 && foregroundThread != currentThread) {
+        attachedForeground = AttachThreadInput(currentThread, foregroundThread, true);
+      }
+      if (targetThread != 0 && targetThread != currentThread && targetThread != foregroundThread) {
+        attachedTarget = AttachThreadInput(currentThread, targetThread, true);
+      }
+      BringWindowToTop(target);
+      SetForegroundWindow(target);
+      return GetForegroundWindow() == target;
+    } finally {
+      if (attachedTarget) AttachThreadInput(currentThread, targetThread, false);
+      if (attachedForeground) AttachThreadInput(currentThread, foregroundThread, false);
+    }
+  }
 }
 "@
 $target = [IntPtr]$TargetHwnd
@@ -153,7 +185,7 @@ if (-not $before.success) {
   [pscustomobject]@{ success = $false; reason = $before.reason; phase = "before_activation" } | ConvertTo-Json -Compress
   exit 0
 }
-$setResult = [WinApiActivate]::SetForegroundWindow($target)
+$setResult = [WinApiActivate]::ActivateTarget($target)
 Start-Sleep -Milliseconds 140
 $active = [Int64][WinApiActivate]::GetForegroundWindow()
 $success = ($active -eq $TargetHwnd)

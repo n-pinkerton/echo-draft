@@ -2,13 +2,13 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { sha256, verifyPinnedArtifacts } = require("./build-windows-key-listener.js");
+const { sha256, sha256Source, verifyPinnedArtifacts } = require("./build-windows-key-listener.js");
 
 const sourceBuffer = Buffer.from("reviewed source");
 const binaryBuffer = Buffer.from([0, 1, 2, 3, 4, 5]);
 const manifest = {
   version: "test-version",
-  sourceSha256: sha256(sourceBuffer),
+  sourceSha256: sha256Source(sourceBuffer),
   binarySha256: sha256(binaryBuffer),
 };
 
@@ -31,6 +31,13 @@ describe("Windows key listener integrity", () => {
     expect(() =>
       verifyPinnedArtifacts({ manifest, sourceBuffer: Buffer.from("changed"), binaryBuffer })
     ).toThrow(/source hash mismatch/i);
+  });
+
+  it("binds source semantics independently of checkout line endings", () => {
+    const lf = Buffer.from("line one\nline two\n");
+    const crlf = Buffer.from("line one\r\nline two\r\n");
+
+    expect(sha256Source(lf)).toBe(sha256Source(crlf));
   });
 
   it("fails when the pinned executable is unavailable", () => {

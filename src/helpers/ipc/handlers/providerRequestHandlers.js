@@ -1,11 +1,15 @@
 const { requireTrustedRenderer } = require("../trustedRenderer");
 const modelRegistryData = require("../../../models/modelRegistryData.json");
 const {
+  BUILT_IN_CLEANUP_DICTIONARY,
   CLEANUP_PROMPT_MODES,
   buildCleanupSystemPrompt,
   validateWrappedCleanupInput,
 } = require("../../../config/cleanupPolicy.cjs");
-const { sanitizeLexicalDictionaryEntries } = require("../../../utils/dictionaryLexicon.cjs");
+const {
+  MAX_USER_DICTIONARY_ENTRIES,
+  sanitizeLexicalDictionaryEntries,
+} = require("../../../utils/dictionaryLexicon.cjs");
 const { requireLanguageCode } = require("../../../utils/languagePolicy.cjs");
 
 const MAX_JSON_REQUEST_BYTES = 2 * 1024 * 1024;
@@ -18,6 +22,8 @@ const MODEL_DISCOVERY_TIMEOUT_MS = 30_000;
 const TRANSCRIPTION_REQUEST_TIMEOUT_MS = 330_000;
 const TRANSCRIPTION_PROGRESS_CHANNEL = "provider-transcription-progress";
 const TRANSCRIPTION_PROGRESS_MIN_INTERVAL_MS = 100;
+const MAX_TRANSCRIPTION_DICTIONARY_ENTRIES =
+  BUILT_IN_CLEANUP_DICTIONARY.length + MAX_USER_DICTIONARY_ENTRIES;
 const ALLOWED_AUDIO_MIME_TYPES = new Set([
   "audio/webm",
   "audio/ogg",
@@ -87,6 +93,7 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
     "userPrompt",
     "cleanupPromptMode",
     "language",
+    "dictionaryEntries",
     "maxOutputTokens",
     "temperature",
     "reasoningEffort",
@@ -102,12 +109,22 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
   if (!CLEANUP_PROMPT_MODES.has(cleanupPromptMode)) {
     throw new Error("Cleanup prompt mode is unsupported");
   }
-  const language = requireLanguageCode(
-    operation.language,
-    { allowAuto: true },
-    "cleanup language"
-  );
+  const language = requireLanguageCode(operation.language, { allowAuto: true }, "cleanup language");
   const { userPrompt } = validateWrappedCleanupInput(operation.userPrompt, model);
+  let dictionaryEntries = [];
+  if (operation.dictionaryEntries !== undefined) {
+    if (!Array.isArray(operation.dictionaryEntries) || operation.dictionaryEntries.length > 100) {
+      throw new Error("Cleanup dictionary is unsupported");
+    }
+    dictionaryEntries = sanitizeLexicalDictionaryEntries(operation.dictionaryEntries, {
+      maxEntries: 100,
+      maxEntryLength: 80,
+      maxWords: 1,
+    });
+    if (dictionaryEntries.length !== operation.dictionaryEntries.length) {
+      throw new Error("Cleanup dictionary must contain unique single lexical terms only");
+    }
+  }
   const maxOutputTokens = Number(operation.maxOutputTokens);
   if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 64 || maxOutputTokens > 32_768) {
     throw new Error("Cleanup output budget is unsupported");
@@ -152,6 +169,7 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
     userPrompt,
     cleanupPromptMode,
     ...(language ? { language } : {}),
+    ...(dictionaryEntries.length > 0 ? { dictionaryEntries } : {}),
     maxOutputTokens,
     ...(temperature !== undefined ? { temperature } : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
@@ -162,7 +180,8 @@ const buildProviderCleanupBody = (provider, operation) => {
   const systemPrompt = buildCleanupSystemPrompt(
     operation.model,
     operation.cleanupPromptMode,
-    operation.language
+    operation.language,
+    operation.dictionaryEntries
   );
   if (operation.variant === "responses") {
     return {
@@ -673,6 +692,7 @@ function registerProviderRequestHandlers(
           "language",
           "stream",
           "contextBias",
+          "dictionaryEntries",
         ]),
         "Transcription request"
       );
@@ -717,6 +737,29 @@ function registerProviderRequestHandlers(
           throw new Error("Transcription context bias must contain lexical terms only");
         }
       }
+      let dictionaryEntries = [];
+      if (payload.dictionaryEntries !== undefined) {
+        if (
+          provider !== "openai" ||
+          !(model === "gpt-4o-transcribe" || model.startsWith("gpt-4o-mini-transcribe"))
+        ) {
+          throw new Error("Transcription dictionary context is unsupported for this model");
+        }
+        if (
+          !Array.isArray(payload.dictionaryEntries) ||
+          payload.dictionaryEntries.length > MAX_TRANSCRIPTION_DICTIONARY_ENTRIES
+        ) {
+          throw new Error("Invalid transcription dictionary context");
+        }
+        dictionaryEntries = sanitizeLexicalDictionaryEntries(payload.dictionaryEntries, {
+          maxEntries: MAX_TRANSCRIPTION_DICTIONARY_ENTRIES,
+          maxEntryLength: 80,
+          maxWords: 1,
+        });
+        if (dictionaryEntries.length !== payload.dictionaryEntries.length) {
+          throw new Error("Transcription dictionary context must contain lexical terms only");
+        }
+      }
       const key = getProviderKey(environmentManager, provider, "transcription");
       if (!key && provider !== "custom") throw new Error("Provider API key is not configured");
 
@@ -735,6 +778,12 @@ function registerProviderRequestHandlers(
       formData.append("model", model);
       if (language) formData.append("language", language);
       if (payload.stream === true) formData.append("stream", "true");
+      if (dictionaryEntries.length > 0) {
+        formData.append(
+          "prompt",
+          `The audio may include these names and technical terms. Use these exact spellings only when spoken: ${dictionaryEntries.join(", ")}.`
+        );
+      }
       if (provider === "mistral") {
         for (const token of contextBias) {
           formData.append("context_bias", token);

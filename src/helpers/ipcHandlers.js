@@ -1,4 +1,4 @@
-const { ipcMain, app, shell, BrowserWindow, dialog } = require("electron");
+const { ipcMain, app, shell, BrowserWindow, dialog, globalShortcut } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -176,7 +176,7 @@ class IPCHandlers {
     );
 
     registerUtilityHandlers(
-      { ipcMain, shell },
+      { ipcMain, shell, globalShortcut },
       { windowManager: this.windowManager, windowsKeyManager: this.windowsKeyManager }
     );
 

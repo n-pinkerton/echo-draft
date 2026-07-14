@@ -7,12 +7,13 @@ import { useLocalStorage } from "./hooks/useLocalStorage";
 import RecordingIndicator from "./components/ui/RecordingIndicator";
 import DictationStatusIndicator from "./components/ui/DictationStatusIndicator";
 import { DICTATION_FEEDBACK_STORAGE_KEYS } from "./utils/dictationCues";
+import { useWindowsPushToTalkStatus } from "./hooks/useWindowsPushToTalkStatus";
 
 const serializeBoolean = (value) => String(value);
 const deserializeBoolean = (value) => value !== "false";
 
 export default function App() {
-  const { toast } = useToast();
+  const { toast, dismiss, toastCount = 0, toastViewportSize = "default" } = useToast();
   const { isSignedIn } = useAuth();
   const [recordingIndicatorEnabled] = useLocalStorage(
     DICTATION_FEEDBACK_STORAGE_KEYS.recordingIndicatorEnabled,
@@ -52,35 +53,13 @@ export default function App() {
       });
     });
 
-    const unsubscribeWindowsPtt = window.electronAPI?.onWindowsPushToTalkUnavailable?.((data) => {
-      const reason = typeof data?.reason === "string" ? data.reason : "";
-      const message = typeof data?.message === "string" ? data.message : "";
-      window.electronAPI?.updateTrayStatus?.({
-        stage: "error",
-        stageLabel: "Windows Listener Unavailable",
-        message:
-          message ||
-          (reason === "binary_not_found"
-            ? "Push-to-Talk native listener is missing."
-            : "Push-to-Talk native listener is unavailable."),
-      });
-      toast({
-        title: "Windows Key Listener Unavailable",
-        description:
-          message ||
-          (reason === "binary_not_found"
-            ? "Push-to-Talk native listener is missing. Modifier-only hotkeys may not work. Choose a non-modifier hotkey (e.g., F9) or reinstall."
-            : "Push-to-Talk native listener is unavailable. Modifier-only hotkeys may not work. Choose a non-modifier hotkey (e.g., F9) or reinstall."),
-        duration: 12000,
-      });
-    });
-
     return () => {
       unsubscribeFallback?.();
       unsubscribeFailed?.();
-      unsubscribeWindowsPtt?.();
     };
   }, [toast]);
+
+  useWindowsPushToTalkStatus({ toast, dismiss, updateTray: true });
 
   const {
     isRecording,
@@ -91,6 +70,15 @@ export default function App() {
     partialTranscript,
     warmupStreaming,
   } = useAudioRecording(toast);
+
+  const queuedAheadCount = useMemo(
+    () =>
+      Array.isArray(jobs)
+        ? jobs.filter((job) => job?.status === "processing" || job?.status === "queued").length
+        : 0,
+    [jobs]
+  );
+  const queuedWaitingCount = Math.max(0, queuedAheadCount - (!isRecording && isProcessing ? 1 : 0));
 
   // Trigger streaming warmup when user signs in (covers first-time account creation)
   useEffect(() => {
@@ -117,6 +105,8 @@ export default function App() {
       stageElapsedMs: typeof progress?.stageElapsedMs === "number" ? progress.stageElapsedMs : null,
       generatedWords: typeof progress?.generatedWords === "number" ? progress.generatedWords : null,
       jobCount: visibleJobs.length,
+      queuedJobCount: queuedAheadCount,
+      waitingJobCount: queuedWaitingCount,
       hasTranscript: Boolean(transcriptToCopy && transcriptToCopy.trim()),
       transcriptToCopy: typeof transcriptToCopy === "string" ? transcriptToCopy : "",
       outputMode: progress?.outputMode === "clipboard" ? "clipboard" : "insert",
@@ -130,7 +120,16 @@ export default function App() {
       isRecording,
       isProcessing,
     };
-  }, [jobs, partialTranscript, progress, transcript, isRecording, isProcessing]);
+  }, [
+    jobs,
+    partialTranscript,
+    progress,
+    transcript,
+    isRecording,
+    isProcessing,
+    queuedAheadCount,
+    queuedWaitingCount,
+  ]);
 
   useEffect(() => {
     window.electronAPI?.updateTrayStatus?.(trayStatus);
@@ -139,17 +138,25 @@ export default function App() {
   const isListening = progress?.stage === "listening";
   const shouldShowRecordingIndicator = recordingIndicatorEnabled && isListening;
   const shouldShowProcessingStatus = !isListening && progress?.stage && progress.stage !== "idle";
-  const shouldShowDictationWindow =
+  const shouldShowDictationStatus =
     shouldShowRecordingIndicator || Boolean(shouldShowProcessingStatus);
+  const hasVisibleToast = toastCount > 0;
+  const shouldShowDictationWindow = shouldShowDictationStatus || hasVisibleToast;
+  const dictationWindowSize = hasVisibleToast
+    ? toastViewportSize === "compact"
+      ? "WITH_COMPACT_TOAST"
+      : "WITH_TOAST"
+    : "RECORDING_INDICATOR";
 
   useEffect(() => {
     if (shouldShowDictationWindow) {
-      void window.electronAPI?.showRecordingIndicator?.();
-      return;
+      // The main process applies the final size and presents the window as one
+      // operation, avoiding a visible 260px collapse before toast expansion.
+      void window.electronAPI?.showRecordingIndicator?.(dictationWindowSize);
+    } else {
+      void window.electronAPI?.hideWindow?.();
     }
-
-    void window.electronAPI?.hideWindow?.();
-  }, [shouldShowDictationWindow]);
+  }, [dictationWindowSize, shouldShowDictationWindow]);
 
   useEffect(() => {
     return () => {
@@ -162,7 +169,7 @@ export default function App() {
     };
   }, []);
 
-  if (!shouldShowDictationWindow) {
+  if (!shouldShowDictationStatus) {
     return null;
   }
 
@@ -170,6 +177,8 @@ export default function App() {
     <RecordingIndicator
       recordedMs={progress?.recordedMs || 0}
       longRecordingReminderEnabled={longRecordingReminderEnabled}
+      queuedAheadCount={queuedAheadCount}
+      outputMode={progress?.outputMode}
     />
   ) : (
     <DictationStatusIndicator
@@ -179,6 +188,8 @@ export default function App() {
       message={progress?.message}
       canCancel={progress?.canCancel === true}
       isSlow={progress?.isSlow === true}
+      queuedWaitingCount={queuedWaitingCount}
+      outputMode={progress?.outputMode}
     />
   );
 }

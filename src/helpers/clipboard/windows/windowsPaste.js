@@ -1,10 +1,33 @@
 const { PASTE_DELAYS, RESTORE_DELAYS } = require("../constants");
+const { restoreClipboardAfterPaste } = require("./windowsClipboardRestore");
 
 const SECURE_TARGET_PASTE_TIMEOUT_MS = 5_000;
+const NATIVE_DEADLINE_SAFETY_MS = 250;
+const DOTNET_UNIX_EPOCH_TICKS = 621_355_968_000_000_000n;
 const MAX_POWERSHELL_OUTPUT_CHARS = 16_384;
 
+const createSecurePasteError = (code, message) => {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+};
+
+const normalizeSecurePasteReason = (reason) => {
+  const normalized = String(reason || "secure_paste_failed")
+    .trim()
+    .toLowerCase();
+  return /^[a-z0-9_]{1,80}$/.test(normalized) ? normalized : "secure_paste_failed";
+};
+
 const SECURE_TARGET_PASTE_SCRIPT = `
-param([Int64]$TargetHwnd, [Int32]$ExpectedPid, [Int64]$ExpectedStartTicks)
+param(
+  [Int64]$TargetHwnd,
+  [Int32]$ExpectedPid,
+  [Int64]$ExpectedStartTicks,
+  [Int64]$DeadlineUtcTicks = 0,
+  [switch]$ProbeInputLayout,
+  [switch]$ProbeInputRecovery
+)
 Add-Type @"
 using System;
 using System.Diagnostics;
@@ -25,7 +48,22 @@ public static class EchoDraftSecureTargetPaste {
 
   [StructLayout(LayoutKind.Explicit)]
   public struct InputUnion {
+    [FieldOffset(0)] public MOUSEINPUT mouse;
     [FieldOffset(0)] public KEYBDINPUT keyboard;
+    [FieldOffset(0)] public HARDWAREINPUT hardware;
+  }
+
+  // INPUT's native union is sized by MOUSEINPUT, not KEYBDINPUT. Omitting the
+  // other union members makes Marshal.SizeOf(INPUT) 32 bytes on 64-bit Windows
+  // instead of the 40 bytes required by SendInput, which rejects every paste.
+  [StructLayout(LayoutKind.Sequential)]
+  public struct MOUSEINPUT {
+    public int x;
+    public int y;
+    public uint mouseData;
+    public uint flags;
+    public uint time;
+    public UIntPtr extraInfo;
   }
 
   [StructLayout(LayoutKind.Sequential)]
@@ -37,6 +75,13 @@ public static class EchoDraftSecureTargetPaste {
     public UIntPtr extraInfo;
   }
 
+  [StructLayout(LayoutKind.Sequential)]
+  public struct HARDWAREINPUT {
+    public uint message;
+    public ushort parameterLow;
+    public ushort parameterHigh;
+  }
+
   public sealed class PasteResult {
     public bool success { get; set; }
     public bool injected { get; set; }
@@ -45,17 +90,40 @@ public static class EchoDraftSecureTargetPaste {
     public long activeHwnd { get; set; }
     public int actualPid { get; set; }
     public int nativeError { get; set; }
+    public int inputSize { get; set; }
+    public int expectedInputSize { get; set; }
+    public uint inputEventsSent { get; set; }
+    public bool recoveryAttempted { get; set; }
+    public uint recoveryEventsAttempted { get; set; }
+    public uint recoveryEventsSent { get; set; }
+    public bool? recoverySucceeded { get; set; }
   }
+
+  public delegate uint InputSender(uint count, INPUT[] inputs, int size);
 
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", SetLastError=true)]
+  static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
   [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll", SetLastError=true)]
   static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll", SetLastError=true)]
-  static extern uint SendInput(uint count, INPUT[] inputs, int size);
+  [DllImport("user32.dll", EntryPoint="SendInput", SetLastError=true)]
+  static extern uint NativeSendInput(uint count, INPUT[] inputs, int size);
 
-  static PasteResult Failure(string reason, string phase, IntPtr active, int actualPid = 0) {
+  static PasteResult Failure(
+    string reason,
+    string phase,
+    IntPtr active,
+    int actualPid = 0,
+    int nativeError = -1,
+    uint inputEventsSent = 0,
+    uint recoveryEventsAttempted = 0,
+    uint recoveryEventsSent = 0,
+    bool? recoverySucceeded = null
+  ) {
     return new PasteResult {
       success = false,
       injected = false,
@@ -63,8 +131,60 @@ public static class EchoDraftSecureTargetPaste {
       phase = phase,
       activeHwnd = active.ToInt64(),
       actualPid = actualPid,
-      nativeError = Marshal.GetLastWin32Error()
+      nativeError = nativeError >= 0 ? nativeError : Marshal.GetLastWin32Error(),
+      inputSize = GetInputSize(),
+      expectedInputSize = GetExpectedInputSize(),
+      inputEventsSent = inputEventsSent,
+      recoveryAttempted = recoveryEventsAttempted > 0,
+      recoveryEventsAttempted = recoveryEventsAttempted,
+      recoveryEventsSent = recoveryEventsSent,
+      recoverySucceeded = recoverySucceeded
     };
+  }
+
+  public static int GetInputSize() {
+    return Marshal.SizeOf(typeof(INPUT));
+  }
+
+  public static int GetExpectedInputSize() {
+    return IntPtr.Size == 8 ? 40 : 28;
+  }
+
+  static bool DeadlineExpired(long deadlineUtcTicks) {
+    return deadlineUtcTicks > 0 && DateTime.UtcNow.Ticks >= deadlineUtcTicks;
+  }
+
+  static bool ActivateTarget(IntPtr target) {
+    IntPtr foreground = GetForegroundWindow();
+    if (foreground == target) return true;
+
+    uint ignoredPid = 0;
+    uint currentThread = GetCurrentThreadId();
+    uint foregroundThread = foreground == IntPtr.Zero
+      ? 0
+      : GetWindowThreadProcessId(foreground, out ignoredPid);
+    uint targetThread = GetWindowThreadProcessId(target, out ignoredPid);
+    bool attachedForeground = false;
+    bool attachedTarget = false;
+
+    try {
+      if (foregroundThread != 0 && foregroundThread != currentThread) {
+        attachedForeground = AttachThreadInput(currentThread, foregroundThread, true);
+      }
+      if (
+        targetThread != 0 &&
+        targetThread != currentThread &&
+        targetThread != foregroundThread
+      ) {
+        attachedTarget = AttachThreadInput(currentThread, targetThread, true);
+      }
+      BringWindowToTop(target);
+      SetForegroundWindow(target);
+      return GetForegroundWindow() == target;
+    } finally {
+      if (attachedTarget) AttachThreadInput(currentThread, targetThread, false);
+      if (attachedForeground) AttachThreadInput(currentThread, foregroundThread, false);
+    }
   }
 
   static PasteResult ValidateIdentity(
@@ -107,8 +227,104 @@ public static class EchoDraftSecureTargetPaste {
     };
   }
 
-  public static PasteResult Execute(long targetHwnd, int expectedPid, long expectedStartTicks) {
+  static PasteResult InjectPaste(IntPtr target, int expectedPid, InputSender sendInput) {
+    INPUT[] inputs = new INPUT[] {
+      Key(VK_CONTROL, 0),
+      Key(VK_V, 0),
+      Key(VK_V, KEYEVENTF_KEYUP),
+      Key(VK_CONTROL, KEYEVENTF_KEYUP)
+    };
+    int inputSize = Marshal.SizeOf(typeof(INPUT));
+    uint sent = sendInput((uint)inputs.Length, inputs, inputSize);
+    if (sent != inputs.Length) {
+      int injectionError = Marshal.GetLastWin32Error();
+      uint recoveryAttempted = 0;
+      uint recoverySent = 0;
+
+      // SendInput inserts events in sequence. With two inserted events V is
+      // down; with one to three inserted events Ctrl is down. Release each key
+      // separately so a partial recovery call cannot hide which key remains.
+      if (sent == 2) {
+        recoveryAttempted += 1;
+        INPUT[] releaseV = new INPUT[] { Key(VK_V, KEYEVENTF_KEYUP) };
+        if (sendInput(1, releaseV, inputSize) == 1) recoverySent += 1;
+      }
+      if (sent >= 1 && sent <= 3) {
+        recoveryAttempted += 1;
+        INPUT[] releaseControl = new INPUT[] { Key(VK_CONTROL, KEYEVENTF_KEYUP) };
+        if (sendInput(1, releaseControl, inputSize) == 1) recoverySent += 1;
+      }
+
+      bool? recoverySucceeded = recoveryAttempted > 0
+        ? (bool?)(recoverySent == recoveryAttempted)
+        : null;
+      string reason = sent == 0
+        ? "send_input_failed"
+        : recoverySucceeded == true
+          ? "partial_send_input_recovered"
+          : "partial_send_input_recovery_failed";
+      return Failure(
+        reason,
+        "injection",
+        GetForegroundWindow(),
+        expectedPid,
+        injectionError,
+        sent,
+        recoveryAttempted,
+        recoverySent,
+        recoverySucceeded
+      );
+    }
+
+    return new PasteResult {
+      success = true,
+      injected = true,
+      reason = "",
+      phase = "complete",
+      activeHwnd = target.ToInt64(),
+      actualPid = expectedPid,
+      nativeError = 0,
+      inputSize = GetInputSize(),
+      expectedInputSize = GetExpectedInputSize(),
+      inputEventsSent = sent,
+      recoveryAttempted = false,
+      recoveryEventsAttempted = 0,
+      recoveryEventsSent = 0,
+      recoverySucceeded = null
+    };
+  }
+
+  public static PasteResult ProbeInputRecovery(
+    uint initialSent,
+    uint vReleaseSent,
+    uint controlReleaseSent
+  ) {
+    int call = 0;
+    InputSender probe = delegate(uint count, INPUT[] inputs, int size) {
+      if (call++ == 0) return Math.Min(initialSent, count);
+      ushort key = inputs != null && inputs.Length > 0
+        ? inputs[0].data.keyboard.virtualKey
+        : (ushort)0;
+      if (key == VK_V) return Math.Min(vReleaseSent, count);
+      if (key == VK_CONTROL) return Math.Min(controlReleaseSent, count);
+      return 0;
+    };
+    return InjectPaste(IntPtr.Zero, 0, probe);
+  }
+
+  public static PasteResult Execute(
+    long targetHwnd,
+    int expectedPid,
+    long expectedStartTicks,
+    long deadlineUtcTicks
+  ) {
     IntPtr target = new IntPtr(targetHwnd);
+    if (DeadlineExpired(deadlineUtcTicks)) {
+      return Failure("deadline_expired", "before_activation", GetForegroundWindow());
+    }
+    if (GetInputSize() != GetExpectedInputSize()) {
+      return Failure("input_layout_invalid", "before_activation", GetForegroundWindow());
+    }
     PasteResult identityFailure = ValidateIdentity(
       target,
       expectedPid,
@@ -117,14 +333,12 @@ public static class EchoDraftSecureTargetPaste {
     );
     if (identityFailure != null) return identityFailure;
 
-    INPUT[] inputs = new INPUT[] {
-      Key(VK_CONTROL, 0),
-      Key(VK_V, 0),
-      Key(VK_V, KEYEVENTF_KEYUP),
-      Key(VK_CONTROL, KEYEVENTF_KEYUP)
-    };
-
-    SetForegroundWindow(target);
+    // An orphaned or delayed PowerShell process must never activate a target
+    // after the renderer-side request deadline has elapsed.
+    if (DeadlineExpired(deadlineUtcTicks)) {
+      return Failure("deadline_expired", "before_activation", GetForegroundWindow());
+    }
+    ActivateTarget(target);
     for (int attempt = 0; attempt < 20 && GetForegroundWindow() != target; attempt++) {
       Thread.Sleep(20);
     }
@@ -144,28 +358,43 @@ public static class EchoDraftSecureTargetPaste {
     if (active != target) {
       return Failure("foreground_changed_before_injection", "before_injection", active, expectedPid);
     }
-    uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
-    if (sent != inputs.Length) {
-      return Failure("send_input_failed", "injection", GetForegroundWindow(), expectedPid);
+    // This is the last operation before SendInput. It makes even an unkillable
+    // late child fail closed rather than injecting after JavaScript timed out.
+    if (DeadlineExpired(deadlineUtcTicks)) {
+      return Failure("deadline_expired", "before_injection", active, expectedPid);
     }
-
-    return new PasteResult {
-      success = true,
-      injected = true,
-      reason = "",
-      phase = "complete",
-      activeHwnd = targetHwnd,
-      actualPid = expectedPid,
-      nativeError = 0
-    };
+    return InjectPaste(target, expectedPid, NativeSendInput);
   }
 }
 "@ | Out-Null
 
+if ($ProbeInputLayout) {
+  $inputSize = [EchoDraftSecureTargetPaste]::GetInputSize()
+  $expectedInputSize = [EchoDraftSecureTargetPaste]::GetExpectedInputSize()
+  [pscustomobject]@{
+    success = ($inputSize -eq $expectedInputSize)
+    inputSize = $inputSize
+    expectedInputSize = $expectedInputSize
+    pointerBits = [IntPtr]::Size * 8
+  } | ConvertTo-Json -Compress
+  return
+}
+
+if ($ProbeInputRecovery) {
+  @(
+    [EchoDraftSecureTargetPaste]::ProbeInputRecovery(1, 1, 1),
+    [EchoDraftSecureTargetPaste]::ProbeInputRecovery(2, 1, 1),
+    [EchoDraftSecureTargetPaste]::ProbeInputRecovery(3, 1, 1),
+    [EchoDraftSecureTargetPaste]::ProbeInputRecovery(2, 0, 1)
+  ) | ConvertTo-Json -Compress -Depth 4
+  return
+}
+
 [EchoDraftSecureTargetPaste]::Execute(
   $TargetHwnd,
   $ExpectedPid,
-  $ExpectedStartTicks
+  $ExpectedStartTicks,
+  $DeadlineUtcTicks
 ) | ConvertTo-Json -Compress
 `.trim();
 
@@ -239,12 +468,15 @@ async function pasteSecurelyToTarget(manager, originalClipboardSnapshot, options
     !/^\d{1,20}$/.test(expectedStartTicks) ||
     expectedStartTicks === "0"
   ) {
-    throw new Error(
+    throw createSecurePasteError(
+      "WINDOWS_SECURE_PASTE_INVALID_TARGET",
       "The original app can no longer be authenticated. Text is copied to the clipboard; paste it manually with Ctrl+V."
     );
   }
 
-  const { spawn, killProcess } = manager.deps;
+  const { spawn, terminateProcessTreeAndWait } = manager.deps;
+  const deadlineEpochMs = Date.now() + SECURE_TARGET_PASTE_TIMEOUT_MS - NATIVE_DEADLINE_SAFETY_MS;
+  const deadlineUtcTicks = DOTNET_UNIX_EPOCH_TICKS + BigInt(Math.trunc(deadlineEpochMs)) * 10_000n;
   const wrappedScript = `& {\n${SECURE_TARGET_PASTE_SCRIPT}\n}`;
   const args = [
     "-NoProfile",
@@ -258,6 +490,7 @@ async function pasteSecurelyToTarget(manager, originalClipboardSnapshot, options
     String(hwnd),
     String(expectedPid),
     expectedStartTicks,
+    deadlineUtcTicks.toString(),
   ];
 
   return await new Promise((resolve, reject) => {
@@ -284,7 +517,8 @@ async function pasteSecurelyToTarget(manager, originalClipboardSnapshot, options
     processHandle.on("error", (error) =>
       finish(() =>
         reject(
-          new Error(
+          createSecurePasteError(
+            "WINDOWS_SECURE_PASTE_PROCESS_ERROR",
             `Windows secure paste failed: ${error.message}. Text is copied to the clipboard; paste it manually with Ctrl+V.`
           )
         )
@@ -294,40 +528,64 @@ async function pasteSecurelyToTarget(manager, originalClipboardSnapshot, options
       finish(() => {
         const parsed = manager.parsePowerShellJsonOutput(stdout);
         if (code !== 0 || parsed?.success !== true || parsed?.injected !== true) {
+          const reason = normalizeSecurePasteReason(parsed?.reason);
           manager.safeLog("Windows secure target paste rejected", {
             code,
-            reason: parsed?.reason || "secure_paste_failed",
+            reason,
             phase: parsed?.phase || "unknown",
+            inputSize: Number(parsed?.inputSize) || null,
+            expectedInputSize: Number(parsed?.expectedInputSize) || null,
+            inputEventsSent: Number(parsed?.inputEventsSent) || 0,
+            recoveryAttempted: parsed?.recoveryAttempted === true,
+            recoveryEventsAttempted: Number(parsed?.recoveryEventsAttempted) || 0,
+            recoveryEventsSent: Number(parsed?.recoveryEventsSent) || 0,
+            recoverySucceeded:
+              typeof parsed?.recoverySucceeded === "boolean" ? parsed.recoverySucceeded : null,
             hasStderr: Boolean(stderr.trim()),
           });
           reject(
-            new Error(
+            createSecurePasteError(
+              `WINDOWS_SECURE_PASTE_${reason.toUpperCase()}`,
               "The original app lost focus or could not be authenticated. Text is copied to the clipboard; paste it manually with Ctrl+V."
             )
           );
           return;
         }
 
-        manager.scheduleClipboardRestore(
+        void restoreClipboardAfterPaste(
+          manager,
           originalClipboardSnapshot,
           RESTORE_DELAYS.win32_pwsh,
-          options.webContents
-        );
-        resolve();
+          options.webContents,
+          options.expectedClipboardText
+        ).then(resolve, reject);
       })
     );
 
     timeoutId = setTimeout(() => {
-      try {
-        killProcess(processHandle, "SIGKILL");
-      } catch {}
-      finish(() =>
+      if (settled) return;
+      settled = true;
+      void (async () => {
+        let terminationConfirmed = false;
+        try {
+          if (typeof terminateProcessTreeAndWait === "function") {
+            terminationConfirmed =
+              (await terminateProcessTreeAndWait(processHandle, "SIGKILL")) === true;
+          }
+        } catch {
+          terminationConfirmed = false;
+        }
         reject(
-          new Error(
-            "Windows secure paste timed out. Text is copied to the clipboard; paste it manually with Ctrl+V."
+          createSecurePasteError(
+            terminationConfirmed
+              ? "WINDOWS_SECURE_PASTE_TIMEOUT"
+              : "WINDOWS_SECURE_PASTE_TERMINATION_UNCONFIRMED",
+            terminationConfirmed
+              ? "Windows secure paste timed out. Text is copied to the clipboard; paste it manually with Ctrl+V."
+              : "Windows secure paste timed out and process termination could not be confirmed. Text is copied to the clipboard; paste it manually with Ctrl+V."
           )
-        )
-      );
+        );
+      })();
     }, SECURE_TARGET_PASTE_TIMEOUT_MS);
     timeoutId.unref?.();
   });
@@ -366,8 +624,13 @@ async function pasteWithNircmd(manager, nircmdPath, originalClipboardSnapshot, o
             elapsedMs: elapsed,
             restoreDelayMs: restoreDelay,
           });
-          manager.scheduleClipboardRestore(originalClipboardSnapshot, restoreDelay, webContents);
-          resolve();
+          void restoreClipboardAfterPaste(
+            manager,
+            originalClipboardSnapshot,
+            restoreDelay,
+            webContents,
+            options.expectedClipboardText
+          ).then(resolve, reject);
         } else {
           manager.safeLog(`❌ nircmd paste failed`, {
             elapsedMs: elapsed,
@@ -455,8 +718,13 @@ async function pasteWithPowerShell(manager, originalClipboardSnapshot, options =
             elapsedMs: elapsed,
             restoreDelayMs: restoreDelay,
           });
-          manager.scheduleClipboardRestore(originalClipboardSnapshot, restoreDelay, webContents);
-          resolve();
+          void restoreClipboardAfterPaste(
+            manager,
+            originalClipboardSnapshot,
+            restoreDelay,
+            webContents,
+            options.expectedClipboardText
+          ).then(resolve, reject);
         } else {
           manager.safeLog(`❌ PowerShell paste failed`, {
             code,
@@ -505,6 +773,7 @@ async function pasteWithPowerShell(manager, originalClipboardSnapshot, options =
 module.exports = {
   SECURE_TARGET_PASTE_SCRIPT,
   SECURE_TARGET_PASTE_TIMEOUT_MS,
+  NATIVE_DEADLINE_SAFETY_MS,
   getNircmdPath,
   getNircmdStatus,
   pasteSecurelyToTarget,

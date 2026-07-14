@@ -58,9 +58,9 @@ function registerWindowControlHandlers({ ipcMain, app }, { windowManager }) {
     windowManager.showDictationPanel();
   });
 
-  ipcMain.handle("show-recording-indicator", (event) => {
+  ipcMain.handle("show-recording-indicator", (event, sizeKey) => {
     requireDictation(event);
-    return windowManager.showRecordingIndicator();
+    return windowManager.showRecordingIndicator(sizeKey);
   });
 
   ipcMain.handle("show-control-panel", async (event) => {

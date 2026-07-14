@@ -20,6 +20,8 @@ export interface CleanupOutcome {
   status: "disabled" | "applied" | "unchanged" | "fallback" | string;
   fallbackReason?: string | null;
   model?: string | null;
+  appliedModel?: string | null;
+  modelSource?: "selected" | "managed";
   provider?: string | null;
   retryCount?: number;
   metrics?: Record<string, unknown>;
@@ -77,6 +79,7 @@ export interface DictionaryImportResult {
   uniqueCount?: number;
   duplicatesRemoved?: number;
   unsupportedRemoved?: number;
+  capacityRemoved?: number;
   error?: string;
 }
 

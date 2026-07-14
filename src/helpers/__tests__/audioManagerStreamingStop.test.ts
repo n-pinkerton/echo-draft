@@ -22,6 +22,34 @@ const deferred = <T>() => {
   return { promise, resolve };
 };
 
+class RapidMediaRecorder {
+  stream: any;
+  state = "inactive";
+  mimeType = "audio/webm;codecs=opus";
+  ondataavailable: ((event: any) => void) | null = null;
+  onstop: (() => any) | null = null;
+
+  constructor(stream: any) {
+    this.stream = stream;
+  }
+
+  start() {
+    this.state = "recording";
+  }
+
+  requestData() {
+    this.ondataavailable?.({
+      data: new Blob([new Uint8Array([1, 2, 3])], { type: this.mimeType }),
+    });
+  }
+
+  stop() {
+    this.state = "inactive";
+    this.ondataavailable?.({ data: new Blob([], { type: this.mimeType }) });
+    void this.onstop?.();
+  }
+}
+
 describe("AudioManager.stopStreamingRecording", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -272,6 +300,83 @@ describe("AudioManager.stopStreamingRecording", () => {
     manager.cleanup();
   });
 
+  it("records one managed cleanup attempt when streaming fidelity validation rejects it", async () => {
+    vi.useFakeTimers();
+
+    const cloudReason = vi.fn(async () => ({
+      success: true,
+      text: "Short summary.",
+      model: "gpt-5.6-luna",
+    }));
+    (window as any).electronAPI = {
+      assemblyAiStreamingSend: vi.fn(),
+      assemblyAiStreamingForceEndpoint: vi.fn(),
+      assemblyAiStreamingStop: vi.fn(async () => ({
+        success: true,
+        text: "",
+        terminationConfirmed: true,
+      })),
+      cloudReason,
+      cancelIpcRequest: vi.fn(async () => ({ success: true })),
+    };
+
+    localStorage.setItem("useLocalWhisper", "true");
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("cloudReasoningMode", "echodraft");
+
+    const manager = new AudioManager();
+    const fidelityError = Object.assign(new Error("changed too much"), {
+      code: "CLEANUP_FIDELITY_REJECTED",
+      assessment: { metrics: { wordRatio: 0.2 } },
+    });
+    (manager as any).reasoningCleanupService = {
+      validateCleanupCandidate: vi.fn(() => {
+        throw fidelityError;
+      }),
+    };
+    const onTranscriptionComplete = vi.fn();
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError: vi.fn(),
+      onTranscriptionComplete,
+      onPartialTranscript: vi.fn(),
+      onProgress: vi.fn(),
+    });
+
+    manager.isStreaming = true;
+    manager.isRecording = true;
+    (manager as any).streamingAudioForwarding = true;
+    manager.streamingFinalText = "Keep the Friday deadline and every budget caveat";
+
+    const port = { onmessage: null as null | ((event: any) => void), postMessage: vi.fn() };
+    manager.streamingProcessor = { port, disconnect: vi.fn() } as any;
+    manager.streamingSource = { disconnect: vi.fn() } as any;
+    manager.streamingStream = { getTracks: () => [{ stop: vi.fn() }] } as any;
+    port.onmessage = (event: any) => manager.streamingWorklet.handleMessage(event);
+    setTimeout(
+      () => port.onmessage?.({ data: (manager as any).STREAMING_WORKLET_FLUSH_DONE_MESSAGE }),
+      0
+    );
+
+    const stopPromise = manager.stopStreamingRecording();
+    await vi.runAllTimersAsync();
+    await stopPromise;
+
+    expect(cloudReason).toHaveBeenCalledTimes(1);
+    expect(onTranscriptionComplete).toHaveBeenCalledOnce();
+    const payload = onTranscriptionComplete.mock.calls[0][0];
+    expect(payload.text).toBe("Keep the Friday deadline and every budget caveat");
+    expect(payload.cleanup).toMatchObject({
+      status: "fallback",
+      fallbackReason: "fidelity_rejected",
+      model: "gpt-5.6-luna",
+      appliedModel: null,
+      retryCount: 0,
+    });
+
+    manager.cleanup();
+  });
+
   it("cancels in-flight streaming cleanup and never delivers a late result", async () => {
     vi.useFakeTimers();
 
@@ -474,6 +579,222 @@ describe("AudioManager.stopStreamingRecording", () => {
     expect(payload.text).toBe("hello world");
     expect(payload.rawText).toBe("hello world");
 
+    manager.cleanup();
+  });
+
+  it("releases streaming capture ownership before a rapid non-streaming recording stops", async () => {
+    vi.useFakeTimers();
+    const originalMediaRecorder = (globalThis as any).MediaRecorder;
+    const originalMediaDevices = (navigator as any).mediaDevices;
+
+    const teardown = deferred<any>();
+    const secondTrack = {
+      label: "Second Mic",
+      stop: vi.fn(),
+      addEventListener: vi.fn(),
+      getSettings: () => ({ deviceId: "second", sampleRate: 48_000, channelCount: 1 }),
+    };
+    const secondStream = {
+      getTracks: () => [secondTrack],
+      getAudioTracks: () => [secondTrack],
+    };
+
+    try {
+      (globalThis as any).MediaRecorder = RapidMediaRecorder;
+      Object.defineProperty(navigator, "mediaDevices", {
+        value: { getUserMedia: vi.fn(async () => secondStream) },
+        configurable: true,
+      });
+      (window as any).electronAPI = {
+        assemblyAiStreamingForceEndpoint: vi.fn(),
+        assemblyAiStreamingStop: vi.fn(() => teardown.promise),
+      };
+
+      const manager = new AudioManager() as any;
+      manager.getAudioConstraints = vi.fn(async () => ({ audio: true }));
+      manager.enqueueProcessingJob = vi.fn(() => ({ jobsAhead: 1, position: 2 }));
+      manager.setCallbacks({
+        onStateChange: vi.fn(),
+        onError: vi.fn(),
+        onTranscriptionComplete: vi.fn(),
+        onPartialTranscript: vi.fn(),
+        onProgress: vi.fn(),
+      });
+      manager.isStreaming = true;
+      manager.isRecording = true;
+      manager.streamingFinalText = "";
+
+      const firstFinalization = manager.stopStreamingRecording();
+      expect(manager.getState()).toMatchObject({ isRecording: false, isStreaming: false });
+
+      await expect(
+        manager.startRecording({ sessionId: "second", jobId: 2, outputMode: "insert" })
+      ).resolves.toBe(true);
+      const secondStop = manager.stopRecordingAndWaitForClose({
+        reason: "manual",
+        source: "hotkey",
+        sessionId: "second",
+        outputMode: "insert",
+      });
+
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(secondStop).resolves.toBe(true);
+      expect(manager.enqueueProcessingJob).toHaveBeenCalledOnce();
+      expect(manager.mediaRecorder).toBeNull();
+
+      teardown.resolve({ success: true, text: "", terminationConfirmed: true });
+      await vi.runAllTimersAsync();
+      await expect(firstFinalization).resolves.toBe(true);
+      manager.cleanup();
+    } finally {
+      (globalThis as any).MediaRecorder = originalMediaRecorder;
+      Object.defineProperty(navigator, "mediaDevices", {
+        value: originalMediaDevices,
+        configurable: true,
+      });
+    }
+  });
+
+  it("keeps cancelled streaming teardown as the owner until a second recording drains FIFO", async () => {
+    vi.useFakeTimers();
+    const originalMediaRecorder = (globalThis as any).MediaRecorder;
+    const originalMediaDevices = (navigator as any).mediaDevices;
+    const teardown = deferred<any>();
+    const secondTrack = {
+      label: "Second Mic",
+      stop: vi.fn(),
+      addEventListener: vi.fn(),
+      getSettings: () => ({ deviceId: "second", sampleRate: 48_000, channelCount: 1 }),
+    };
+    const secondStream = {
+      getTracks: () => [secondTrack],
+      getAudioTracks: () => [secondTrack],
+    };
+
+    try {
+      (globalThis as any).MediaRecorder = RapidMediaRecorder;
+      Object.defineProperty(navigator, "mediaDevices", {
+        value: { getUserMedia: vi.fn(async () => secondStream) },
+        configurable: true,
+      });
+      (window as any).electronAPI = {
+        assemblyAiStreamingForceEndpoint: vi.fn(),
+        assemblyAiStreamingStop: vi.fn(() => teardown.promise),
+      };
+      localStorage.setItem("cloudTranscriptionMode", "echodraft");
+      localStorage.setItem("isSignedIn", "true");
+      localStorage.setItem("useLocalWhisper", "false");
+
+      const manager = new AudioManager() as any;
+      const processAudio = vi.fn(async () => undefined);
+      manager.processAudio = processAudio;
+      manager.getAudioConstraints = vi.fn(async () => ({ audio: true }));
+      manager.setCallbacks({
+        onStateChange: vi.fn(),
+        onError: vi.fn(),
+        onTranscriptionComplete: vi.fn(),
+        onPartialTranscript: vi.fn(),
+        onProgress: vi.fn(),
+      });
+      manager.isStreaming = true;
+      manager.isRecording = true;
+      manager.streamingFinalText = "cancel this dictation";
+
+      const firstFinalization = manager.stopStreamingRecording();
+      await vi.advanceTimersByTimeAsync(150);
+      await vi.waitFor(() =>
+        expect((window as any).electronAPI.assemblyAiStreamingStop).toHaveBeenCalledOnce()
+      );
+      expect(manager.cancelProcessing()).toBe(true);
+      expect(manager.getState()).toMatchObject({ isProcessing: true, isStreaming: false });
+      expect(manager.shouldUseStreaming()).toBe(true);
+
+      await expect(
+        manager.startRecording({ sessionId: "second", jobId: 2, outputMode: "clipboard" })
+      ).resolves.toBe(true);
+      const secondStop = manager.stopRecordingAndWaitForClose({
+        reason: "manual",
+        source: "hotkey",
+        sessionId: "second",
+        outputMode: "clipboard",
+      });
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(secondStop).resolves.toBe(true);
+
+      expect(manager.getState()).toMatchObject({
+        isProcessing: true,
+        isStreaming: false,
+        queuedProcessingJobs: 1,
+      });
+      expect(processAudio).not.toHaveBeenCalled();
+
+      teardown.resolve({ success: true, text: "late text", terminationConfirmed: true });
+      await expect(firstFinalization).resolves.toBe(false);
+      await manager.processingQueue.whenIdle();
+
+      expect(processAudio).toHaveBeenCalledOnce();
+      expect(processAudio).toHaveBeenCalledWith(
+        expect.any(Blob),
+        expect.any(Object),
+        expect.objectContaining({ sessionId: "second", jobId: 2 })
+      );
+      expect(manager.getState()).toMatchObject({ isProcessing: false, queuedProcessingJobs: 0 });
+      manager.cleanup();
+    } finally {
+      (globalThis as any).MediaRecorder = originalMediaRecorder;
+      Object.defineProperty(navigator, "mediaDevices", {
+        value: originalMediaDevices,
+        configurable: true,
+      });
+    }
+  });
+
+  it("settles an unexpected streaming delivery failure and runs the next queued job", async () => {
+    vi.useFakeTimers();
+    (window as any).electronAPI = {
+      assemblyAiStreamingForceEndpoint: vi.fn(),
+      assemblyAiStreamingStop: vi.fn(async () => ({
+        success: true,
+        text: "first dictation",
+        terminationConfirmed: true,
+      })),
+    };
+
+    const manager = new AudioManager() as any;
+    const deliveryError = new Error("history write failed");
+    const processAudio = vi.fn(async () => undefined);
+    manager.processAudio = processAudio;
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError: vi.fn(),
+      onTranscriptionComplete: vi.fn(async () => {
+        throw deliveryError;
+      }),
+      onPartialTranscript: vi.fn(),
+      onProgress: vi.fn(),
+    });
+    manager.isStreaming = true;
+    manager.isRecording = true;
+    manager.streamingFinalText = "first dictation";
+
+    const firstFinalization = manager.stopStreamingRecording();
+    const firstFailure = firstFinalization.catch((error: unknown) => error);
+    manager.enqueueProcessingJob(
+      new Blob(["second"]),
+      {},
+      { sessionId: "second", jobId: 2, outputMode: "clipboard" }
+    );
+
+    await vi.runAllTimersAsync();
+    await expect(firstFailure).resolves.toBe(deliveryError);
+    await manager.processingQueue.whenIdle();
+
+    expect(processAudio).toHaveBeenCalledWith(
+      expect.any(Blob),
+      {},
+      expect.objectContaining({ sessionId: "second", jobId: 2 })
+    );
+    expect(manager.getState()).toMatchObject({ isProcessing: false, queuedProcessingJobs: 0 });
     manager.cleanup();
   });
 

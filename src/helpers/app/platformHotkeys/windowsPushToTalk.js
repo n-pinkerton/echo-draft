@@ -44,9 +44,24 @@ function registerWindowsPushToTalk({
   const unexpectedExitAttempts = new Map();
   const unexpectedExitTimers = new Map();
   const stableRouteTimers = new Map();
+  const fallbackRestoreTimers = new Map();
+  const fallbackRestoreAttempts = new Map();
+  const nativeRegisteredTapRoutes = new Set();
+  const globalFallbackActiveRoutes = new Set();
+  const unavailableRoutes = new Map();
   const MAX_UNEXPECTED_EXIT_RECOVERIES = 3;
   const STABLE_ROUTE_RESET_MS = 30_000;
+  const FALLBACK_RESTORE_RETRY_DELAYS_MS = [100, 250, 500];
+  const TERMINATION_RETRY_DELAY_MS = 250;
+  const MAX_TERMINATION_RETRIES = 3;
   let disposed = false;
+  let refreshInProgress = false;
+  let refreshChain = Promise.resolve();
+  let terminationBlocked = false;
+  let terminationRetryTimer = null;
+  let terminationRetryAttempts = 0;
+
+  const isHotkeyCaptureActive = () => hotkeyManager.isInListeningMode?.() === true;
 
   const getRouteState = (hotkeyId = "insert") =>
     hotkeyId === "clipboard" ? keyStates.clipboard : keyStates.insert;
@@ -93,11 +108,160 @@ function registerWindowsPushToTalk({
   };
 
   const forceStopActiveRoutes = (reason = "listener-refresh") => {
-    forceStopRoute("insert", reason);
-    forceStopRoute("clipboard", reason);
+    return {
+      insert: forceStopRoute("insert", reason),
+      clipboard: forceStopRoute("clipboard", reason),
+    };
   };
 
-  const refreshWindowsKeyListeners = (modeOrOptions = null) => {
+  const getRouteHotkey = (hotkeyId) =>
+    hotkeyId === "clipboard"
+      ? windowManager.getCurrentClipboardHotkey?.()
+      : hotkeyManager.getCurrentHotkey();
+
+  const getConfiguredNativeRouteIds = () => {
+    const activationMode = windowManager.getActivationMode();
+    return ["insert", "clipboard"].filter((hotkeyId) => {
+      const hotkey = getRouteHotkey(hotkeyId);
+      return Boolean(
+        hotkey && windowManager.shouldUseWindowsNativeListener(hotkey, activationMode)
+      );
+    });
+  };
+
+  const publishWindowsPttStatus = (channel, payload) => {
+    for (const window of [windowManager.mainWindow, windowManager.controlPanelWindow]) {
+      if (isLiveWindow(window) && typeof window.webContents?.send === "function") {
+        window.webContents.send(channel, payload);
+      }
+    }
+  };
+
+  const getUnavailableRouteStates = () =>
+    [...unavailableRoutes.values()].map((state) => ({ ...state }));
+
+  const markRouteUnavailable = (
+    hotkeyId,
+    reason,
+    { recordingSafetyStopped = false, recoveryPending = false } = {}
+  ) => {
+    const normalizedRoute = hotkeyId === "clipboard" ? "clipboard" : "insert";
+    const previous = unavailableRoutes.get(normalizedRoute);
+    const state = {
+      routeId: normalizedRoute,
+      reason,
+      fallbackActive: globalFallbackActiveRoutes.has(normalizedRoute),
+      recoveryPending: recoveryPending === true,
+      recordingSafetyStopped:
+        recordingSafetyStopped === true || previous?.recordingSafetyStopped === true,
+    };
+    unavailableRoutes.set(normalizedRoute, state);
+    publishWindowsPttStatus("windows-ptt-unavailable", {
+      ...state,
+      unavailableRoutes: getUnavailableRouteStates(),
+    });
+  };
+
+  const markRouteRecovered = (hotkeyId) => {
+    const normalizedRoute = hotkeyId === "clipboard" ? "clipboard" : "insert";
+    if (!unavailableRoutes.delete(normalizedRoute)) return;
+    publishWindowsPttStatus("windows-ptt-recovered", {
+      routeId: normalizedRoute,
+      remainingUnavailableRoutes: [...unavailableRoutes.keys()],
+      remainingUnavailableRouteStates: getUnavailableRouteStates(),
+    });
+  };
+
+  const cancelFallbackRestore = (hotkeyId) => {
+    const timer = fallbackRestoreTimers.get(hotkeyId);
+    if (timer) clearTimeout(timer);
+    fallbackRestoreTimers.delete(hotkeyId);
+    fallbackRestoreAttempts.delete(hotkeyId);
+  };
+
+  const restoreGlobalFallback = (hotkeyId, attempt = 0) => {
+    const pendingTimer = fallbackRestoreTimers.get(hotkeyId);
+    if (pendingTimer) clearTimeout(pendingTimer);
+    fallbackRestoreTimers.delete(hotkeyId);
+    if (disposed || isHotkeyCaptureActive()) return null;
+
+    const result = windowManager.restoreGlobalHotkeyFallback?.(hotkeyId);
+    if (!result || result.success !== false) {
+      globalFallbackActiveRoutes.add(hotkeyId);
+      fallbackRestoreAttempts.delete(hotkeyId);
+      return result;
+    }
+
+    globalFallbackActiveRoutes.delete(hotkeyId);
+
+    debugLogger.warn("[Push-to-Talk] Global hotkey fallback registration failed", {
+      hotkeyId,
+      attempt: attempt + 1,
+      message: result.message || result.error || "unknown error",
+    });
+
+    // Clipboard registration already owns a bounded retry timer. The insert route uses the
+    // retries below because a crashed native helper can briefly retain RegisterHotKey while
+    // Windows finishes terminating the process.
+    if (hotkeyId === "clipboard") return result;
+
+    if (attempt < FALLBACK_RESTORE_RETRY_DELAYS_MS.length) {
+      const delayMs = FALLBACK_RESTORE_RETRY_DELAYS_MS[attempt];
+      fallbackRestoreAttempts.set(hotkeyId, attempt + 1);
+      const timer = setTimeout(() => {
+        fallbackRestoreTimers.delete(hotkeyId);
+        restoreGlobalFallback(hotkeyId, attempt + 1);
+      }, delayMs);
+      timer.unref?.();
+      fallbackRestoreTimers.set(hotkeyId, timer);
+      return result;
+    }
+
+    fallbackRestoreAttempts.delete(hotkeyId);
+    windowManager.onInsertHotkeyRegistrationFailure?.(result);
+    return result;
+  };
+
+  const restoreAllRegisteredTapFallbacks = () => {
+    for (const routeId of nativeRegisteredTapRoutes) {
+      restoreGlobalFallback(routeId);
+    }
+    nativeRegisteredTapRoutes.clear();
+  };
+
+  const suspendFallbackTrackingForCapture = () => {
+    for (const timer of fallbackRestoreTimers.values()) clearTimeout(timer);
+    fallbackRestoreTimers.clear();
+    fallbackRestoreAttempts.clear();
+    nativeRegisteredTapRoutes.clear();
+    globalFallbackActiveRoutes.clear();
+  };
+
+  const cancelTerminationRetry = () => {
+    if (terminationRetryTimer) clearTimeout(terminationRetryTimer);
+    terminationRetryTimer = null;
+  };
+
+  const scheduleTerminationRetry = (reason) => {
+    if (terminationRetryTimer) return true;
+    if (
+      disposed ||
+      isHotkeyCaptureActive() ||
+      terminationRetryAttempts >= MAX_TERMINATION_RETRIES
+    ) {
+      return false;
+    }
+    terminationRetryAttempts += 1;
+    terminationRetryTimer = setTimeout(() => {
+      terminationRetryTimer = null;
+      if (disposed || isHotkeyCaptureActive()) return;
+      void refreshWindowsKeyListeners({ reason: `${reason}-termination-retry` }).catch(() => {});
+    }, TERMINATION_RETRY_DELAY_MS);
+    terminationRetryTimer.unref?.();
+    return true;
+  };
+
+  const performRefreshWindowsKeyListeners = async (modeOrOptions = null) => {
     if (disposed) return;
     if (!isLiveWindow(windowManager.mainWindow)) return;
 
@@ -112,42 +276,176 @@ function registerWindowsPushToTalk({
     const clipboardHotkey = windowManager.getCurrentClipboardHotkey
       ? windowManager.getCurrentClipboardHotkey()
       : null;
+    const routeSpecs = [
+      { hotkey: insertHotkey, routeId: "insert" },
+      { hotkey: clipboardHotkey, routeId: "clipboard" },
+    ];
+    const desiredRegisteredTapRoutes = new Set(
+      routeSpecs
+        .filter(
+          ({ hotkey }) =>
+            activationMode === "tap" &&
+            windowManager.shouldUseWindowsNativeListener(hotkey, activationMode) &&
+            windowManager.canUseWindowsRegisteredTapHotkey?.(hotkey)
+        )
+        .map(({ routeId }) => routeId)
+    );
     const startedHotkeys = new Set();
 
     forceStopActiveRoutes(refreshReason);
-    windowsKeyManager.stop();
-    windowManager.clearWindowsNativeListenerReadiness?.();
+    refreshInProgress = true;
+    try {
+      const stopped =
+        typeof windowsKeyManager.stopAndWait === "function"
+          ? await windowsKeyManager.stopAndWait()
+          : (windowsKeyManager.stop(), true);
+      if (!stopped) {
+        debugLogger.warn("[Push-to-Talk] Timed out waiting for previous key listeners to exit", {
+          reason: refreshReason,
+        });
+      }
+      windowManager.clearWindowsNativeListenerReadiness?.();
+      if (disposed) return;
 
-    const maybeStartRoute = (hotkey, routeId) => {
-      if (!hotkey || hotkey === "GLOBE" || startedHotkeys.has(hotkey)) {
+      if (!stopped) {
+        terminationBlocked = true;
+        if (isHotkeyCaptureActive()) {
+          suspendFallbackTrackingForCapture();
+          return;
+        }
+
+        // Never overlap helpers. The old process may still own RegisterHotKey, so restore the
+        // Electron fallback where Windows permits it and retry only after another exit check.
+        restoreAllRegisteredTapFallbacks();
+        const stoppedRoutes = forceStopActiveRoutes("listener-shutdown-pending");
+        const recoveryPending = scheduleTerminationRetry(refreshReason);
+        for (const routeId of getConfiguredNativeRouteIds()) {
+          markRouteUnavailable(routeId, "listener_shutdown_pending", {
+            recordingSafetyStopped: stoppedRoutes[routeId] === true,
+            recoveryPending,
+          });
+        }
         return;
       }
-      if (!windowManager.shouldUseWindowsNativeListener(hotkey, activationMode)) {
+
+      terminationBlocked = false;
+      terminationRetryAttempts = 0;
+      cancelTerminationRetry();
+      if (isHotkeyCaptureActive()) {
+        // Capture deliberately owns the keyboard while the input is focused. Do not restore a
+        // global fallback here: the capture IPC path will recover configured routes on blur.
+        suspendFallbackTrackingForCapture();
         return;
       }
-      debugLogger.debug("[Push-to-Talk] Starting Windows key listener route", {
-        routeId,
-        hotkey,
-        activationMode,
-      });
-      windowsKeyManager.start(hotkey, routeId);
-      startedHotkeys.add(hotkey);
-    };
 
-    maybeStartRoute(insertHotkey, "insert");
-    maybeStartRoute(clipboardHotkey, "clipboard");
+      for (const routeId of nativeRegisteredTapRoutes) {
+        if (!desiredRegisteredTapRoutes.has(routeId)) {
+          restoreGlobalFallback(routeId);
+        }
+      }
+      nativeRegisteredTapRoutes.clear();
 
-    if (startedHotkeys.size === 0) {
-      debugLogger.debug("[Push-to-Talk] Native listeners not required for current hotkeys", {
-        activationMode,
-        insertHotkey,
-        clipboardHotkey,
-      });
+      const maybeStartRoute = (hotkey, routeId) => {
+        if (disposed || isHotkeyCaptureActive()) return;
+        if (!hotkey || hotkey === "GLOBE" || startedHotkeys.has(hotkey)) {
+          return;
+        }
+        if (!windowManager.shouldUseWindowsNativeListener(hotkey, activationMode)) {
+          return;
+        }
+        const useRegisteredTap = desiredRegisteredTapRoutes.has(routeId);
+        if (useRegisteredTap) {
+          cancelFallbackRestore(routeId);
+          globalFallbackActiveRoutes.delete(routeId);
+          windowManager.suspendGlobalHotkeyForNativeTap?.(routeId);
+          nativeRegisteredTapRoutes.add(routeId);
+        } else if (windowManager.canUseWindowsRegisteredTapHotkey?.(hotkey)) {
+          // Push-to-talk keeps Electron's ordinary accelerator registered as a safe tap-to-toggle
+          // fallback if the native key-up listener later becomes unavailable.
+          globalFallbackActiveRoutes.add(routeId);
+        }
+        const listenerMode = useRegisteredTap ? "tap" : "hook";
+        debugLogger.debug("[Push-to-Talk] Starting Windows key listener route", {
+          routeId,
+          hotkey,
+          activationMode,
+          listenerMode,
+        });
+        const started = windowsKeyManager.start(hotkey, routeId, { mode: listenerMode });
+        if (started === false) {
+          const retirementPending = windowsKeyManager.hasRetiringProcess?.(routeId) === true;
+          terminationBlocked = terminationBlocked || retirementPending;
+          if (useRegisteredTap && nativeRegisteredTapRoutes.delete(routeId)) {
+            restoreGlobalFallback(routeId);
+          }
+          const recoveryPending = retirementPending
+            ? scheduleTerminationRetry(refreshReason)
+            : false;
+          markRouteUnavailable(routeId, "listener_start_failed", { recoveryPending });
+          return;
+        }
+        startedHotkeys.add(hotkey);
+      };
+
+      maybeStartRoute(insertHotkey, "insert");
+      maybeStartRoute(clipboardHotkey, "clipboard");
+
+      if (startedHotkeys.size === 0) {
+        debugLogger.debug("[Push-to-Talk] Native listeners not required for current hotkeys", {
+          activationMode,
+          insertHotkey,
+          clipboardHotkey,
+        });
+      }
+    } finally {
+      refreshInProgress = false;
     }
   };
 
+  const refreshWindowsKeyListeners = (modeOrOptions = null) => {
+    const refresh = refreshChain.then(() => performRefreshWindowsKeyListeners(modeOrOptions));
+    refreshChain = refresh.catch((error) => {
+      debugLogger.warn("[Push-to-Talk] Key listener refresh failed", {
+        error: error?.message || String(error),
+      });
+    });
+    return refresh;
+  };
+
+  const scheduleRouteRecovery = (hotkeyId, info = {}) => {
+    if (unexpectedExitTimers.has(hotkeyId)) return true;
+    const attempt = (unexpectedExitAttempts.get(hotkeyId) || 0) + 1;
+    unexpectedExitAttempts.set(hotkeyId, attempt);
+    if (attempt > MAX_UNEXPECTED_EXIT_RECOVERIES) {
+      debugLogger.warn("[Push-to-Talk] Windows key listener recovery limit reached", {
+        ...info,
+        hotkeyId,
+        attempt,
+      });
+      return false;
+    }
+
+    const delayMs = 250 * 2 ** (attempt - 1);
+    debugLogger.warn("[Push-to-Talk] Windows key listener exited; scheduling recovery", {
+      ...info,
+      hotkeyId,
+      attempt,
+      delayMs,
+    });
+    const timer = setTimeout(() => {
+      unexpectedExitTimers.delete(hotkeyId);
+      void refreshWindowsKeyListeners({ reason: "listener-exit-recovery" }).catch((error) => {
+        debugLogger.warn("[Push-to-Talk] Failed to recover exited key listener", {
+          error: error?.message || String(error),
+        });
+      });
+    }, delayMs);
+    unexpectedExitTimers.set(hotkeyId, timer);
+    return true;
+  };
+
   const onKeyDown = (key, hotkeyId = "insert") => {
-    if (disposed) return;
+    if (disposed || isHotkeyCaptureActive()) return;
     debugLogger.debug("[Push-to-Talk] Key DOWN received", { key, hotkeyId });
     if (!isLiveWindow(windowManager.mainWindow)) return;
 
@@ -203,7 +501,7 @@ function registerWindowsPushToTalk({
   };
 
   const onKeyUp = (key, hotkeyId = "insert") => {
-    if (disposed) return;
+    if (disposed || isHotkeyCaptureActive()) return;
     debugLogger.debug("[Push-to-Talk] Key UP received", { key, hotkeyId });
     if (!isLiveWindow(windowManager.mainWindow)) return;
 
@@ -231,44 +529,49 @@ function registerWindowsPushToTalk({
     }
   };
 
-  const onError = (error) => {
+  const onError = (error, info = {}) => {
     if (disposed) return;
     debugLogger.warn("[Push-to-Talk] Windows key listener error", { error: error.message });
-    forceStopActiveRoutes("listener-error");
+    const stoppedRoutes = forceStopActiveRoutes("listener-error");
     windowManager.clearWindowsNativeListenerReadiness?.();
-    const payload = {
-      reason: "error",
-      message: error.message,
-    };
-    if (isLiveWindow(windowManager.mainWindow)) {
-      windowManager.mainWindow.webContents.send("windows-ptt-unavailable", payload);
+    if (isHotkeyCaptureActive()) {
+      suspendFallbackTrackingForCapture();
+      return;
     }
-    if (isLiveWindow(windowManager.controlPanelWindow)) {
-      windowManager.controlPanelWindow.webContents.send("windows-ptt-unavailable", payload);
+    restoreAllRegisteredTapFallbacks();
+    const routeIds = getConfiguredNativeRouteIds();
+    for (const routeId of routeIds) {
+      const recoveryPending = scheduleRouteRecovery(routeId, info);
+      markRouteUnavailable(routeId, "listener_error", {
+        recordingSafetyStopped: stoppedRoutes[routeId] === true,
+        recoveryPending,
+      });
     }
   };
 
-  const onUnavailable = () => {
+  const onUnavailable = (_error, info = {}) => {
     if (disposed) return;
     debugLogger.debug(
       "[Push-to-Talk] Windows key listener not available - falling back to toggle mode"
     );
-    forceStopActiveRoutes("listener-unavailable");
+    const stoppedRoutes = forceStopActiveRoutes("listener-unavailable");
     windowManager.clearWindowsNativeListenerReadiness?.();
-    const payload = {
-      reason: "binary_not_found",
-      message: "Push-to-Talk native listener not available",
-    };
-    if (isLiveWindow(windowManager.mainWindow)) {
-      windowManager.mainWindow.webContents.send("windows-ptt-unavailable", payload);
+    if (isHotkeyCaptureActive()) {
+      suspendFallbackTrackingForCapture();
+      return;
     }
-    if (isLiveWindow(windowManager.controlPanelWindow)) {
-      windowManager.controlPanelWindow.webContents.send("windows-ptt-unavailable", payload);
+    restoreAllRegisteredTapFallbacks();
+    const routeIds = info?.hotkeyId ? [info.hotkeyId] : getConfiguredNativeRouteIds();
+    for (const routeId of routeIds) {
+      markRouteUnavailable(routeId, "binary_not_found", {
+        recordingSafetyStopped: stoppedRoutes[routeId] === true,
+        recoveryPending: false,
+      });
     }
   };
 
   const onReady = (info) => {
-    if (disposed) return;
+    if (disposed || isHotkeyCaptureActive()) return;
     debugLogger.debug("[Push-to-Talk] WindowsKeyManager route ready", info);
     const hotkeyId = info?.hotkeyId === "clipboard" ? "clipboard" : "insert";
     const timer = unexpectedExitTimers.get(hotkeyId);
@@ -284,47 +587,46 @@ function registerWindowsPushToTalk({
       }, STABLE_ROUTE_RESET_MS)
     );
     windowManager.setWindowsNativeListenerReady?.(info?.hotkeyId, true);
+    markRouteRecovered(hotkeyId);
   };
 
   const onRouteStopped = (info) => {
     if (disposed) return;
-    windowManager.setWindowsNativeListenerReady?.(info?.hotkeyId, false);
     const hotkeyId = info?.hotkeyId === "clipboard" ? "clipboard" : "insert";
-    forceStopRoute(hotkeyId, `listener-${info?.reason || "stopped"}`);
+    windowManager.setWindowsNativeListenerReady?.(hotkeyId, false);
+    const recordingSafetyStopped = forceStopRoute(
+      hotkeyId,
+      `listener-${info?.reason || "stopped"}`
+    );
     const stableTimer = stableRouteTimers.get(hotkeyId);
     if (stableTimer) clearTimeout(stableTimer);
     stableRouteTimers.delete(hotkeyId);
-    if (info?.reason === "exit") {
-      const attempt = (unexpectedExitAttempts.get(hotkeyId) || 0) + 1;
-      unexpectedExitAttempts.set(hotkeyId, attempt);
-      if (attempt > MAX_UNEXPECTED_EXIT_RECOVERIES) {
-        debugLogger.warn("[Push-to-Talk] Windows key listener recovery limit reached", {
-          ...info,
-          attempt,
-        });
-        return;
-      }
-
-      const delayMs = 250 * 2 ** (attempt - 1);
-      debugLogger.warn("[Push-to-Talk] Windows key listener exited; scheduling recovery", {
-        ...info,
-        attempt,
-        delayMs,
-      });
-      const existingTimer = unexpectedExitTimers.get(hotkeyId);
-      if (existingTimer) clearTimeout(existingTimer);
-      const timer = setTimeout(() => {
-        unexpectedExitTimers.delete(hotkeyId);
-        try {
-          refreshWindowsKeyListeners({ reason: "listener-exit-recovery" });
-        } catch (error) {
-          debugLogger.warn("[Push-to-Talk] Failed to recover exited key listener", {
-            error: error?.message || String(error),
-          });
-        }
-      }, delayMs);
-      unexpectedExitTimers.set(hotkeyId, timer);
+    if (refreshInProgress && info?.reason === "stopped") {
+      return;
     }
+    if (isHotkeyCaptureActive()) {
+      nativeRegisteredTapRoutes.delete(hotkeyId);
+      globalFallbackActiveRoutes.delete(hotkeyId);
+      return;
+    }
+    if (info?.mode === "tap" || nativeRegisteredTapRoutes.has(hotkeyId)) {
+      nativeRegisteredTapRoutes.delete(hotkeyId);
+      restoreGlobalFallback(hotkeyId);
+    }
+    if (info?.reason === "exit") {
+      const recoveryPending = scheduleRouteRecovery(hotkeyId, info);
+      markRouteUnavailable(hotkeyId, "listener_exited", {
+        recordingSafetyStopped,
+        recoveryPending,
+      });
+    }
+  };
+
+  const onRetirementConfirmed = () => {
+    if (disposed || refreshInProgress || !terminationBlocked || isHotkeyCaptureActive()) return;
+    cancelTerminationRetry();
+    terminationRetryAttempts = 0;
+    void refreshWindowsKeyListeners({ reason: "listener-termination-confirmed" }).catch(() => {});
   };
 
   windowsKeyManager.on("key-down", onKeyDown);
@@ -333,6 +635,7 @@ function registerWindowsPushToTalk({
   windowsKeyManager.on("unavailable", onUnavailable);
   windowsKeyManager.on("ready", onReady);
   windowsKeyManager.on("route-stopped", onRouteStopped);
+  windowsKeyManager.on("retirement-confirmed", onRetirementConfirmed);
 
   const STARTUP_DELAY_MS = 1250;
   debugLogger.debug("[Push-to-Talk] Scheduling listener startup refresh", {
@@ -340,13 +643,11 @@ function registerWindowsPushToTalk({
   });
   const startupTimer = setTimeout(() => {
     if (disposed) return;
-    try {
-      refreshWindowsKeyListeners({ reason: "startup" });
-    } catch (error) {
+    void refreshWindowsKeyListeners({ reason: "startup" }).catch((error) => {
       debugLogger.warn("[Push-to-Talk] Failed to refresh listeners on startup", {
         error: error?.message || String(error),
       });
-    }
+    });
   }, STARTUP_DELAY_MS);
 
   // Listen for activation mode changes from renderer
@@ -363,7 +664,10 @@ function registerWindowsPushToTalk({
     if (disposed) return;
     if (!isTrustedControlPanelEvent(event) || (mode !== "tap" && mode !== "push")) return;
     debugLogger.debug("[Push-to-Talk] IPC: Activation mode changed", { mode });
-    refreshWindowsKeyListeners({ modeOverride: mode, reason: "activation-mode-changed" });
+    void refreshWindowsKeyListeners({
+      modeOverride: mode,
+      reason: "activation-mode-changed",
+    }).catch(() => {});
   };
 
   // Listen for hotkey changes from renderer
@@ -372,7 +676,7 @@ function registerWindowsPushToTalk({
     if (!isTrustedControlPanelEvent(event) || typeof hotkey !== "string") return;
     debugLogger.debug("[Push-to-Talk] IPC: Hotkey changed", { hotkey });
     forceStopRoute("insert", "insert-hotkey-changed");
-    refreshWindowsKeyListeners({ reason: "insert-hotkey-changed" });
+    void refreshWindowsKeyListeners({ reason: "insert-hotkey-changed" }).catch(() => {});
   };
 
   const onClipboardHotkeyChanged = (event, hotkey) => {
@@ -380,7 +684,7 @@ function registerWindowsPushToTalk({
     if (!isTrustedControlPanelEvent(event) || typeof hotkey !== "string") return;
     debugLogger.debug("[Push-to-Talk] IPC: Clipboard hotkey changed", { hotkey });
     forceStopRoute("clipboard", "clipboard-hotkey-changed");
-    refreshWindowsKeyListeners({ reason: "clipboard-hotkey-changed" });
+    void refreshWindowsKeyListeners({ reason: "clipboard-hotkey-changed" }).catch(() => {});
   };
 
   ipcMain.on("activation-mode-changed", onActivationModeChanged);
@@ -399,9 +703,16 @@ function registerWindowsPushToTalk({
       clearTimeout(startupTimer);
       for (const timer of unexpectedExitTimers.values()) clearTimeout(timer);
       for (const timer of stableRouteTimers.values()) clearTimeout(timer);
+      for (const timer of fallbackRestoreTimers.values()) clearTimeout(timer);
+      cancelTerminationRetry();
       unexpectedExitTimers.clear();
       stableRouteTimers.clear();
+      fallbackRestoreTimers.clear();
       unexpectedExitAttempts.clear();
+      fallbackRestoreAttempts.clear();
+      nativeRegisteredTapRoutes.clear();
+      globalFallbackActiveRoutes.clear();
+      unavailableRoutes.clear();
       ipcMain.removeListener("activation-mode-changed", onActivationModeChanged);
       ipcMain.removeListener("hotkey-changed", onHotkeyChanged);
       ipcMain.removeListener("clipboard-hotkey-changed", onClipboardHotkeyChanged);
@@ -411,6 +722,7 @@ function registerWindowsPushToTalk({
       windowsKeyManager.removeListener("unavailable", onUnavailable);
       windowsKeyManager.removeListener("ready", onReady);
       windowsKeyManager.removeListener("route-stopped", onRouteStopped);
+      windowsKeyManager.removeListener("retirement-confirmed", onRetirementConfirmed);
       windowsKeyManager.stop();
       windowManager.clearWindowsNativeListenerReadiness?.();
     },

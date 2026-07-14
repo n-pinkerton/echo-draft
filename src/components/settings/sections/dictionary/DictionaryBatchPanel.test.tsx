@@ -6,6 +6,8 @@ import DictionaryBatchPanel from "./DictionaryBatchPanel";
 const renderPanel = (preview: {
   parsedCount: number;
   uniqueWordsCount: number;
+  importableCount: number;
+  capacitySkipped: number;
   duplicatesRemoved: number;
   invalidEntriesRemoved: number;
 }) =>
@@ -32,15 +34,19 @@ describe("DictionaryBatchPanel", () => {
     renderPanel({
       parsedCount: 5,
       uniqueWordsCount: 3,
+      importableCount: 2,
+      capacitySkipped: 1,
       duplicatesRemoved: 1,
       invalidEntriesRemoved: 1,
     });
 
     const preview = screen.getByTestId("dictionary-batch-preview");
     expect(preview).toHaveTextContent(
-      "Preview: 3 valid unique terms (1 duplicate and 1 unsupported entry removed)."
+      "Preview: 3 valid unique terms; 2 terms will be imported and 1 term will be skipped at the dictionary limit. 1 duplicate and 1 unsupported entry removed."
     );
     expect(preview).toHaveAttribute("data-unique-count", "3");
+    expect(preview).toHaveAttribute("data-importable-count", "2");
+    expect(preview).toHaveAttribute("data-capacity-skipped", "1");
     expect(preview).toHaveAttribute("data-duplicate-count", "1");
     expect(preview).toHaveAttribute("data-invalid-count", "1");
   });

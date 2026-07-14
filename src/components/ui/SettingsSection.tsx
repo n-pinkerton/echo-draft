@@ -58,6 +58,7 @@ export const SettingsGroup: React.FC<SettingsGroupProps> = ({
 interface SettingsRowProps {
   label: string;
   description?: string;
+  controlId?: string;
   children: React.ReactNode;
   className?: string;
 }
@@ -65,15 +66,27 @@ interface SettingsRowProps {
 export const SettingsRow: React.FC<SettingsRowProps> = ({
   label,
   description,
+  controlId,
   children,
   className = "",
 }) => {
+  const descriptionId = controlId && description ? `${controlId}-description` : undefined;
+
   return (
     <div className={`flex items-center justify-between gap-4 ${className}`}>
       <div className="min-w-0 flex-1">
-        <p className="text-[12px] font-medium text-foreground">{label}</p>
+        {controlId ? (
+          <label htmlFor={controlId} className="text-[12px] font-medium text-foreground">
+            {label}
+          </label>
+        ) : (
+          <p className="text-[12px] font-medium text-foreground">{label}</p>
+        )}
         {description && (
-          <p className="text-[11px] text-muted-foreground/80 mt-0.5 leading-relaxed">
+          <p
+            id={descriptionId}
+            className="text-[11px] text-muted-foreground/80 mt-0.5 leading-relaxed"
+          >
             {description}
           </p>
         )}

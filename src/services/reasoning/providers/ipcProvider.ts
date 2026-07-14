@@ -11,6 +11,7 @@ export async function processWithIpcProvider({
   agentName,
   config,
   getPreferredLanguage,
+  getCustomDictionary,
   ipcCall,
 }: {
   providerName: string;
@@ -19,6 +20,7 @@ export async function processWithIpcProvider({
   agentName: string | null;
   config: ReasoningConfig;
   getPreferredLanguage: () => string;
+  getCustomDictionary: () => string[];
   ipcCall: (
     userPrompt: string,
     model: string,
@@ -54,6 +56,7 @@ export async function processWithIpcProvider({
       {
         ...serializableConfig,
         language: getPreferredLanguage(),
+        dictionaryEntries: getCustomDictionary(),
       },
       requestId
     )

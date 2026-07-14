@@ -17,6 +17,7 @@ import { sanitizeTranscriptionMetaForDiagnostics } from "../utils/transcriptionD
 import { filterHistory, getProviderOptions } from "./controlPanel/historyFilterUtils";
 import ControlPanelView from "./controlPanel/ControlPanelView";
 import { useFileTranscription } from "./controlPanel/useFileTranscription";
+import { useWindowsPushToTalkStatus } from "../hooks/useWindowsPushToTalkStatus";
 
 export default function ControlPanel() {
   const history = useTranscriptions();
@@ -39,7 +40,8 @@ export default function ControlPanel() {
   const [isExporting, setIsExporting] = useState(false);
   const [showCloudMigrationBanner, setShowCloudMigrationBanner] = useState(false);
   const cloudMigrationProcessed = useRef(false);
-  const { toast } = useToast();
+  const { toast, dismiss } = useToast();
+  useWindowsPushToTalkStatus({ toast, dismiss });
   const {
     useReasoningModel,
     reasoningModel,
@@ -124,26 +126,6 @@ export default function ControlPanel() {
       });
     }
   }, [updateError, toast]);
-
-  useEffect(() => {
-    const dispose = window.electronAPI?.onWindowsPushToTalkUnavailable?.((data) => {
-      const reason = typeof data?.reason === "string" ? data.reason : "";
-      const message = typeof data?.message === "string" ? data.message : "";
-      toast({
-        title: "Windows Key Listener Unavailable",
-        description:
-          message ||
-          (reason === "binary_not_found"
-            ? "Push-to-Talk native listener is missing. Modifier-only hotkeys may not work. Choose a non-modifier hotkey (e.g., F9) or reinstall."
-            : "Push-to-Talk native listener is unavailable. Modifier-only hotkeys may not work. Choose a non-modifier hotkey (e.g., F9) or reinstall."),
-        duration: 12000,
-      });
-    });
-
-    return () => {
-      dispose?.();
-    };
-  }, [toast]);
 
   useEffect(() => {
     const dispose = window.electronAPI?.onLimitReached?.(

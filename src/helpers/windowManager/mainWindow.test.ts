@@ -107,6 +107,42 @@ describe("recording indicator window presentation", () => {
     expect(manager.isMainWindowInteractive).toBe(false);
   });
 
+  it("expands for stacked toasts while preserving the bottom-right anchor", () => {
+    const mainWindow = {
+      isDestroyed: vi.fn(() => false),
+      isVisible: vi.fn(() => true),
+      getBounds: vi.fn(() => ({ x: 1200, y: 700, width: 96, height: 96 })),
+      setBounds: vi.fn(),
+      setIgnoreMouseEvents: vi.fn(),
+      showInactive: vi.fn(),
+      show: vi.fn(),
+      setAlwaysOnTop: vi.fn(),
+      setFullScreenable: vi.fn(),
+      setVisibleOnAllWorkspaces: vi.fn(),
+      moveTop: vi.fn(),
+    };
+    const manager = { mainWindow, isMainWindowInteractive: true };
+
+    expect(
+      showRecordingIndicator(manager, {
+        sizeKey: "WITH_TOAST",
+        screenModule: {
+          getDisplayNearestPoint: vi.fn(() => ({
+            workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+          })),
+        } as any,
+      })
+    ).toEqual({ success: true });
+    expect(mainWindow.setBounds).toHaveBeenCalledWith({
+      x: 876,
+      y: 256,
+      width: 420,
+      height: 540,
+    });
+    expect(mainWindow.showInactive).not.toHaveBeenCalled();
+    expect(manager.isMainWindowInteractive).toBe(false);
+  });
+
   it("applies the macOS floating-window policy without taking focus", () => {
     const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     let visible = false;

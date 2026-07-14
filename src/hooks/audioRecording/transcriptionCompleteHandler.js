@@ -3,6 +3,41 @@ import { ECHO_DRAFT_CLOUD_SOURCE, normalizeEchoDraftSource } from "../../utils/b
 import { throwIfTranscriptionCancelled } from "../../helpers/audio/pipeline/cancellation";
 import { countWords } from "./textMetrics";
 
+const CLIPBOARD_PROTECTION_FAILURE_CODES = new Set([
+  "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
+  "WINDOWS_CLIPBOARD_RESTORE_PENDING",
+]);
+
+export const getCleanupFallbackFeedback = (fallbackReason, retryCount = 0) => {
+  if (fallbackReason === "fidelity_rejected") {
+    const retryAttempted = Number(retryCount) > 0;
+    return {
+      description: retryAttempted
+        ? "Both AI cleanup attempts failed preservation checks, so EchoDraft kept every original word."
+        : "AI cleanup failed preservation checks, so EchoDraft kept every original word.",
+      stageMessage: retryAttempted
+        ? "Original transcript used; neither cleanup attempt passed preservation checks."
+        : "Original transcript used; cleanup did not pass preservation checks.",
+    };
+  }
+  if (fallbackReason === "not_configured") {
+    return {
+      description: "AI cleanup is not configured, so EchoDraft used the original transcript.",
+      stageMessage: "Original transcript used; cleanup needs setup.",
+    };
+  }
+  if (fallbackReason === "unavailable") {
+    return {
+      description: "AI cleanup was unavailable, so EchoDraft used the original transcript.",
+      stageMessage: "Original transcript used; cleanup was unavailable.",
+    };
+  }
+  return {
+    description: "The AI cleanup request failed, so EchoDraft used the original transcript.",
+    stageMessage: "Original transcript used; cleanup request failed.",
+  };
+};
+
 export const createTranscriptionCompleteHandler = (deps) => {
   const {
     activeSessionRef,
@@ -69,8 +104,8 @@ export const createTranscriptionCompleteHandler = (deps) => {
 
     if (!result.success) {
       assertDeliveryActive();
-      void playErrorCue?.();
       if (!recordingSessionIdRef.current) {
+        void playErrorCue?.();
         updateStage("error", { message: "Transcription did not complete." });
       }
       if (resolvedSessionId) {
@@ -85,6 +120,9 @@ export const createTranscriptionCompleteHandler = (deps) => {
     const cleanedWords = countWords(result.text);
     const cleanup = result?.cleanup && typeof result.cleanup === "object" ? result.cleanup : null;
     const cleanupFallback = Boolean(cleanup?.requested && cleanup?.status === "fallback");
+    const cleanupFallbackFeedback = cleanupFallback
+      ? getCleanupFallbackFeedback(cleanup?.fallbackReason, cleanup?.retryCount)
+      : null;
     logger.info(
       "Dictation transcription complete",
       {
@@ -126,10 +164,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
         assertDeliveryActive();
         toast({
           title: "Original transcript preserved",
-          description:
-            cleanup?.fallbackReason === "fidelity_rejected"
-              ? "AI cleanup changed too much, so EchoDraft kept every original word."
-              : "AI cleanup was unavailable, so EchoDraft used the original transcript.",
+          description: cleanupFallbackFeedback.description,
           variant: "default",
           duration: 5000,
         });
@@ -139,12 +174,13 @@ export const createTranscriptionCompleteHandler = (deps) => {
       let clipboardSucceeded = false;
       let deliveryStatus = "pending";
       let deliveryError = null;
+      let deliveryReasonCode = null;
       let pasteMs = null;
-      const isForegroundAvailable = !recordingSessionIdRef.current;
+      const isForegroundAvailable = () => !recordingSessionIdRef.current;
 
       if (session.outputMode === "insert") {
         assertDeliveryActive();
-        if (isForegroundAvailable) {
+        if (isForegroundAvailable()) {
           updateStage("inserting", {
             outputMode: session.outputMode,
             sessionId: session.sessionId,
@@ -175,11 +211,58 @@ export const createTranscriptionCompleteHandler = (deps) => {
           "paste"
         );
         assertDeliveryActive();
-        pasteSucceeded = await audioManager.safePaste(result.text, pasteOptions);
+        const pasteResult =
+          typeof audioManager.safePasteWithResult === "function"
+            ? await audioManager.safePasteWithResult(result.text, pasteOptions)
+            : {
+                success: await audioManager.safePaste(result.text, pasteOptions),
+                errorCode: null,
+              };
+        pasteSucceeded = pasteResult?.success === true;
+        const clipboardRestoreWarning = Boolean(
+          pasteSucceeded &&
+          pasteResult?.inserted === true &&
+          pasteResult?.clipboardRestored === false
+        );
+        if (clipboardRestoreWarning) {
+          deliveryReasonCode = pasteResult?.warningCode || "WINDOWS_CLIPBOARD_RESTORE_FAILED";
+        } else if (!pasteSucceeded) {
+          deliveryReasonCode = pasteResult?.errorCode || "AUTOMATIC_INSERTION_FAILED";
+        }
         assertDeliveryActive();
         pasteMs = Math.round(performance.now() - pasteStart);
-        if (pasteSucceeded) {
+        if (clipboardRestoreWarning) {
+          deliveryStatus = "inserted_clipboard_warning";
+          deliveryError =
+            "Text was inserted, but the previous clipboard contents could not yet be restored.";
+          toast({
+            title: "Text inserted—clipboard recovery pending",
+            description:
+              "Do not paste again. EchoDraft will retry restoring your previous clipboard before the next insertion.",
+            variant: "default",
+            duration: 6000,
+          });
+        } else if (pasteSucceeded) {
           deliveryStatus = "inserted";
+        } else if (CLIPBOARD_PROTECTION_FAILURE_CODES.has(deliveryReasonCode)) {
+          // This failure is intentionally raised before the main process touches a clipboard
+          // it cannot safely mutate. A generic clipboard fallback here would defeat that
+          // protection, so retain the text on screen/history and offer explicit recovery.
+          const restorationPending = deliveryReasonCode === "WINDOWS_CLIPBOARD_RESTORE_PENDING";
+          deliveryStatus = "clipboard_protected";
+          deliveryError = restorationPending
+            ? "Automatic insertion paused while EchoDraft protects clipboard data from the previous insertion."
+            : "Automatic insertion paused because the existing clipboard could not be restored safely.";
+          toast({
+            title: restorationPending
+              ? "Insert paused—clipboard recovery pending"
+              : "Insert paused—clipboard protected",
+            description: restorationPending
+              ? "EchoDraft will retry the previous clipboard recovery. This dictation remains in History."
+              : "EchoDraft left your clipboard unchanged. Use Copy Last Dictation from the tray or History.",
+            variant: "default",
+            duration: 6000,
+          });
         } else {
           try {
             assertDeliveryActive();
@@ -283,7 +366,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       }
 
       assertDeliveryActive();
-      if (isForegroundAvailable) {
+      if (isForegroundAvailable()) {
         updateStage("saving", {
           outputMode: session.outputMode,
           sessionId: session.sessionId,
@@ -317,9 +400,12 @@ export const createTranscriptionCompleteHandler = (deps) => {
       };
       const provider = job?.provider || result.source || "";
       const model = job?.model || "";
-      const deliverySucceeded = ["inserted", "clipboard", "clipboard_fallback"].includes(
-        deliveryStatus
-      );
+      const deliverySucceeded = [
+        "inserted",
+        "inserted_clipboard_warning",
+        "clipboard",
+        "clipboard_fallback",
+      ].includes(deliveryStatus);
       // A clipboard fallback preserves the user's text, but automatic delivery still
       // failed. Keep that distinction visible in history and diagnostic exports.
       const historyStatus = ["inserted", "clipboard"].includes(deliveryStatus)
@@ -342,6 +428,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
           delivery: {
             status: deliveryStatus,
             succeeded: deliverySucceeded,
+            ...(deliveryReasonCode ? { reasonCode: deliveryReasonCode } : {}),
             ...(deliveryError ? { error: deliveryError } : {}),
           },
           ...(deliveryError ? { error: deliveryError } : {}),
@@ -392,8 +479,10 @@ export const createTranscriptionCompleteHandler = (deps) => {
       assertDeliveryActive();
       if (!saveSucceeded) {
         const fallbackDescription =
-          deliveryStatus === "inserted"
-            ? "Text was inserted, but saving to history failed."
+          deliveryStatus === "inserted" || deliveryStatus === "inserted_clipboard_warning"
+            ? deliveryStatus === "inserted_clipboard_warning"
+              ? "Text was inserted, but clipboard restoration and history saving failed."
+              : "Text was inserted, but saving to history failed."
             : deliveryStatus === "clipboard" || deliveryStatus === "clipboard_fallback"
               ? "Text is in the clipboard, but saving to history failed."
               : "Clipboard delivery and history saving both failed. Use Copy Last Dictation in the EchoDraft tray menu to recover the text.";
@@ -439,11 +528,15 @@ export const createTranscriptionCompleteHandler = (deps) => {
       }
 
       assertDeliveryActive();
-      if (isForegroundAvailable) {
+      if (isForegroundAvailable()) {
         const terminalStage =
           deliveryStatus === "failed"
             ? "error"
-            : deliveryStatus === "clipboard_fallback" || !saveSucceeded || cleanupFallback
+            : deliveryStatus === "clipboard_fallback" ||
+                deliveryStatus === "inserted_clipboard_warning" ||
+                deliveryStatus === "clipboard_protected" ||
+                !saveSucceeded ||
+                cleanupFallback
               ? "warning"
               : "done";
         updateStage(terminalStage, {
@@ -455,15 +548,21 @@ export const createTranscriptionCompleteHandler = (deps) => {
           message:
             deliveryStatus === "clipboard_fallback"
               ? "Insert failed; text kept in clipboard."
-              : deliveryStatus === "failed"
-                ? "Automatic text delivery failed."
-                : saveSucceeded
-                  ? cleanupFallback
-                    ? "Original transcript used; cleanup was not applied."
-                    : null
-                  : session.outputMode === "insert" && pasteSucceeded
-                    ? "Inserted, but history save failed."
-                    : "Saved to clipboard, but history save failed.",
+              : deliveryStatus === "inserted_clipboard_warning"
+                ? "Inserted; previous clipboard recovery is pending."
+                : deliveryStatus === "clipboard_protected"
+                  ? deliveryReasonCode === "WINDOWS_CLIPBOARD_RESTORE_PENDING"
+                    ? "Insert paused; previous clipboard recovery is still pending."
+                    : "Insert paused; existing clipboard left unchanged."
+                  : deliveryStatus === "failed"
+                    ? "Automatic text delivery failed."
+                    : saveSucceeded
+                      ? cleanupFallback
+                        ? cleanupFallbackFeedback.stageMessage
+                        : null
+                      : session.outputMode === "insert" && pasteSucceeded
+                        ? "Inserted, but history save failed."
+                        : "Saved to clipboard, but history save failed.",
           provider,
           model,
           generatedChars: result.text.length,
@@ -496,12 +595,23 @@ export const createTranscriptionCompleteHandler = (deps) => {
       }
 
       assertDeliveryActive();
-      if (deliveryStatus === "failed") {
-        void playErrorCue?.();
-      } else if (deliveryStatus === "clipboard_fallback" || !saveSucceeded || cleanupFallback) {
-        void playWarningCue?.();
-      } else if (deliverySucceeded) {
-        void playCompletionCue?.();
+      // A queued job may finish while the user is already recording the next one.
+      // Keep the live-microphone cue authoritative instead of overlaying a stale
+      // completion, warning, or error sound from background work.
+      if (isForegroundAvailable()) {
+        if (deliveryStatus === "failed") {
+          void playErrorCue?.();
+        } else if (
+          deliveryStatus === "clipboard_fallback" ||
+          deliveryStatus === "inserted_clipboard_warning" ||
+          deliveryStatus === "clipboard_protected" ||
+          !saveSucceeded ||
+          cleanupFallback
+        ) {
+          void playWarningCue?.();
+        } else if (deliverySucceeded) {
+          void playCompletionCue?.();
+        }
       }
       assertDeliveryActive();
       audioManager.warmupStreamingConnection();

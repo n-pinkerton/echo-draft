@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 
-const { parsePowerShellJsonOutput, runWindowsPowerShellScript } = require("./powershellUtils");
+const {
+  WINDOWS_POWERSHELL_TIMEOUT_MS,
+  parsePowerShellJsonOutput,
+  runWindowsPowerShellScript,
+} = require("./powershellUtils");
 
 describe("powershellUtils", () => {
   it("parsePowerShellJsonOutput returns the last JSON-looking line", () => {
-    const stdout = "noise\n{\"success\":true}\n";
+    const stdout = 'noise\n{"success":true}\n';
     expect(parsePowerShellJsonOutput(stdout)).toEqual({ success: true });
   });
 
@@ -33,5 +37,45 @@ describe("powershellUtils", () => {
     expect(args.join(" ")).toContain("& {");
     expect(args.at(-1)).toBe("123");
   });
-});
 
+  it("terminates and settles a PowerShell child that never closes", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new EventEmitter() as any;
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      let confirmTermination: (value: boolean) => void = () => {};
+      const termination = new Promise<boolean>((resolve) => {
+        confirmTermination = resolve;
+      });
+      const terminateProcessTreeAndWait = vi.fn(() => termination);
+      const manager = {
+        deps: {
+          spawn: vi.fn(() => child),
+          terminateProcessTreeAndWait,
+        },
+      };
+
+      const resultPromise = runWindowsPowerShellScript(manager, "Start-Sleep -Seconds 60");
+      let settled = false;
+      void resultPromise.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(WINDOWS_POWERSHELL_TIMEOUT_MS);
+      expect(settled).toBe(false);
+      confirmTermination(true);
+
+      await expect(resultPromise).resolves.toEqual({
+        code: -1,
+        stdout: "",
+        stderr: "PowerShell operation timed out",
+        terminationConfirmed: true,
+        timedOut: true,
+      });
+      expect(terminateProcessTreeAndWait).toHaveBeenCalledWith(child, "SIGKILL");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

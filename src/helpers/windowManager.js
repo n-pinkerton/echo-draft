@@ -1,7 +1,10 @@
 const { app, dialog, globalShortcut } = require("electron");
 const HotkeyManager = require("./hotkeyManager");
 const { isModifierOnlyHotkey, isRightSideModifier } = HotkeyManager;
-const { isWindowsNativeHotkeySupported } = require("./hotkey/windowsNativeHotkey");
+const {
+  canUseWindowsRegisteredTapHotkey,
+  isWindowsNativeHotkeySupported,
+} = require("./hotkey/windowsNativeHotkey");
 const DragManager = require("./dragManager");
 const debugLogger = require("./debugLogger");
 const { accelerator: CONTROL_PANEL_ACCELERATOR } = require("../shared/controlPanelShortcut.json");
@@ -59,6 +62,7 @@ class WindowManager {
     this.loadErrorShown = false;
     this.windowsPushToTalkAvailable = false;
     this.windowsNativeReadyRoutes = new Set();
+    this.windowsHotkeyController = null;
     this.macCompoundPushState = null;
     this._cachedActivationMode = "tap";
     this.currentClipboardHotkey = DEFAULT_CLIPBOARD_HOTKEY;
@@ -145,6 +149,44 @@ class WindowManager {
   isWindowsNativeListenerReady(routeId) {
     const normalizedRoute = routeId === "clipboard" ? "clipboard" : "insert";
     return this.windowsNativeReadyRoutes.has(normalizedRoute);
+  }
+
+  canUseWindowsRegisteredTapHotkey(hotkey) {
+    return process.platform === "win32" && canUseWindowsRegisteredTapHotkey(hotkey);
+  }
+
+  suspendGlobalHotkeyForNativeTap(routeId) {
+    const normalizedRoute = routeId === "clipboard" ? "clipboard" : "insert";
+    if (normalizedRoute === "clipboard") {
+      this.unregisterClipboardHotkey();
+      return;
+    }
+
+    const hotkey = this.hotkeyManager.getCurrentHotkey?.();
+    const accelerator = hotkey?.startsWith("Fn+") ? hotkey.slice(3) : hotkey;
+    if (!accelerator) return;
+    try {
+      globalShortcut.unregister(accelerator);
+    } catch (error) {
+      debugLogger.warn("Could not release insert accelerator for native tap listener", {
+        hotkey,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  restoreGlobalHotkeyFallback(routeId) {
+    const normalizedRoute = routeId === "clipboard" ? "clipboard" : "insert";
+    if (normalizedRoute === "clipboard") {
+      if (!this.currentClipboardHotkey) {
+        return { success: false, message: "No clipboard hotkey configured." };
+      }
+      return this.registerClipboardHotkeyInternal(this.currentClipboardHotkey);
+    }
+
+    return this.hotkeyManager.refreshCurrentHotkey(
+      this.createHotkeyCallback("insert", () => this.hotkeyManager.getCurrentHotkey?.())
+    );
   }
 
   async createMainWindow() {
@@ -279,6 +321,14 @@ class WindowManager {
     this.hotkeyManager.setListeningMode(enabled);
   }
 
+  setWindowsHotkeyController(controller) {
+    this.windowsHotkeyController = controller || null;
+  }
+
+  getWindowsHotkeyController() {
+    return this.windowsHotkeyController;
+  }
+
   async initializeHotkey() {
     await this.hotkeyManager.initializeHotkey(
       this.mainWindow,
@@ -361,12 +411,32 @@ class WindowManager {
   }
 
   async recoverHotkeys() {
-    const insert = this.hotkeyManager.refreshCurrentHotkey(
-      this.createHotkeyCallback("insert", () => this.hotkeyManager.getCurrentHotkey?.())
-    );
-    const clipboard = this.currentClipboardHotkey
-      ? this.registerClipboardHotkeyInternal(this.currentClipboardHotkey)
-      : { success: false, message: "No clipboard hotkey configured." };
+    if (this.hotkeyManager.isInListeningMode()) {
+      return {
+        insert: { success: false, skipped: true, reason: "capture-active" },
+        clipboard: { success: false, skipped: true, reason: "capture-active" },
+      };
+    }
+    const activationMode = this.getActivationMode();
+    const insertHotkey = this.hotkeyManager.getCurrentHotkey?.();
+    const insertNativeTapActive =
+      activationMode === "tap" &&
+      this.canUseWindowsRegisteredTapHotkey(insertHotkey) &&
+      this.isWindowsNativeListenerReady("insert");
+    const clipboardNativeTapActive =
+      activationMode === "tap" &&
+      this.canUseWindowsRegisteredTapHotkey(this.currentClipboardHotkey) &&
+      this.isWindowsNativeListenerReady("clipboard");
+    const insert = insertNativeTapActive
+      ? { success: true, hotkey: insertHotkey, nativeOnly: true }
+      : this.hotkeyManager.refreshCurrentHotkey(
+          this.createHotkeyCallback("insert", () => this.hotkeyManager.getCurrentHotkey?.())
+        );
+    const clipboard = clipboardNativeTapActive
+      ? { success: true, hotkey: this.currentClipboardHotkey, nativeOnly: true }
+      : this.currentClipboardHotkey
+        ? this.registerClipboardHotkeyInternal(this.currentClipboardHotkey)
+        : { success: false, message: "No clipboard hotkey configured." };
     return { insert, clipboard };
   }
 
@@ -398,8 +468,8 @@ class WindowManager {
     showDictationPanelImpl(this, options);
   }
 
-  showRecordingIndicator() {
-    return showRecordingIndicatorImpl(this);
+  showRecordingIndicator(sizeKey = "RECORDING_INDICATOR") {
+    return showRecordingIndicatorImpl(this, { sizeKey });
   }
 
   hideControlPanelToTray() {

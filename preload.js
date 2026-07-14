@@ -34,7 +34,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
-  showRecordingIndicator: () => ipcRenderer.invoke("show-recording-indicator"),
+  showRecordingIndicator: (sizeKey = "RECORDING_INDICATOR") =>
+    ipcRenderer.invoke("show-recording-indicator", sizeKey),
   showControlPanel: () => ipcRenderer.invoke("show-control-panel"),
   getControlPanelShortcutStatus: () => ipcRenderer.invoke("get-control-panel-shortcut-status"),
   onControlPanelShortcutStatusChanged: registerListener(
@@ -385,6 +386,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   onWindowsPushToTalkUnavailable: registerListener(
     "windows-ptt-unavailable",
+    (callback) => (_event, data) => callback(data)
+  ),
+  onWindowsPushToTalkRecovered: registerListener(
+    "windows-ptt-recovered",
     (callback) => (_event, data) => callback(data)
   ),
 

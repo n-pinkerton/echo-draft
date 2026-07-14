@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createTranscriptionCompleteHandler } from "./transcriptionCompleteHandler";
+import {
+  createTranscriptionCompleteHandler,
+  getCleanupFallbackFeedback,
+} from "./transcriptionCompleteHandler";
 
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
@@ -13,13 +16,17 @@ const deferred = <T>() => {
 const createDeliveryHarness = ({
   outputMode,
   safePaste = vi.fn(async () => true),
+  safePasteWithResult,
   writeClipboard = vi.fn(async () => ({ success: true })),
   saveTranscription = vi.fn(async () => ({ success: true, id: 321 })),
+  recordingSessionId = null,
 }: {
   outputMode: "insert" | "clipboard";
   safePaste?: ReturnType<typeof vi.fn>;
+  safePasteWithResult?: ReturnType<typeof vi.fn>;
   writeClipboard?: ReturnType<typeof vi.fn>;
   saveTranscription?: ReturnType<typeof vi.fn>;
+  recordingSessionId?: string | null;
 }) => {
   const sessionId = `cancel-${outputMode}`;
   const updateStage = vi.fn();
@@ -31,11 +38,13 @@ const createDeliveryHarness = ({
   const warmupStreamingConnection = vi.fn();
   const controller = new AbortController();
   const deliveryCommitCountRef = { current: 0 };
+  const recordingSessionIdRef = { current: recordingSessionId };
   const handler = createTranscriptionCompleteHandler({
     activeSessionRef: { current: null },
     audioManagerRef: {
       current: {
         safePaste,
+        ...(safePasteWithResult ? { safePasteWithResult } : {}),
         saveTranscription,
         warmupStreamingConnection,
       },
@@ -49,7 +58,7 @@ const createDeliveryHarness = ({
       triggeredAt: 1,
       insertionTarget: null,
     }),
-    recordingSessionIdRef: { current: null },
+    recordingSessionIdRef,
     removeJob: vi.fn(),
     sessionsByIdRef: { current: new Map([[sessionId, { sessionId, outputMode }]]) },
     setProgress: vi.fn(),
@@ -87,6 +96,7 @@ const createDeliveryHarness = ({
     playCompletionCue,
     playErrorCue,
     playWarningCue,
+    recordingSessionIdRef,
     run,
     safePaste,
     saveTranscription,
@@ -341,6 +351,10 @@ describe("createTranscriptionCompleteHandler", () => {
       audioManagerRef: {
         current: {
           safePaste: vi.fn(async () => false),
+          safePasteWithResult: vi.fn(async () => ({
+            success: false,
+            errorCode: "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED",
+          })),
           saveTranscription,
           warmupStreamingConnection: vi.fn(),
         },
@@ -387,6 +401,9 @@ describe("createTranscriptionCompleteHandler", () => {
       clipboardSucceeded: true,
       delivery: { status: "clipboard_fallback", succeeded: true },
     });
+    expect((saveTranscription as any).mock.calls[0][0].meta.delivery.reasonCode).toBe(
+      "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED"
+    );
     expect(updateStage).toHaveBeenCalledWith(
       "warning",
       expect.objectContaining({ message: "Insert failed; text kept in clipboard." })
@@ -396,6 +413,97 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(playWarningCue).toHaveBeenCalledTimes(1);
     expect(setProgress).not.toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining("Saved in") })
+    );
+  });
+
+  it("leaves an unsupported custom-format clipboard untouched and saves recovery text", async () => {
+    const safePasteWithResult = vi.fn(async () => ({
+      success: false,
+      errorCode: "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
+    }));
+    const harness = createDeliveryHarness({ outputMode: "insert", safePasteWithResult });
+
+    await harness.run();
+
+    expect(harness.writeClipboard).not.toHaveBeenCalled();
+    expect(harness.saveTranscription).toHaveBeenCalledOnce();
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
+      status: "delivery_issue",
+      pasteSucceeded: false,
+      clipboardSucceeded: false,
+      delivery: {
+        status: "clipboard_protected",
+        succeeded: false,
+        reasonCode: "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
+      },
+    });
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Insert paused—clipboard protected" })
+    );
+    expect(harness.updateStage).toHaveBeenCalledWith(
+      "warning",
+      expect.objectContaining({ message: "Insert paused; existing clipboard left unchanged." })
+    );
+    expect(harness.playWarningCue).toHaveBeenCalledOnce();
+  });
+
+  it("records successful insertion with a clipboard-restoration warning without copying again", async () => {
+    const safePasteWithResult = vi.fn(async () => ({
+      success: true,
+      inserted: true,
+      clipboardRestored: false,
+      warningCode: "WINDOWS_CLIPBOARD_RESTORE_FAILED",
+    }));
+    const harness = createDeliveryHarness({ outputMode: "insert", safePasteWithResult });
+
+    await harness.run();
+
+    expect(harness.writeClipboard).not.toHaveBeenCalled();
+    expect(harness.saveTranscription).toHaveBeenCalledOnce();
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
+      status: "delivery_issue",
+      pasteSucceeded: true,
+      clipboardSucceeded: false,
+      delivery: {
+        status: "inserted_clipboard_warning",
+        succeeded: true,
+        reasonCode: "WINDOWS_CLIPBOARD_RESTORE_FAILED",
+      },
+    });
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Text inserted—clipboard recovery pending",
+        description: expect.stringContaining("Do not paste again"),
+      })
+    );
+    expect(harness.updateStage).toHaveBeenCalledWith(
+      "warning",
+      expect.objectContaining({ message: "Inserted; previous clipboard recovery is pending." })
+    );
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+    expect(harness.playWarningCue).toHaveBeenCalledOnce();
+  });
+
+  it("does not overwrite the clipboard while a prior restoration is pending", async () => {
+    const safePasteWithResult = vi.fn(async () => ({
+      success: false,
+      errorCode: "WINDOWS_CLIPBOARD_RESTORE_PENDING",
+    }));
+    const harness = createDeliveryHarness({ outputMode: "insert", safePasteWithResult });
+
+    await harness.run();
+
+    expect(harness.writeClipboard).not.toHaveBeenCalled();
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta.delivery).toMatchObject({
+      status: "clipboard_protected",
+      succeeded: false,
+      reasonCode: "WINDOWS_CLIPBOARD_RESTORE_PENDING",
+    });
+    expect(harness.updateStage).toHaveBeenCalledWith(
+      "warning",
+      expect.objectContaining({
+        message: "Insert paused; previous clipboard recovery is still pending.",
+      })
     );
   });
 
@@ -614,7 +722,9 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.writeClipboard).toHaveBeenCalledWith("Committed delivery text");
     expect(harness.updateStage).toHaveBeenLastCalledWith(
       "warning",
-      expect.objectContaining({ message: "Original transcript used; cleanup was not applied." })
+      expect.objectContaining({
+        message: "Original transcript used; cleanup did not pass preservation checks.",
+      })
     );
     expect(harness.toast).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -625,5 +735,127 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.playWarningCue).toHaveBeenCalledOnce();
     expect(harness.playCompletionCue).not.toHaveBeenCalled();
     expect(harness.playErrorCue).not.toHaveBeenCalled();
+  });
+
+  it("keeps terminal cues silent when an earlier job finishes behind a live recording", async () => {
+    const harness = createDeliveryHarness({
+      outputMode: "clipboard",
+      recordingSessionId: "new-live-recording",
+    });
+
+    await harness.run();
+
+    expect(harness.writeClipboard).toHaveBeenCalledOnce();
+    expect(harness.saveTranscription).toHaveBeenCalledOnce();
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+    expect(harness.playWarningCue).not.toHaveBeenCalled();
+    expect(harness.playErrorCue).not.toHaveBeenCalled();
+  });
+
+  it("rechecks foreground ownership after a delayed successful save", async () => {
+    const history = deferred<{ success: boolean; id: number }>();
+    const harness = createDeliveryHarness({
+      outputMode: "clipboard",
+      saveTranscription: vi.fn(() => history.promise),
+    });
+
+    const pending = harness.run();
+    await vi.waitFor(() => expect(harness.saveTranscription).toHaveBeenCalledOnce());
+    harness.recordingSessionIdRef.current = "new-live-recording";
+    history.resolve({ success: true, id: 321 });
+    await pending;
+
+    expect(
+      harness.updateStage.mock.calls.filter(([stage]) =>
+        ["done", "warning", "error"].includes(stage)
+      )
+    ).toHaveLength(0);
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+    expect(harness.playWarningCue).not.toHaveBeenCalled();
+    expect(harness.playErrorCue).not.toHaveBeenCalled();
+  });
+
+  it("rechecks foreground ownership after a delayed save warning", async () => {
+    const history = deferred<{ success: boolean }>();
+    const harness = createDeliveryHarness({
+      outputMode: "clipboard",
+      saveTranscription: vi.fn(() => history.promise),
+    });
+
+    const pending = harness.run();
+    await vi.waitFor(() => expect(harness.saveTranscription).toHaveBeenCalledOnce());
+    harness.recordingSessionIdRef.current = "new-live-recording";
+    history.resolve({ success: false });
+    await pending;
+
+    expect(
+      harness.updateStage.mock.calls.filter(([stage]) =>
+        ["done", "warning", "error"].includes(stage)
+      )
+    ).toHaveLength(0);
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+    expect(harness.playWarningCue).not.toHaveBeenCalled();
+    expect(harness.playErrorCue).not.toHaveBeenCalled();
+  });
+
+  it("rechecks foreground ownership after a delayed delivery error", async () => {
+    const paste = deferred<boolean>();
+    const harness = createDeliveryHarness({
+      outputMode: "insert",
+      safePaste: vi.fn(() => paste.promise),
+      writeClipboard: vi.fn(async () => ({ success: false, error: "clipboard unavailable" })),
+    });
+
+    const pending = harness.run();
+    await vi.waitFor(() => expect(harness.safePaste).toHaveBeenCalledOnce());
+    harness.recordingSessionIdRef.current = "new-live-recording";
+    paste.resolve(false);
+    await pending;
+
+    expect(
+      harness.updateStage.mock.calls.filter(([stage]) =>
+        ["done", "warning", "error"].includes(stage)
+      )
+    ).toHaveLength(0);
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+    expect(harness.playWarningCue).not.toHaveBeenCalled();
+    expect(harness.playErrorCue).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unsuccessful older result silent behind a live recording", async () => {
+    const harness = createDeliveryHarness({
+      outputMode: "clipboard",
+      recordingSessionId: "new-live-recording",
+    });
+
+    await harness.run({ success: false });
+
+    expect(harness.updateStage).not.toHaveBeenCalledWith("error", expect.anything());
+    expect(harness.playErrorCue).not.toHaveBeenCalled();
+  });
+});
+
+describe("getCleanupFallbackFeedback", () => {
+  it.each([
+    ["fidelity_rejected", "failed preservation checks", "did not pass preservation checks"],
+    ["not_configured", "not configured", "needs setup"],
+    ["unavailable", "was unavailable", "was unavailable"],
+    ["provider_error", "request failed", "request failed"],
+  ])("explains %s without conflating fallback causes", (reason, description, stageMessage) => {
+    expect(getCleanupFallbackFeedback(reason)).toMatchObject({
+      description: expect.stringContaining(description),
+      stageMessage: expect.stringContaining(stageMessage),
+    });
+  });
+
+  it("mentions two attempts only when the retry count records a second pass", () => {
+    expect(getCleanupFallbackFeedback("fidelity_rejected", 0)).toMatchObject({
+      description: expect.not.stringContaining("Both"),
+      stageMessage: expect.not.stringContaining("neither"),
+    });
+    expect(getCleanupFallbackFeedback("fidelity_rejected", 1)).toMatchObject({
+      description: expect.stringContaining("Both"),
+      stageMessage: expect.stringContaining("neither"),
+    });
   });
 });

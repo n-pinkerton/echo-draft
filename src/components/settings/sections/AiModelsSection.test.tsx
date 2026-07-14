@@ -44,6 +44,10 @@ describe("AiModelsSection cleanup reasoning", () => {
     const selector = screen.getByRole("combobox", { name: "Cleanup reasoning effort" });
     expect(selector).toHaveValue("low");
     expect(screen.getByRole("option", { name: "Low — recommended" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "None — fastest first pass" })).toBeInTheDocument();
+    expect(screen.getByText(/Low is recommended for reliability/)).toBeInTheDocument();
+    expect(selector).toHaveAccessibleDescription(/Low is recommended for reliability/);
+    expect(selector).toHaveAccessibleDescription(/second request.*latency.*BYOK API usage/i);
 
     fireEvent.change(selector, { target: { value: "medium" } });
 

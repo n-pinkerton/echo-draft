@@ -1,4 +1,9 @@
-const DEFAULT_MAX_ENTRIES = 100;
+const MAX_USER_DICTIONARY_ENTRIES = 100;
+// Keep provider prompts deliberately small, but never use that transport limit to
+// truncate the user's durable dictionary. The larger bound is an abuse guard for
+// localStorage/IPC rather than a model-context limit.
+const MAX_STORED_DICTIONARY_ENTRIES = 10_000;
+const DEFAULT_MAX_ENTRIES = MAX_USER_DICTIONARY_ENTRIES;
 const DEFAULT_MAX_ENTRY_LENGTH = 80;
 const MAX_ENTRY_WORDS = 1;
 
@@ -48,6 +53,8 @@ function sanitizeLexicalDictionaryEntries(
 module.exports = {
   DEFAULT_MAX_ENTRIES,
   DEFAULT_MAX_ENTRY_LENGTH,
+  MAX_STORED_DICTIONARY_ENTRIES,
+  MAX_USER_DICTIONARY_ENTRIES,
   normalizeLexicalDictionaryEntry,
   sanitizeLexicalDictionaryEntries,
 };

@@ -1,5 +1,4 @@
 import { countWords } from "../utils/wordCount";
-import { BUILT_IN_CLEANUP_DICTIONARY } from "../../../config/prompts";
 import { hasGovernedExplicitQuoteAttachment } from "./cleanupOutputRepairs";
 
 const ASSISTANT_ACTION_OPENERS = [
@@ -268,7 +267,185 @@ const normalizeForComparison = (value) =>
     .replace(/[^\p{L}\p{N}%]+/gu, " ")
     .trim();
 
+const getStrictCaseLocale = (language) => {
+  const primary =
+    typeof language === "string" ? language.trim().toLowerCase().split(/[-_]/u)[0] : "";
+  return primary === "tr" || primary === "az" ? primary : null;
+};
+
+const normalizeStrictLexicalToken = (token, language) => {
+  const normalized = token.normalize("NFC").replace(/[’‘ʼ]/g, "'");
+  const locale = getStrictCaseLocale(language);
+  return (locale ? normalized.toLocaleLowerCase(locale) : normalized.toLowerCase())
+    .replace(/i\u0307/gu, "i")
+    .replace(/ς/g, "σ")
+    .normalize("NFC");
+};
+
+const getStrictLexicalMatches = (value) =>
+  Array.from(
+    String(value || "")
+      .normalize("NFC")
+      .matchAll(/[\p{L}\p{N}](?:[\p{L}\p{M}\p{N}]|['’‘ʼ](?=[\p{L}\p{M}\p{N}]))*/gu)
+  );
+
+const getStrictLexicalTokens = (value, language) =>
+  getStrictLexicalMatches(value).map((match) => normalizeStrictLexicalToken(match[0], language));
+
+const applySafeStrictSentenceStartCase = (originalToken, cleanedToken, language) => {
+  if (originalToken === cleanedToken) return originalToken;
+  // Never let a punctuation-only strict retry rewrite acronyms, identifiers, or
+  // name-like casing (for example US, IT, or PowerShell). Only accept the exact
+  // first-letter capitalization of an otherwise lowercase source token.
+  if (!/^\p{Ll}[\p{Ll}\p{M}\p{N}'’‘ʼ]*$/u.test(originalToken)) return originalToken;
+  const [first = "", ...rest] = Array.from(originalToken);
+  const locale = getStrictCaseLocale(language);
+  const uppercaseFirst = locale ? first.toLocaleUpperCase(locale) : first.toUpperCase();
+  const expected = `${uppercaseFirst}${rest.join("")}`;
+  return cleanedToken === expected ? cleanedToken : originalToken;
+};
+
+/**
+ * Keeps the recognizer's punctuation, spacing, and in-sentence token spelling while
+ * accepting sentence-start casing from a token-locked strict cleanup result. This
+ * prevents a comma or sentence boundary introduced by the rescue pass from changing
+ * meaning or leaving capitalization that depended on the discarded punctuation.
+ */
+export function applyStrictCleanupTokensToOriginalPunctuation(
+  originalText,
+  cleanedText,
+  options = {}
+) {
+  const language = options.language;
+  const original = String(originalText || "").normalize("NFC");
+  const cleaned = String(cleanedText || "").normalize("NFC");
+  const originalMatches = getStrictLexicalMatches(original);
+  const cleanedMatches = getStrictLexicalMatches(cleaned);
+  const originalTokens = originalMatches.map((match) =>
+    normalizeStrictLexicalToken(match[0], language)
+  );
+  const cleanedTokens = cleanedMatches.map((match) =>
+    normalizeStrictLexicalToken(match[0], language)
+  );
+
+  if (getFirstSequenceMismatch(originalTokens, cleanedTokens) !== null) {
+    return original;
+  }
+
+  let result = "";
+  let sourceCursor = 0;
+  for (let index = 0; index < originalMatches.length; index += 1) {
+    const originalMatch = originalMatches[index];
+    const cleanedMatch = cleanedMatches[index];
+    const matchIndex = originalMatch.index || 0;
+    const sourceGap = original.slice(sourceCursor, matchIndex);
+    result += sourceGap;
+    result +=
+      index === 0 || /[.!?][\s"'”’)]*$/u.test(sourceGap)
+        ? applySafeStrictSentenceStartCase(originalMatch[0], cleanedMatch[0], language)
+        : originalMatch[0];
+    sourceCursor = matchIndex + originalMatch[0].length;
+  }
+  return result + original.slice(sourceCursor);
+}
+
+const isStrictLexicalCharacter = (value) => /[\p{L}\p{M}\p{N}]/u.test(value || "");
+
+const getCodePointBefore = (value, index) => {
+  const prefix = value.slice(0, index);
+  const codePoints = Array.from(prefix);
+  return codePoints[codePoints.length - 1] || "";
+};
+
+const getCodePointAt = (value, index) => Array.from(value.slice(index))[0] || "";
+
+const isStrictProtectedGapCharacter = (value, index, character) => {
+  const previous = getCodePointBefore(value, index);
+  const next = getCodePointAt(value, index + character.length);
+
+  if (/[\p{S}\p{M}%‰‱@#&*_\/\\]/u.test(character)) return true;
+  if (/[-‐‑_]/u.test(character)) return true;
+  if (character === ".") {
+    return (
+      (isStrictLexicalCharacter(previous) && isStrictLexicalCharacter(next)) ||
+      (!previous && isStrictLexicalCharacter(next)) ||
+      (/[/\\]/u.test(previous) && isStrictLexicalCharacter(next))
+    );
+  }
+  if (character === ":") {
+    return (
+      isStrictLexicalCharacter(previous) && (isStrictLexicalCharacter(next) || /[/\\]/u.test(next))
+    );
+  }
+  if (character === "?" || character === ";") {
+    return isStrictLexicalCharacter(previous) && isStrictLexicalCharacter(next);
+  }
+  if (character === ",") return /\p{N}/u.test(previous) && /\p{N}/u.test(next);
+  return false;
+};
+
+const getStrictSignificantTokenStream = (value, language) => {
+  const normalized = String(value || "").normalize("NFC");
+  const stream = [];
+
+  const significantMatches = normalized.matchAll(
+    /[\p{L}\p{N}](?:[\p{L}\p{M}\p{N}]|['’‘ʼ](?=[\p{L}\p{M}\p{N}]))*|[\p{S}\p{M}%‰‱@#&*_\/\\\-‐‑.,:;?]/gu
+  );
+
+  for (const match of significantMatches) {
+    const token = match[0];
+    if (/^[\p{L}\p{N}]/u.test(token)) {
+      stream.push(`lexical:${normalizeStrictLexicalToken(token, language)}`);
+    } else if (isStrictProtectedGapCharacter(normalized, match.index || 0, token)) {
+      stream.push(`protected:${token}`);
+    }
+  }
+  return stream;
+};
+
+const getFirstSequenceMismatch = (originalItems, cleanedItems) => {
+  const comparedItemCount = Math.min(originalItems.length, cleanedItems.length);
+  for (let index = 0; index < comparedItemCount; index += 1) {
+    if (originalItems[index] !== cleanedItems[index]) return index;
+  }
+  return originalItems.length === cleanedItems.length ? null : comparedItemCount;
+};
+
 const getWords = (value) => normalizeForComparison(value).split(/\s+/).filter(Boolean);
+
+/**
+ * Enforces the strict retry's mechanical-only contract. Punctuation,
+ * capitalization, paragraph boundaries, and straight/curly apostrophe glyphs
+ * may change; lexical words, protected symbols, and technical tokens may not.
+ */
+export function assessStrictCleanupLexicalFidelity(originalText, cleanedText, options = {}) {
+  const language = options.language;
+  const originalTokens = getStrictLexicalTokens(originalText, language);
+  const cleanedTokens = getStrictLexicalTokens(cleanedText, language);
+  const originalSignificantTokens = getStrictSignificantTokenStream(originalText, language);
+  const cleanedSignificantTokens = getStrictSignificantTokenStream(cleanedText, language);
+  const firstMismatchIndex = getFirstSequenceMismatch(originalTokens, cleanedTokens);
+  const firstSignificantMismatchIndex = getFirstSequenceMismatch(
+    originalSignificantTokens,
+    cleanedSignificantTokens
+  );
+  const reasons = [];
+  if (firstMismatchIndex !== null) reasons.push("strict-lexical-sequence-change");
+  if (firstSignificantMismatchIndex !== null) reasons.push("strict-significant-token-change");
+
+  return {
+    accepted: reasons.length === 0,
+    reasons,
+    metrics: {
+      strictLexicalOriginalTokenCount: originalTokens.length,
+      strictLexicalCleanedTokenCount: cleanedTokens.length,
+      strictLexicalFirstMismatchIndex: firstMismatchIndex,
+      strictSignificantOriginalTokenCount: originalSignificantTokens.length,
+      strictSignificantCleanedTokenCount: cleanedSignificantTokens.length,
+      strictSignificantFirstMismatchIndex: firstSignificantMismatchIndex,
+    },
+  };
+}
 
 const pushIncreasingPosition = (tails, position) => {
   let low = 0;
@@ -349,161 +526,433 @@ const stemComparableWord = (word) => {
   return word;
 };
 
-const isEditDistanceAtMostOne = (left, right) => {
-  if (Math.abs(left.length - right.length) > 1) return false;
-  if (left === right) return true;
-
-  if (left.length === right.length) {
-    const firstDifference = [...left].findIndex((character, index) => character !== right[index]);
-    if (firstDifference < 0) return true;
-    if (left.slice(firstDifference + 1) === right.slice(firstDifference + 1)) return true;
-    return (
-      firstDifference + 1 < left.length &&
-      left[firstDifference] === right[firstDifference + 1] &&
-      left[firstDifference + 1] === right[firstDifference] &&
-      left.slice(firstDifference + 2) === right.slice(firstDifference + 2)
-    );
-  }
-
-  let leftIndex = 0;
-  let rightIndex = 0;
-  let edits = 0;
-  while (leftIndex < left.length && rightIndex < right.length) {
-    if (left[leftIndex] === right[rightIndex]) {
-      leftIndex += 1;
-      rightIndex += 1;
-      continue;
-    }
-    edits += 1;
-    if (edits > 1) return false;
-    if (left.length > right.length) leftIndex += 1;
-    else rightIndex += 1;
-  }
-  if (leftIndex < left.length || rightIndex < right.length) edits += 1;
-  return edits <= 1;
-};
-
-const areLikelyInflectionOrSpellingVariants = (left, right) =>
-  stemComparableWord(left) === stemComparableWord(right) ||
-  (left.length >= 5 && right.length >= 5 && isEditDistanceAtMostOne(left, right));
-
-const getAsciiSoundex = (value) => {
-  const letters = String(value || "")
-    .normalize("NFKD")
-    .replace(/[^a-z]/gi, "")
-    .toUpperCase();
-  if (!letters) return "";
-
-  const codes = {
-    B: "1",
-    F: "1",
-    P: "1",
-    V: "1",
-    C: "2",
-    G: "2",
-    J: "2",
-    K: "2",
-    Q: "2",
-    S: "2",
-    X: "2",
-    Z: "2",
-    D: "3",
-    T: "3",
-    L: "4",
-    M: "5",
-    N: "5",
-    R: "6",
-  };
-  let output = letters[0];
-  let previousCode = codes[letters[0]] || "";
-  for (const letter of letters.slice(1)) {
-    const code = codes[letter] || "";
-    if (code && code !== previousCode) output += code;
-    previousCode = code;
-    if (output.length === 4) break;
-  }
-  return `${output}000`.slice(0, 4);
-};
-
-const isEditDistanceAtMostTwo = (left, right) => {
-  if (Math.abs(left.length - right.length) > 2) return false;
-  const previous = Array.from({ length: right.length + 1 }, (_value, index) => index);
-  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
-    const current = [leftIndex];
-    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
-      current[rightIndex] =
-        left[leftIndex - 1] === right[rightIndex - 1]
-          ? previous[rightIndex - 1]
-          : 1 + Math.min(previous[rightIndex], current[rightIndex - 1], previous[rightIndex - 1]);
-    }
-    previous.splice(0, previous.length, ...current);
-  }
-  return previous[right.length] <= 2;
-};
-
-const BUILT_IN_PREFERRED_SPELLING_TOKENS = new Set(
-  BUILT_IN_CLEANUP_DICTIONARY.flatMap((entry) => getWords(entry))
-);
-
-const getPreferredSpellingTokens = (preferredSpellings) =>
-  new Set(
-    (Array.isArray(preferredSpellings) ? preferredSpellings : [])
-      .flatMap((entry) => getWords(typeof entry === "string" ? entry : ""))
-      .filter((entry) => BUILT_IN_PREFERRED_SPELLING_TOKENS.has(entry))
+const getRawLexicalTokenMatches = (value) =>
+  Array.from(
+    String(value || "").matchAll(/[\p{L}\p{N}](?:[\p{L}\p{M}\p{N}]|['’‘ʼ](?=[\p{L}\p{M}\p{N}]))*/gu)
   );
 
-const isPreferredSpellingCorrection = (originalWord, cleanedWord, preferredSpellingTokens) => {
+const getRawLexicalTokens = (value) => getRawLexicalTokenMatches(value).map((match) => match[0]);
+
+const PREFERRED_SPELLING_ALIAS_NAME_SHAPE = /^\p{Lu}[\p{Ll}\p{M}]{4,}$/u;
+const PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS = new Set([
+  "agent",
+  "alias",
+  "argument",
+  "class",
+  "code",
+  "column",
+  "command",
+  "constant",
+  "directory",
+  "enum",
+  "field",
+  "file",
+  "folder",
+  "function",
+  "identifier",
+  "key",
+  "label",
+  "literal",
+  "method",
+  "model",
+  "option",
+  "parameter",
+  "path",
+  "property",
+  "setting",
+  "string",
+  "symbol",
+  "table",
+  "tag",
+  "term",
+  "text",
+  "token",
+  "type",
+  "value",
+  "variable",
+  "word",
+  "words",
+]);
+const PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS = new Set([
+  "ask",
+  "asked",
+  "brief",
+  "briefed",
+  "call",
+  "called",
+  "contact",
+  "contacted",
+  "email",
+  "emailed",
+  "give",
+  "gave",
+  "hear",
+  "heard",
+  "invite",
+  "invited",
+  "meet",
+  "met",
+  "message",
+  "messaged",
+  "notify",
+  "notified",
+  "remind",
+  "reminded",
+  "send",
+  "sent",
+  "show",
+  "showed",
+  "speak",
+  "spoke",
+  "talk",
+  "talked",
+  "tell",
+  "thank",
+  "thanked",
+  "told",
+]);
+const PREFERRED_SPELLING_ALIAS_RECIPIENT_LINKERS = new Set(["for", "from", "to", "with"]);
+const PREFERRED_SPELLING_ALIAS_PRESERVATION_PREFIX =
+  /\b(?:do not|never)\s+(?:alter|change|correct|edit|rename|replace|respell|rewrite)\b/iu;
+const PREFERRED_SPELLING_ALIAS_PRESERVATION_SUFFIX =
+  /\b(?:as\s+(?:originally\s+)?(?:dictated|spelled|typed|written)|unaltered|unchanged|verbatim)\b/iu;
+const PREFERRED_SPELLING_ALIAS_NEGATED_PASSIVE_EDIT_SUFFIX =
+  /^(?:(?:can|could|may|might|must|shall|should|will|would)\s+(?:never|not)\s+(?:(?:be|have\s+been|remain)\s+)?|(?:am|are|is|was|were)\s+(?:never|not)\s+(?:(?:being|to\s+be)\s+)?|(?:had|has|have)\s+(?:never|not)\s+been\s+)(?:altered|changed|corrected|edited|renamed|replaced|respelled|rewritten)\b/u;
+const PREFERRED_SPELLING_ALIAS_CLAUSE_BOUNDARY = /[.!?;\r\n]/u;
+
+const getPreferredSpellingAliasClauseBounds = (raw, sourceStart, sourceEnd) => {
+  let start = sourceStart;
+  while (start > 0 && !PREFERRED_SPELLING_ALIAS_CLAUSE_BOUNDARY.test(raw[start - 1])) {
+    start -= 1;
+  }
+
+  let end = sourceEnd;
+  while (end < raw.length && !PREFERRED_SPELLING_ALIAS_CLAUSE_BOUNDARY.test(raw[end])) {
+    end += 1;
+  }
+  return { start, end };
+};
+
+const isStandaloneStraightQuote = (raw, index, quote) => {
+  if (quote !== "'") return true;
+  return !(
+    /[\p{L}\p{N}]/u.test(raw[index - 1] || "") && /[\p{L}\p{N}]/u.test(raw[index + 1] || "")
+  );
+};
+
+const isInsidePreferredSpellingDelimitedSpan = (raw, sourceStart, sourceEnd, clauseStart) => {
+  for (const quote of ['"', "'", "`"]) {
+    let openingCount = 0;
+    for (let index = clauseStart; index < sourceStart; index += 1) {
+      if (raw[index] === quote && isStandaloneStraightQuote(raw, index, quote)) openingCount += 1;
+    }
+    if (openingCount % 2 === 0) continue;
+    for (let index = sourceEnd; index < raw.length; index += 1) {
+      if (raw[index] === quote && isStandaloneStraightQuote(raw, index, quote)) return true;
+    }
+  }
+
+  return [
+    ["“", "”"],
+    ["‘", "’"],
+  ].some(([openingQuote, closingQuote]) => {
+    const openingIndex = raw.lastIndexOf(openingQuote, sourceStart - 1);
+    const priorClosingIndex = raw.lastIndexOf(closingQuote, sourceStart - 1);
+    return (
+      openingIndex >= clauseStart &&
+      openingIndex > priorClosingIndex &&
+      raw.indexOf(closingQuote, sourceEnd) >= sourceEnd
+    );
+  });
+};
+
+const hasPreferredSpellingTechnicalDefinition = (suffixWords) => {
+  let cursor = 0;
+  if (["is", "means", "represents", "was"].includes(suffixWords[cursor])) {
+    cursor += 1;
+  } else if (suffixWords[cursor] === "remains") {
+    cursor += 1;
+  } else if (
+    ["must", "should", "will"].includes(suffixWords[cursor]) &&
+    ["be", "remain"].includes(suffixWords[cursor + 1])
+  ) {
+    cursor += 2;
+  } else {
+    return false;
+  }
+
+  while (["a", "an", "currently", "still", "the", "this", "that"].includes(suffixWords[cursor])) {
+    cursor += 1;
+  }
+  const firstDescriptor = suffixWords[cursor] || "";
   if (
-    !preferredSpellingTokens.has(cleanedWord) ||
-    originalWord.length < 4 ||
-    cleanedWord.length < 4 ||
-    originalWord[0] !== cleanedWord[0] ||
-    !isEditDistanceAtMostTwo(originalWord, cleanedWord)
+    firstDescriptor &&
+    !PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(firstDescriptor) &&
+    /(?:ed|ing)$/u.test(firstDescriptor)
   ) {
     return false;
   }
-  const originalSoundex = getAsciiSoundex(originalWord);
-  return Boolean(originalSoundex) && originalSoundex === getAsciiSoundex(cleanedWord);
+  return suffixWords
+    .slice(cursor, cursor + 4)
+    .some((word) => PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(word));
 };
 
-const getSemanticContentDiff = (originalWords, cleanedWords, preferredSpellingTokens = new Set()) => {
+const hasPreferredSpellingTechnicalObjectComplement = (suffixWords) => {
+  let cursor = suffixWords[0] === "as" ? 1 : 0;
+  while (["a", "an", "that", "the", "this"].includes(suffixWords[cursor])) {
+    cursor += 1;
+  }
+  return PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(suffixWords[cursor]);
+};
+
+const isLikelyPreferredSpellingPersonName = (rawToken) => /^[\p{Lu}]/u.test(rawToken || "");
+
+const hasDirectedPreferredSpellingPersonContext = (clauseMatches, sourceIndex) => {
+  const words = clauseMatches.map((match) => getWords(match[0])[0] || "");
+  const previousWord = words[sourceIndex - 1] || "";
+  if (PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS.has(previousWord)) return true;
+
+  let cursor = sourceIndex - 1;
+  while (cursor >= 1 && words[cursor] === "and") {
+    cursor -= 1;
+    if (!isLikelyPreferredSpellingPersonName(clauseMatches[cursor]?.[0])) return false;
+    cursor -= 1;
+  }
+  if (PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS.has(words[cursor])) return true;
+
+  if (!PREFERRED_SPELLING_ALIAS_RECIPIENT_LINKERS.has(previousWord)) return false;
+  for (cursor = sourceIndex - 2; cursor >= Math.max(0, sourceIndex - 7); cursor -= 1) {
+    if (PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS.has(words[cursor])) return true;
+    if (PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(words[cursor])) return false;
+  }
+  return false;
+};
+
+const hasPositivePreferredSpellingPersonContext = (originalText, originalMatches, sourceIndex) => {
+  const sourceMatch = originalMatches[sourceIndex];
+  if (!sourceMatch) return false;
+  const sourceStart = sourceMatch.index || 0;
+  const sourceEnd = sourceStart + sourceMatch[0].length;
+  const raw = String(originalText || "");
+  const clauseBounds = getPreferredSpellingAliasClauseBounds(raw, sourceStart, sourceEnd);
+  if (isInsidePreferredSpellingDelimitedSpan(raw, sourceStart, sourceEnd, clauseBounds.start)) {
+    return false;
+  }
+
+  const clausePrefix = raw.slice(clauseBounds.start, sourceStart);
+  const clauseSuffix = raw.slice(sourceEnd, clauseBounds.end);
+  const normalizedClausePrefix = normalizeForComparison(clausePrefix);
+  const normalizedClauseSuffix = normalizeForComparison(clauseSuffix);
+  if (
+    PREFERRED_SPELLING_ALIAS_PRESERVATION_PREFIX.test(normalizedClausePrefix) ||
+    PREFERRED_SPELLING_ALIAS_PRESERVATION_SUFFIX.test(normalizedClauseSuffix) ||
+    PREFERRED_SPELLING_ALIAS_NEGATED_PASSIVE_EDIT_SUFFIX.test(normalizedClauseSuffix)
+  ) {
+    return false;
+  }
+  const suffixWords = getWords(clauseSuffix);
+  if (
+    hasPreferredSpellingTechnicalDefinition(suffixWords) ||
+    hasPreferredSpellingTechnicalObjectComplement(suffixWords)
+  ) {
+    return false;
+  }
+
+  const clauseMatches = originalMatches.filter((match) => {
+    const start = match.index || 0;
+    return start >= clauseBounds.start && start < clauseBounds.end;
+  });
+  const clauseSourceIndex = clauseMatches.findIndex((match) => (match.index || 0) === sourceStart);
+  if (clauseSourceIndex < 0) return false;
+
+  const previousWord = getWords(clauseMatches[clauseSourceIndex - 1]?.[0] || "")[0] || "";
+  if (["dear", "hello", "hi"].includes(previousWord)) return true;
+  const vocativeActionIndex = suffixWords[0] === "please" ? 1 : 0;
+  if (
+    clauseSourceIndex === 0 &&
+    /^\s*,/u.test(clauseSuffix) &&
+    DIRECTIVE_ACTION_OPENERS.has(suffixWords[vocativeActionIndex])
+  ) {
+    return true;
+  }
+  return hasDirectedPreferredSpellingPersonContext(clauseMatches, clauseSourceIndex);
+};
+
+const isAuditedPreferredSpellingPersonAlias = (
+  rawSource,
+  rawTarget,
+  normalizedSource,
+  normalizedTarget
+) => {
+  if (
+    !PREFERRED_SPELLING_ALIAS_NAME_SHAPE.test(rawSource) ||
+    !PREFERRED_SPELLING_ALIAS_NAME_SHAPE.test(rawTarget) ||
+    normalizedSource !== normalizeForComparison(rawSource) ||
+    normalizedTarget !== normalizeForComparison(rawTarget)
+  ) {
+    return false;
+  }
+  const sourceCharacters = Array.from(normalizedSource);
+  const targetCharacters = Array.from(normalizedTarget);
+  return (
+    sourceCharacters.length === targetCharacters.length &&
+    sourceCharacters.length >= 5 &&
+    sourceCharacters.at(-1) === "i" &&
+    targetCharacters.at(-1) === "e" &&
+    sourceCharacters.slice(0, -1).join("") === targetCharacters.slice(0, -1).join("")
+  );
+};
+
+export const applyTrustedPreferredSpellingAliases = (
+  originalText,
+  cleanedText,
+  preferredSpellings
+) => {
+  const canonicalEntries = (Array.isArray(preferredSpellings) ? preferredSpellings : [])
+    .map((entry) => ({ entry, tokens: getWords(typeof entry === "string" ? entry : "") }))
+    .filter(
+      ({ entry, tokens }) =>
+        tokens.length === 1 &&
+        typeof entry === "string" &&
+        PREFERRED_SPELLING_ALIAS_NAME_SHAPE.test(entry)
+    )
+    .map(({ entry, tokens }) => ({ raw: entry, normalized: tokens[0] }));
+  if (canonicalEntries.length === 0) return String(cleanedText || "");
+  const originalMatches = Array.from(
+    String(originalText || "").matchAll(
+      /[\p{L}\p{N}](?:[\p{L}\p{M}\p{N}]|['’‘ʼ](?=[\p{L}\p{M}\p{N}]))*/gu
+    )
+  );
+  const cleaned = String(cleanedText || "");
+  const cleanedMatches = Array.from(
+    cleaned.matchAll(/[\p{L}\p{N}](?:[\p{L}\p{M}\p{N}]|['’‘ʼ](?=[\p{L}\p{M}\p{N}]))*/gu)
+  );
+  if (originalMatches.length !== cleanedMatches.length) return cleaned;
+
+  let result = "";
+  let cursor = 0;
+  for (let index = 0; index < cleanedMatches.length; index += 1) {
+    const originalRaw = originalMatches[index][0];
+    const cleanedRaw = cleanedMatches[index][0];
+    const originalNormalized = getWords(originalRaw)[0] || "";
+    const cleanedNormalized = getWords(cleanedRaw)[0] || "";
+    const possibleTargets = canonicalEntries.filter(
+      (target) =>
+        isAuthorizedPreferredSpellingSource(
+          originalRaw,
+          target.raw,
+          originalNormalized,
+          target.normalized,
+          {
+            originalText,
+            originalMatches,
+            sourceIndex: index,
+          }
+        ) &&
+        (cleanedNormalized === originalNormalized || cleanedNormalized === target.normalized)
+    );
+    const matchIndex = cleanedMatches[index].index || 0;
+    result += cleaned.slice(cursor, matchIndex);
+    result += possibleTargets.length === 1 ? possibleTargets[0].raw : cleanedRaw;
+    cursor = matchIndex + cleanedRaw.length;
+  }
+  return result + cleaned.slice(cursor);
+};
+
+const isAuthorizedPreferredSpellingSource = (
+  rawSource,
+  rawTarget,
+  normalizedSource,
+  normalizedTarget,
+  context
+) => {
+  if (normalizedSource === normalizedTarget) return false;
+  return Boolean(
+    isAuditedPreferredSpellingPersonAlias(
+      rawSource,
+      rawTarget,
+      normalizedSource,
+      normalizedTarget
+    ) &&
+    hasPositivePreferredSpellingPersonContext(
+      context?.originalText,
+      context?.originalMatches || [],
+      context?.sourceIndex
+    )
+  );
+};
+
+const getPreferredSpellingAlignment = (preferredSpellings, original, cleaned) => {
+  const originalMatches = getRawLexicalTokenMatches(original);
+  const originalTokens = originalMatches.map((match) => match[0]);
+  const cleanedTokens = getRawLexicalTokens(cleaned);
+  const comparisonOriginalRawTokens = [...originalTokens];
+  const canonicalEntriesByNormalized = new Map();
+
+  for (const entry of Array.isArray(preferredSpellings) ? preferredSpellings : []) {
+    if (typeof entry !== "string") continue;
+    const normalizedEntryTokens = getWords(entry);
+    if (normalizedEntryTokens.length !== 1) continue;
+    if (!canonicalEntriesByNormalized.has(normalizedEntryTokens[0])) {
+      canonicalEntriesByNormalized.set(normalizedEntryTokens[0], {
+        raw: entry,
+        normalized: normalizedEntryTokens[0],
+      });
+    }
+  }
+
+  const corrections = [];
+  // A dictionary entry is an exact spelling preference, not a bag-of-words
+  // substitution allowance. Only authorize a correction when the source and
+  // canonical target occupy the same lexical occurrence. If cleanup inserted
+  // or removed a word, the ordinary fidelity checks must judge the result.
+  if (originalTokens.length === cleanedTokens.length) {
+    for (let index = 0; index < originalTokens.length; index += 1) {
+      const rawSource = originalTokens[index];
+      const normalizedSourceTokens = getWords(rawSource);
+      const normalizedCleanedTokens = getWords(cleanedTokens[index]);
+      if (normalizedSourceTokens.length !== 1 || normalizedCleanedTokens.length !== 1) continue;
+
+      const normalizedSource = normalizedSourceTokens[0];
+      const normalizedCleaned = normalizedCleanedTokens[0];
+      const target = canonicalEntriesByNormalized.get(normalizedCleaned);
+      if (
+        !target ||
+        !isAuthorizedPreferredSpellingSource(
+          rawSource,
+          target.raw,
+          normalizedSource,
+          target.normalized,
+          {
+            originalText: original,
+            originalMatches,
+            sourceIndex: index,
+          }
+        )
+      ) {
+        continue;
+      }
+
+      comparisonOriginalRawTokens[index] = target.raw;
+      corrections.push({ index, original: normalizedSource, cleaned: target.normalized });
+    }
+  }
+  return {
+    comparisonOriginalRawTokens,
+    comparisonOriginalWords: comparisonOriginalRawTokens.flatMap((token) => getWords(token)),
+    corrections,
+  };
+};
+
+const getSemanticContentDiff = (originalWords, cleanedWords) => {
   const remainingOriginal = [...originalWords];
   const remainingCleaned = [...cleanedWords];
-  const preferredSpellingCorrections = [];
 
   for (let index = remainingOriginal.length - 1; index >= 0; index -= 1) {
     const exactIndex = remainingCleaned.indexOf(remainingOriginal[index]);
     if (exactIndex >= 0) {
       remainingOriginal.splice(index, 1);
       remainingCleaned.splice(exactIndex, 1);
-    }
-  }
-
-  for (let index = remainingOriginal.length - 1; index >= 0; index -= 1) {
-    const variantIndex = remainingCleaned.findIndex((candidate) =>
-      areLikelyInflectionOrSpellingVariants(remainingOriginal[index], candidate)
-    );
-    if (variantIndex >= 0) {
-      remainingOriginal.splice(index, 1);
-      remainingCleaned.splice(variantIndex, 1);
-    }
-  }
-
-  for (let index = remainingOriginal.length - 1; index >= 0; index -= 1) {
-    const variantIndex = remainingCleaned.findIndex((candidate) =>
-      isPreferredSpellingCorrection(
-        remainingOriginal[index],
-        candidate,
-        preferredSpellingTokens
-      )
-    );
-    if (variantIndex >= 0) {
-      preferredSpellingCorrections.push({
-        original: remainingOriginal[index],
-        cleaned: remainingCleaned[variantIndex],
-      });
-      remainingOriginal.splice(index, 1);
-      remainingCleaned.splice(variantIndex, 1);
     }
   }
 
@@ -514,11 +963,10 @@ const getSemanticContentDiff = (originalWords, cleanedWords, preferredSpellingTo
     addedWords,
     missingCount: missingWords.length,
     addedCount: addedWords.length,
-    preferredSpellingCorrections,
   };
 };
 
-const getAllowedSpokenFormattingWords = (value) => {
+const getAllowedSpokenFormattingRanges = (value) => {
   const raw = String(value || "");
   const matches = [
     ...raw.matchAll(
@@ -527,7 +975,424 @@ const getAllowedSpokenFormattingWords = (value) => {
   ];
   const trailing = raw.match(/\b(?:comma|period|colon|semicolon)\s*[.!?]?\s*$/i);
   if (trailing) matches.push(trailing);
-  return matches.flatMap((match) => getContentWordTokens(match[0]));
+  const lexicalMatches = getRawLexicalTokenMatches(raw);
+  return matches.map((match) => {
+    const start = match.index || 0;
+    const end = start + match[0].length;
+    const normalized = getWords(match[0]).join(" ");
+    const kind =
+      normalized === "question mark"
+        ? "question"
+        : normalized === "exclamation mark" || normalized === "exclamation point"
+          ? "exclamation"
+          : normalized === "full stop" || normalized === "period"
+            ? "period"
+            : normalized === "new line"
+              ? "new_line"
+              : normalized === "new paragraph"
+                ? "new_paragraph"
+                : normalized;
+    const tokenIndexes = lexicalMatches
+      .map((tokenMatch, index) => ({
+        index,
+        start: tokenMatch.index || 0,
+        end: (tokenMatch.index || 0) + tokenMatch[0].length,
+      }))
+      .filter((token) => token.start >= start && token.end <= end)
+      .map(({ index }) => index);
+    return { start, end, text: match[0], kind, tokenIndexes };
+  });
+};
+
+const SPOKEN_FORMATTING_BOUNDARY_PATTERNS = {
+  question: /\?/u,
+  exclamation: /!/u,
+  period: /\./u,
+  comma: /,/u,
+  colon: /:/u,
+  semicolon: /;/u,
+  new_line: /\r?\n/u,
+  new_paragraph: /\r?\n[\t ]*\r?\n/u,
+};
+
+const getSingleNormalizedWord = (value) => {
+  const words = getWords(value);
+  return words.length === 1 ? words[0] : null;
+};
+
+const getTokenOccurrenceOrdinal = (tokens, targetIndex, normalizedWord, excludedIndexes) => {
+  let ordinal = 0;
+  for (let index = 0; index <= targetIndex; index += 1) {
+    if (excludedIndexes.has(index)) continue;
+    if (getSingleNormalizedWord(tokens[index]) === normalizedWord) ordinal += 1;
+  }
+  return ordinal;
+};
+
+const findTokenOccurrenceIndex = (matches, normalizedWord, ordinal) => {
+  let seen = 0;
+  for (let index = 0; index < matches.length; index += 1) {
+    if (getSingleNormalizedWord(matches[index][0]) !== normalizedWord) continue;
+    seen += 1;
+    if (seen === ordinal) return index;
+  }
+  return -1;
+};
+
+const SPOKEN_FORMATTING_META_CONTEXT =
+  /\b(?:expressions?|labels?|literals?|names?|phrases?|punctuation|symbols?|terms?|wording|words?)\b(?:\s+(?:a|an|as|called|displayed|for|named|of|rendered|shown|spelled|the|typed|written)){0,3}\s*["'“”‘’]*$/iu;
+const SPOKEN_FORMATTING_RELATIONAL_SUFFIX =
+  /^["'“”‘’]*\s*(?:as|called|displayed|for|from|in|is|means?|named|of|on|refers?|rendered|shown|spelled|to|typed|was|were|with|written)\b/iu;
+const SPOKEN_FORMATTING_NAMING_PREFIX =
+  /\b(?:(?:am|are|be|been|being|is|was|were)\s+)?(?:called|labelled|labeled|named|titled)\s*["'“”‘’]*$/iu;
+const SPOKEN_FORMATTING_MODAL_AUXILIARIES = new Set([
+  "can",
+  "could",
+  "may",
+  "might",
+  "must",
+  "shall",
+  "should",
+  "will",
+  "would",
+]);
+const SPOKEN_FORMATTING_FINITE_AUXILIARIES = new Set([
+  "am",
+  "are",
+  ...SPOKEN_FORMATTING_MODAL_AUXILIARIES,
+  "did",
+  "do",
+  "does",
+  "had",
+  "has",
+  "have",
+  "is",
+  "was",
+  "were",
+]);
+const SPOKEN_FORMATTING_QUESTION_WORDS = new Set([
+  "how",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "why",
+]);
+const SPOKEN_FORMATTING_INCOMPLETE_CLAUSE_ENDINGS = new Set([
+  "a",
+  "an",
+  "and",
+  "as",
+  "at",
+  "by",
+  "for",
+  "from",
+  "in",
+  "into",
+  "of",
+  "on",
+  "or",
+  "the",
+  "to",
+  "with",
+]);
+const SPOKEN_FORMATTING_DIRECT_OBJECT_REQUIRED_ACTIONS = new Set([
+  "add",
+  "call",
+  "define",
+  "display",
+  "enter",
+  "explain",
+  "include",
+  "insert",
+  "keep",
+  "label",
+  "mention",
+  "move",
+  "name",
+  "output",
+  "preserve",
+  "print",
+  "pronounce",
+  "quote",
+  "read",
+  "remove",
+  "render",
+  "replace",
+  "retain",
+  "say",
+  "show",
+  "spell",
+  "title",
+  "type",
+  "use",
+  "write",
+]);
+const SPOKEN_FORMATTING_EXPLICIT_OBJECT_PRONOUNS = new Set([
+  "anything",
+  "everything",
+  "it",
+  "one",
+  "ones",
+  "something",
+  "that",
+  "these",
+  "this",
+  "those",
+]);
+const SPOKEN_FORMATTING_NON_OBJECT_COMPLEMENTS = new Set([
+  "again",
+  "aloud",
+  "away",
+  "back",
+  "carefully",
+  "clearly",
+  "directly",
+  "down",
+  "here",
+  "later",
+  "loud",
+  "loudly",
+  "now",
+  "out",
+  "over",
+  "quietly",
+  "slowly",
+  "there",
+  "today",
+  "tomorrow",
+  "tonight",
+  "up",
+  "yesterday",
+]);
+const SPOKEN_FORMATTING_OBJECT_BOUNDARIES = new Set(["about", "for", "to", "with"]);
+
+const hasExplicitSpokenFormattingDirectObject = (words, actionIndex) => {
+  const wordsAfterAction = words.slice(actionIndex + 1);
+  const boundaryIndex = wordsAfterAction.findIndex((word) =>
+    SPOKEN_FORMATTING_OBJECT_BOUNDARIES.has(word)
+  );
+  const candidateWords =
+    boundaryIndex >= 0 ? wordsAfterAction.slice(0, boundaryIndex) : wordsAfterAction;
+  return candidateWords.some((word) => {
+    if (SPOKEN_FORMATTING_EXPLICIT_OBJECT_PRONOUNS.has(word)) return true;
+    return (
+      !CONTENT_STOP_WORDS.has(word) &&
+      !SPOKEN_FORMATTING_INCOMPLETE_CLAUSE_ENDINGS.has(word) &&
+      !SPOKEN_FORMATTING_NON_OBJECT_COMPLEMENTS.has(word) &&
+      !/ly$/u.test(word)
+    );
+  });
+};
+
+const hasCompleteSpokenFormattingAction = (words, actionIndex, hasCompleteEnding) => {
+  const action = words[actionIndex] || "";
+  if (!action || !hasCompleteEnding) return false;
+  if (!SPOKEN_FORMATTING_DIRECT_OBJECT_REQUIRED_ACTIONS.has(action)) return true;
+  return hasExplicitSpokenFormattingDirectObject(words, actionIndex);
+};
+
+const hasMetalinguisticSpokenFormattingContext = (original, range) => {
+  const raw = String(original || "");
+  const prefix = raw.slice(Math.max(0, range.start - 140), range.start);
+  const suffix = raw.slice(range.end, Math.min(raw.length, range.end + 100));
+  const adjacentPrefixCharacter = raw.slice(Math.max(0, range.start - 1), range.start);
+  const adjacentSuffixCharacter = raw.slice(range.end, range.end + 1);
+  const isQuoted =
+    /["'“‘]/u.test(adjacentPrefixCharacter) || /["'”’]/u.test(adjacentSuffixCharacter);
+  return (
+    isQuoted ||
+    SPOKEN_FORMATTING_META_CONTEXT.test(prefix) ||
+    SPOKEN_FORMATTING_NAMING_PREFIX.test(prefix) ||
+    SPOKEN_FORMATTING_RELATIONAL_SUFFIX.test(suffix)
+  );
+};
+
+const hasPositiveClosedClauseShape = (value) => {
+  const words = getWords(value);
+  if (words.length < 2) return false;
+  const hasCompleteEnding = !SPOKEN_FORMATTING_INCOMPLETE_CLAUSE_ENDINGS.has(
+    words[words.length - 1]
+  );
+
+  let actionIndex = 0;
+  const hasPoliteOpener = words[actionIndex] === "please";
+  if (hasPoliteOpener) actionIndex += 1;
+  const hasNegativeDirective = words[actionIndex] === "do" && words[actionIndex + 1] === "not";
+  if (hasNegativeDirective) actionIndex += 2;
+  if (hasPoliteOpener || hasNegativeDirective) {
+    return hasCompleteSpokenFormattingAction(words, actionIndex, hasCompleteEnding);
+  }
+  if (DIRECTIVE_ACTION_OPENERS.has(words[actionIndex])) {
+    return hasCompleteSpokenFormattingAction(words, actionIndex, hasCompleteEnding);
+  }
+
+  if (SPOKEN_FORMATTING_MODAL_AUXILIARIES.has(words[0]) && Boolean(words[1])) {
+    return hasCompleteSpokenFormattingAction(words, 2, hasCompleteEnding);
+  }
+
+  if (SPOKEN_FORMATTING_QUESTION_WORDS.has(words[0])) {
+    if (SPOKEN_FORMATTING_MODAL_AUXILIARIES.has(words[1])) {
+      const action = words[3] || "";
+      return (
+        words.length >= 4 &&
+        hasCompleteEnding &&
+        (!SPOKEN_FORMATTING_DIRECT_OBJECT_REQUIRED_ACTIONS.has(action) ||
+          ["what", "which", "who"].includes(words[0]) ||
+          hasExplicitSpokenFormattingDirectObject(words, 3))
+      );
+    }
+    if (SPOKEN_FORMATTING_FINITE_AUXILIARIES.has(words[1])) {
+      return words.length >= 3 && hasCompleteEnding;
+    }
+  }
+
+  if (["did", "do", "does"].includes(words[0]) && Boolean(words[1])) {
+    return hasCompleteSpokenFormattingAction(words, 2, hasCompleteEnding);
+  }
+
+  const finiteAuxiliaryIndex = words.findIndex((word) =>
+    SPOKEN_FORMATTING_FINITE_AUXILIARIES.has(word)
+  );
+  return (
+    finiteAuxiliaryIndex >= 0 &&
+    words.slice(finiteAuxiliaryIndex + 1).some((word) => Boolean(word)) &&
+    hasCompleteEnding
+  );
+};
+
+const hasPositiveSpokenFormattingCommandContext = (original, range) => {
+  const raw = String(original || "");
+  if (hasMetalinguisticSpokenFormattingContext(raw, range)) return false;
+
+  const prefix = raw.slice(0, range.start).trim();
+  const suffix = raw.slice(range.end).trim();
+  const prefixTokens = getRawLexicalTokenMatches(prefix);
+  const suffixTokens = getRawLexicalTokenMatches(suffix);
+
+  if (range.kind !== "new_line" && range.kind !== "new_paragraph") {
+    // Spoken punctuation is only unambiguous enough to remove when it closes a
+    // clause. Mid-clause occurrences are ordinary dictated terminology unless
+    // stronger structured input becomes available.
+    return (
+      suffixTokens.length === 0 && prefixTokens.length >= 2 && hasPositiveClosedClauseShape(prefix)
+    );
+  }
+
+  // A structural marker must visibly separate two substantial segments. The
+  // capitalised right edge is a conservative proxy for a new dictated block;
+  // ambiguous lower-case prose fails closed and retains the source text.
+  const rightFirstToken = suffixTokens[0]?.[0] || "";
+  return (
+    prefixTokens.length >= 2 &&
+    suffixTokens.length >= 2 &&
+    /^[\p{Lu}\p{N}]/u.test(rightFirstToken) &&
+    hasPositiveClosedClauseShape(prefix)
+  );
+};
+
+const hasOccurrenceAlignedFormattingBoundary = (
+  original,
+  cleaned,
+  comparisonOriginalRawTokens,
+  range
+) => {
+  const boundaryPattern = SPOKEN_FORMATTING_BOUNDARY_PATTERNS[range.kind];
+  if (!boundaryPattern || range.tokenIndexes.length === 0) return false;
+  if (!hasPositiveSpokenFormattingCommandContext(original, range)) return false;
+
+  const excludedIndexes = new Set(range.tokenIndexes);
+  const firstMarkerIndex = range.tokenIndexes[0];
+  const lastMarkerIndex = range.tokenIndexes[range.tokenIndexes.length - 1];
+  const leftSourceIndex = firstMarkerIndex - 1;
+  const rightSourceIndex = lastMarkerIndex + 1;
+  const cleanedMatches = getRawLexicalTokenMatches(cleaned);
+  let leftCleanedIndex = -1;
+  let rightCleanedIndex = -1;
+
+  if (leftSourceIndex >= 0) {
+    const leftWord = getSingleNormalizedWord(comparisonOriginalRawTokens[leftSourceIndex]);
+    if (!leftWord) return false;
+    const ordinal = getTokenOccurrenceOrdinal(
+      comparisonOriginalRawTokens,
+      leftSourceIndex,
+      leftWord,
+      excludedIndexes
+    );
+    leftCleanedIndex = findTokenOccurrenceIndex(cleanedMatches, leftWord, ordinal);
+    if (leftCleanedIndex < 0) return false;
+  }
+
+  if (rightSourceIndex < comparisonOriginalRawTokens.length) {
+    const rightWord = getSingleNormalizedWord(comparisonOriginalRawTokens[rightSourceIndex]);
+    if (!rightWord) return false;
+    const ordinal = getTokenOccurrenceOrdinal(
+      comparisonOriginalRawTokens,
+      rightSourceIndex,
+      rightWord,
+      excludedIndexes
+    );
+    rightCleanedIndex = findTokenOccurrenceIndex(cleanedMatches, rightWord, ordinal);
+    if (rightCleanedIndex < 0) return false;
+  }
+
+  if (leftCleanedIndex < 0 && rightCleanedIndex < 0) return false;
+  if (
+    leftCleanedIndex >= 0 &&
+    rightCleanedIndex >= 0 &&
+    rightCleanedIndex !== leftCleanedIndex + 1
+  ) {
+    return false;
+  }
+  if (leftCleanedIndex < 0 && rightCleanedIndex !== 0) return false;
+
+  const boundaryStart =
+    leftCleanedIndex >= 0
+      ? (cleanedMatches[leftCleanedIndex].index || 0) + cleanedMatches[leftCleanedIndex][0].length
+      : 0;
+  const boundaryEnd =
+    rightCleanedIndex >= 0
+      ? cleanedMatches[rightCleanedIndex].index || 0
+      : (cleanedMatches[leftCleanedIndex + 1]?.index ?? String(cleaned || "").length);
+  return boundaryPattern.test(String(cleaned || "").slice(boundaryStart, boundaryEnd));
+};
+
+const getAppliedSpokenFormattingRanges = (original, cleaned, comparisonOriginalRawTokens) =>
+  getAllowedSpokenFormattingRanges(original).filter((range) =>
+    hasOccurrenceAlignedFormattingBoundary(original, cleaned, comparisonOriginalRawTokens, range)
+  );
+
+const getAppliedSpokenFormattingWords = (ranges) =>
+  ranges.flatMap(({ text }) => getContentWordTokens(text));
+
+const getAppliedSpokenFormattingTokenIndexes = (ranges) => {
+  const indexes = new Set();
+  for (const range of ranges) {
+    for (const index of range.tokenIndexes) indexes.add(index);
+  }
+  return indexes;
+};
+
+const hasAppendedRequestOutput = (cleaned, requestPrefixWords) => {
+  if (requestPrefixWords.length === 0) return false;
+  const cleanedWordOccurrences = getRawLexicalTokenMatches(cleaned).flatMap((match) =>
+    getWords(match[0]).map((word) => ({
+      word,
+      end: (match.index || 0) + match[0].length,
+    }))
+  );
+  if (cleanedWordOccurrences.length < requestPrefixWords.length) return false;
+  if (!requestPrefixWords.every((word, index) => cleanedWordOccurrences[index]?.word === word)) {
+    return false;
+  }
+  if (cleanedWordOccurrences.length > requestPrefixWords.length) return true;
+
+  const retainedEnd = cleanedWordOccurrences[requestPrefixWords.length - 1]?.end || 0;
+  const rawSuffix = String(cleaned || "").slice(retainedEnd);
+  // Normal terminal punctuation is cleanup. A residual symbol (for example a
+  // check mark used as an answer) is model-added output even without a word.
+  return rawSuffix.replace(/[\s.!?,;:…'"“”‘’()[\]{}\-–—]/gu, "").length > 0;
 };
 
 const getAllowedStructuralRewriteWords = (original, cleaned) => {
@@ -575,14 +1440,15 @@ const getMarkerAttachmentOccurrences = (value, markers) => {
   return occurrences;
 };
 
-const attachmentAnchorsMatch = (left, right) =>
-  left === right ||
-  (Boolean(left) && Boolean(right) && areLikelyInflectionOrSpellingVariants(left, right));
+const attachmentAnchorsMatch = (left, right) => left === right;
 
 const countMarkerAttachmentChanges = (original, cleaned, markers) => {
   const originalOccurrences = getMarkerAttachmentOccurrences(original, markers);
   const cleanedOccurrences = getMarkerAttachmentOccurrences(cleaned, markers);
-  if (originalOccurrences.length === 0 || originalOccurrences.length !== cleanedOccurrences.length) {
+  if (
+    originalOccurrences.length === 0 ||
+    originalOccurrences.length !== cleanedOccurrences.length
+  ) {
     return 0;
   }
 
@@ -890,9 +1756,11 @@ const startsWithActionInstructionOrQuestion = (normalizedText) => {
 const startsWithThirdPersonCompletion = (rawText, normalizedText) => {
   if (THIRD_PERSON_COMPLETION.test(String(rawText || "").trim())) return true;
   const words = normalizedText.split(/\s+/).filter(Boolean);
-  return words.slice(1, 7).some(
-    (word) => word.endsWith("ed") || word.endsWith("en") || IRREGULAR_COMPLETION_VERBS.has(word)
-  );
+  return words
+    .slice(1, 7)
+    .some(
+      (word) => word.endsWith("ed") || word.endsWith("en") || IRREGULAR_COMPLETION_VERBS.has(word)
+    );
 };
 
 const isCompletionOrAnswerStyle = (rawText, normalizedText) =>
@@ -993,29 +1861,39 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   const normalizedCleaned = normalizeForComparison(cleaned);
   const explicitQuoteRewrite = SPOKEN_QUOTE_MARKER.test(original);
   const completedWorkflowRepair =
-    INCOMPLETE_WORKFLOW_PROGRESSION.test(original) &&
-    COMPLETED_WORKFLOW_PROGRESSION.test(cleaned);
+    INCOMPLETE_WORKFLOW_PROGRESSION.test(original) && COMPLETED_WORKFLOW_PROGRESSION.test(cleaned);
   const repairedRequestReason =
     /\?\s+because\b/i.test(original) && /\?\s+i\s+am\s+asking\s+because\b/i.test(cleaned);
-  const normalizedOriginalWords = getWords(original);
   const normalizedCleanedWords = getWords(cleaned);
-  const preferredSpellingTokens = getPreferredSpellingTokens(options.preferredSpellings);
-  const originalContentWords = getContentWords(original);
+  const preferredSpellingAlignment = getPreferredSpellingAlignment(
+    options.preferredSpellings,
+    original,
+    cleaned
+  );
+  // Compare phrase order against an occurrence-bound equivalent of the source.
+  // Otherwise an approved canonical spelling repair changes both adjacent
+  // bigrams and can look like a clause reorder to the attachment guard.
+  const comparisonOriginalWords = preferredSpellingAlignment.comparisonOriginalWords;
+  const appliedSpokenFormattingRanges = getAppliedSpokenFormattingRanges(
+    original,
+    cleaned,
+    preferredSpellingAlignment.comparisonOriginalRawTokens
+  );
+  const originalContentWords = new Set(comparisonOriginalWords.filter(isContentWord));
   const cleanedContentWords = getContentWords(cleaned);
+  const comparisonOriginalContentWords = new Set(comparisonOriginalWords.filter(isContentWord));
   const uniqueSemanticContentDiff = getSemanticContentDiff(
     originalContentWords,
-    cleanedContentWords,
-    preferredSpellingTokens
+    cleanedContentWords
   );
   const occurrenceSemanticContentDiff = getSemanticContentDiff(
-    normalizedOriginalWords,
-    normalizedCleanedWords,
-    preferredSpellingTokens
+    comparisonOriginalWords,
+    normalizedCleanedWords
   );
   const substantiveMissingWords = removeAllowedMissingWords(
     occurrenceSemanticContentDiff.missingWords,
     [
-      ...getAllowedSpokenFormattingWords(original),
+      ...getAppliedSpokenFormattingWords(appliedSpokenFormattingRanges),
       ...getAllowedStructuralRewriteWords(original, cleaned),
     ]
   );
@@ -1047,6 +1925,20 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   ) {
     reasons.push("request-execution-output");
   }
+  const originalIsDirectiveOrQuestion =
+    startsWithActionInstructionOrQuestion(normalizedOriginal) || original.includes("?");
+  const spokenFormattingTokenIndexes = getAppliedSpokenFormattingTokenIndexes(
+    appliedSpokenFormattingRanges
+  );
+  const requestPrefixWords = preferredSpellingAlignment.comparisonOriginalRawTokens
+    .filter((_token, index) => !spokenFormattingTokenIndexes.has(index))
+    .flatMap((token) => getWords(token));
+  if (originalIsDirectiveOrQuestion && hasAppendedRequestOutput(cleaned, requestPrefixWords)) {
+    // An answer appended after a faithfully retained request is still execution.
+    // Short/numeric suffixes are intentionally covered because semantic-word
+    // filters often omit exactly the model-added outputs "OK", "No", or "4".
+    reasons.push("request-execution-output");
+  }
   const approvedStructuralAddition =
     semanticContentDiff.missingCount === 0 &&
     semanticContentDiff.addedCount <= 2 &&
@@ -1070,12 +1962,8 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
 
   const protectedTechnicalTokens = getProtectedTechnicalTokens(original);
   const cleanedTechnicalTokens = new Set(tokenizeTechnicalText(cleaned));
-  const preferredSpellingSourceTokens = new Set(
-    occurrenceSemanticContentDiff.preferredSpellingCorrections.map(({ original }) => original)
-  );
   const missingProtectedTechnicalTokens = [...protectedTechnicalTokens].filter(
-    (token) =>
-      !cleanedTechnicalTokens.has(token) && !preferredSpellingSourceTokens.has(token)
+    (token) => !cleanedTechnicalTokens.has(token)
   );
   if (missingProtectedTechnicalTokens.length > 0) {
     reasons.push("technical-token-change");
@@ -1202,26 +2090,28 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   }
 
   const orderedBigramRetention = getOrderedBigramRetention(
-    normalizedOriginalWords,
+    comparisonOriginalWords,
     normalizedCleanedWords
   );
   let retainedContentWords = 0;
-  for (const word of originalContentWords) {
+  for (const word of comparisonOriginalContentWords) {
     if (cleanedContentWords.has(word)) retainedContentWords += 1;
   }
   let retainedCleanedContentWords = 0;
   for (const word of cleanedContentWords) {
-    if (originalContentWords.has(word)) retainedCleanedContentWords += 1;
+    if (comparisonOriginalContentWords.has(word)) retainedCleanedContentWords += 1;
   }
   const contentCoverage =
-    originalContentWords.size > 0 ? retainedContentWords / originalContentWords.size : 1;
+    comparisonOriginalContentWords.size > 0
+      ? retainedContentWords / comparisonOriginalContentWords.size
+      : 1;
   const contentPrecision =
     cleanedContentWords.size > 0
       ? retainedCleanedContentWords / cleanedContentWords.size
-      : originalContentWords.size === 0
+      : comparisonOriginalContentWords.size === 0
         ? 1
         : 0;
-  const missingContentWordCount = originalContentWords.size - retainedContentWords;
+  const missingContentWordCount = comparisonOriginalContentWords.size - retainedContentWords;
   const addedContentWordCount = cleanedContentWords.size - retainedCleanedContentWords;
   if (originalWords >= 20 && contentCoverage < 0.6) {
     reasons.push("low-content-word-coverage");
@@ -1264,8 +2154,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
       addedContentWordCount,
       semanticMissingContentWordCount: semanticContentDiff.missingCount,
       semanticAddedContentWordCount: semanticContentDiff.addedCount,
-      preferredSpellingCorrectionCount:
-        occurrenceSemanticContentDiff.preferredSpellingCorrections.length,
+      preferredSpellingCorrectionCount: preferredSpellingAlignment.corrections.length,
       orderedBigramRetention,
       criticalTokenCount: criticalTokens.length,
       missingCriticalTokenCount: missingCriticalTokens.length,

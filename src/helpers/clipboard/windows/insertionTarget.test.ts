@@ -90,6 +90,8 @@ describe("insertionTarget", () => {
     expect(script).not.toContain("ShowWindowAsync");
     expect(script).not.toContain("SW_RESTORE");
     expect(script).toContain("GetWindowThreadProcessId");
+    expect(script).toContain("AttachThreadInput");
+    expect(script).toContain("BringWindowToTop");
     expect(script).toContain('phase = "before_activation"');
     expect(script).toContain('"after_activation"');
     expect(runWindowsPowerShellScript.mock.calls[0].slice(1)).toEqual([

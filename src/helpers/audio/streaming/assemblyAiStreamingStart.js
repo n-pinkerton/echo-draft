@@ -37,8 +37,7 @@ const acquireMicrophoneForStartup = (constraints, startupController) =>
   new Promise((resolve, reject) => {
     const { signal } = startupController;
     let settled = false;
-    const cancellationError = () =>
-      signal.reason || new Error("Streaming startup was cancelled");
+    const cancellationError = () => signal.reason || new Error("Streaming startup was cancelled");
     const onAbort = () => {
       if (settled) return;
       settled = true;
@@ -89,10 +88,7 @@ export async function startStreamingRecording(manager, context = null) {
     ) {
       cancelStreamingStartup(
         manager,
-        createStartupCancellationError(
-          "Streaming startup timed out",
-          "STREAMING_START_TIMEOUT"
-        )
+        createStartupCancellationError("Streaming startup timed out", "STREAMING_START_TIMEOUT")
       );
     }
   }, STREAMING_STARTUP_TIMEOUT_MS);
@@ -125,7 +121,8 @@ export async function startStreamingRecording(manager, context = null) {
     // Run getUserMedia and WebSocket connect in parallel.
     // With warmup, WS resolves in ~5ms; getUserMedia (~500ms) dominates.
     const microphonePromise = acquireMicrophoneForStartup(constraints, startupController);
-    const backendPromise = manager.withSessionRefresh(async () => {
+    const backendPromise = manager.withSessionRefresh(
+      async () => {
         if (startupController.signal.aborted) {
           throw startupController.signal.reason || new Error("Streaming startup was cancelled");
         }
@@ -151,7 +148,9 @@ export async function startStreamingRecording(manager, context = null) {
           throw startupController.signal.reason || new Error("Streaming startup was cancelled");
         }
         return res;
-      }, { signal: startupController.signal });
+      },
+      { signal: startupController.signal }
+    );
     const [streamOutcome, resultOutcome] = await Promise.allSettled([
       microphonePromise,
       raceWithAbort(backendPromise, startupController.signal),
@@ -266,7 +265,7 @@ export async function startStreamingRecording(manager, context = null) {
     const partialCleanup = window.electronAPI.onAssemblyAiPartialTranscript((text) => {
       manager.streamingPartialText = text;
       try {
-        manager.onPartialTranscript?.(text);
+        manager.onPartialTranscript?.(text, manager.streamingContext);
       } catch (error) {
         logger.error(
           "onPartialTranscript handler failed",
@@ -284,7 +283,7 @@ export async function startStreamingRecording(manager, context = null) {
       manager.streamingFinalText = text;
       manager.streamingPartialText = "";
       try {
-        manager.onPartialTranscript?.(text);
+        manager.onPartialTranscript?.(text, manager.streamingContext);
       } catch (error) {
         logger.error(
           "onPartialTranscript handler failed",
@@ -304,6 +303,7 @@ export async function startStreamingRecording(manager, context = null) {
         {
           title: "Streaming Error",
           description: error,
+          context: manager.streamingContext,
         },
         error
       );
@@ -364,6 +364,7 @@ export async function startStreamingRecording(manager, context = null) {
         {
           title: errorTitle,
           description: errorDescription,
+          context,
         },
         effectiveError
       );

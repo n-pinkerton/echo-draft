@@ -9,6 +9,10 @@ const {
 } = require("../../../config/cleanupPolicy.cjs");
 const { requireLanguageCode } = require("../../../utils/languagePolicy.cjs");
 const {
+  MAX_USER_DICTIONARY_ENTRIES,
+  sanitizeLexicalDictionaryEntries,
+} = require("../../../utils/dictionaryLexicon.cjs");
+const {
   awaitWithSignal,
   createHardDeadline,
   readResponseTextBounded,
@@ -22,6 +26,22 @@ const ANTHROPIC_MODELS = new Set(
 );
 const ANTHROPIC_CLEANUP_SYSTEM_PROMPT = buildCleanupSystemPrompt("anthropic");
 
+const validateCleanupDictionaryEntries = (value, label) => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_USER_DICTIONARY_ENTRIES) {
+    throw new Error(`${label} cleanup dictionary is unsupported`);
+  }
+  const safeEntries = sanitizeLexicalDictionaryEntries(value, {
+    maxEntries: MAX_USER_DICTIONARY_ENTRIES,
+    maxEntryLength: 80,
+    maxWords: 1,
+  });
+  if (safeEntries.length !== value.length) {
+    throw new Error(`${label} cleanup dictionary contains unsupported entries`);
+  }
+  return safeEntries;
+};
+
 const validateAnthropicCleanupInput = (text, modelId, config = {}) => {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new Error("Invalid Anthropic cleanup options");
@@ -33,6 +53,7 @@ const validateAnthropicCleanupInput = (text, modelId, config = {}) => {
     "cleanupPromptMode",
     "reasoningEffort",
     "language",
+    "dictionaryEntries",
   ]);
   if (Object.keys(config).some((key) => !allowed.has(key))) {
     throw new Error("Anthropic cleanup options contain unsupported fields");
@@ -56,12 +77,9 @@ const validateAnthropicCleanupInput = (text, modelId, config = {}) => {
   if (!CLEANUP_PROMPT_MODES.has(mode)) {
     throw new Error("Anthropic cleanup mode is unsupported");
   }
-  const language = requireLanguageCode(
-    config.language,
-    { allowAuto: true },
-    "cleanup language"
-  );
-  const systemPrompt = buildCleanupSystemPrompt(model, mode, language);
+  const language = requireLanguageCode(config.language, { allowAuto: true }, "cleanup language");
+  const dictionaryEntries = validateCleanupDictionaryEntries(config.dictionaryEntries, "Anthropic");
+  const systemPrompt = buildCleanupSystemPrompt(model, mode, language, dictionaryEntries);
   return { model, maxTokens, temperature, systemPrompt, ...wrapped };
 };
 
@@ -96,26 +114,20 @@ function registerDictationKeyHandlers(
       "cleanupPromptMode",
       "reasoningEffort",
       "language",
+      "dictionaryEntries",
     ]);
     if (Object.keys(config).some((key) => !allowed.has(key))) {
       throw new Error("Local cleanup options contain unsupported fields");
     }
     const model = typeof modelId === "string" ? modelId.trim() : "";
-    if (
-      model.length < 1 ||
-      model.length > 200 ||
-      !/^[A-Za-z0-9._:/-]+$/.test(model)
-    ) {
+    if (model.length < 1 || model.length > 200 || !/^[A-Za-z0-9._:/-]+$/.test(model)) {
       throw new Error("Invalid reasoning model");
     }
     const wrapped = validateWrappedCleanupInput(text, model);
     const mode = config.cleanupPromptMode || "standard";
     if (!CLEANUP_PROMPT_MODES.has(mode)) throw new Error("Local cleanup mode is unsupported");
-    const language = requireLanguageCode(
-      config.language,
-      { allowAuto: true },
-      "cleanup language"
-    );
+    const language = requireLanguageCode(config.language, { allowAuto: true }, "cleanup language");
+    const dictionaryEntries = validateCleanupDictionaryEntries(config.dictionaryEntries, "Local");
     if (
       config.reasoningEffort !== undefined &&
       !new Set(["none", "low", "medium"]).has(config.reasoningEffort)
@@ -136,7 +148,7 @@ function registerDictationKeyHandlers(
       ...(Number.isFinite(contextSize)
         ? { contextSize: Math.max(512, Math.min(131_072, Math.round(contextSize))) }
         : {}),
-      systemPrompt: buildCleanupSystemPrompt(model, mode, language),
+      systemPrompt: buildCleanupSystemPrompt(model, mode, language, dictionaryEntries),
     };
   };
 

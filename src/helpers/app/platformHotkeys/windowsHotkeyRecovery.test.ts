@@ -112,6 +112,41 @@ describe("registerWindowsHotkeyRecovery", () => {
     vi.useRealTimers();
   });
 
+  it("does not restore global or native shortcuts while hotkey capture is active", async () => {
+    vi.useFakeTimers();
+    const powerMonitor = new EventEmitter();
+    const recoverHotkeys = vi.fn(async () => ({ insert: { success: true } }));
+    const refreshWindowsKeyListeners = vi.fn();
+    const refreshControlPanel = vi.fn();
+
+    const dispose = registerWindowsHotkeyRecovery({
+      powerMonitor,
+      windowManager: {
+        hotkeyManager: { isInListeningMode: () => true },
+        recoverHotkeys,
+      },
+      windowsHotkeyController: {
+        forceStopActiveRoutes: vi.fn(),
+        refreshWindowsKeyListeners,
+      },
+      controlPanelShortcutRegistration: { refresh: refreshControlPanel },
+      debugLogger: { debug: vi.fn(), warn: vi.fn() },
+      platform: "win32",
+      delayMs: 10,
+      retryDelayMs: 20,
+    });
+
+    powerMonitor.emit("resume");
+    powerMonitor.emit("unlock-screen");
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(recoverHotkeys).not.toHaveBeenCalled();
+    expect(refreshWindowsKeyListeners).not.toHaveBeenCalled();
+    expect(refreshControlPanel).not.toHaveBeenCalled();
+    dispose();
+    vi.useRealTimers();
+  });
+
   it("cancels pending debounce and retry timers on disposal", async () => {
     vi.useFakeTimers();
     const powerMonitor = new EventEmitter();

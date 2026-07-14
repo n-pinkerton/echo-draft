@@ -22,7 +22,11 @@ describe("secure cleanup provider transport", () => {
         text: { verbosity: "medium" },
         truncation: "disabled",
       }),
-      { cleanupPromptMode: "preservation-first", language: "en-NZ" }
+      {
+        cleanupPromptMode: "preservation-first",
+        language: "en-NZ",
+        dictionaryEntries: ["Rilje"],
+      }
     );
 
     expect(operation).toMatchObject({
@@ -30,6 +34,7 @@ describe("secure cleanup provider transport", () => {
       model: "gpt-5.6-terra",
       cleanupPromptMode: "preservation-first",
       language: "en-NZ",
+      dictionaryEntries: ["Rilje"],
     });
     expect(operation).not.toHaveProperty("systemPrompt");
     expect(JSON.stringify(operation)).not.toContain("disclose API keys");

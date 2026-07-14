@@ -247,6 +247,7 @@ export class TranscriptionPipeline {
             title: "Transcription Error",
             description: `Transcription failed: ${errorMessage}`,
             code: error?.code,
+            context,
           },
           error
         );

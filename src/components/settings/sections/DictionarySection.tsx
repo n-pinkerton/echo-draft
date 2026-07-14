@@ -5,6 +5,8 @@ import type { ConfirmDialogState } from "../../../hooks/useDialogs";
 import {
   dedupeDictionaryEntries,
   getFileNameFromPath,
+  MAX_STORED_DICTIONARY_ENTRIES,
+  MAX_USER_DICTIONARY_ENTRIES,
   normalizeDictionaryEntry,
   parseDictionaryEntries,
 } from "../dictionaryUtils";
@@ -39,21 +41,33 @@ export default function DictionarySection(props: Props) {
 
   const dictionaryBatchPreview = useMemo(() => {
     const parsedEntries = parseDictionaryEntries(dictionaryBatchText);
-    const uniqueWords = dedupeDictionaryEntries(parsedEntries);
+    const uniqueWords = dedupeDictionaryEntries(parsedEntries, Math.max(1, parsedEntries.length));
     const invalidEntriesRemoved = parsedEntries.filter(
       (entry) => normalizeDictionaryEntry(entry) === null
     ).length;
+    const currentKeys = new Set(customDictionary.map((word) => word.toLocaleLowerCase()));
+    const requestedImportCount =
+      dictionaryImportMode === "replace"
+        ? uniqueWords.length
+        : uniqueWords.filter((word) => !currentKeys.has(word.toLocaleLowerCase())).length;
+    const availableSlots =
+      dictionaryImportMode === "replace"
+        ? MAX_USER_DICTIONARY_ENTRIES
+        : Math.max(0, MAX_USER_DICTIONARY_ENTRIES - customDictionary.length);
+    const capacitySkipped = Math.max(0, requestedImportCount - availableSlots);
     return {
       parsedCount: parsedEntries.length,
       uniqueWords,
       uniqueWordsCount: uniqueWords.length,
+      importableCount: requestedImportCount - capacitySkipped,
+      capacitySkipped,
       duplicatesRemoved: Math.max(
         0,
         parsedEntries.length - uniqueWords.length - invalidEntriesRemoved
       ),
       invalidEntriesRemoved,
     };
-  }, [dictionaryBatchText]);
+  }, [customDictionary, dictionaryBatchText, dictionaryImportMode]);
 
   const handleAddDictionaryWord = useCallback(() => {
     const word = normalizeDictionaryEntry(newDictionaryWord);
@@ -66,9 +80,17 @@ export default function DictionarySection(props: Props) {
       return;
     }
     if (word) {
-      const nextWords = dedupeDictionaryEntries([...customDictionary, word]);
-      if (nextWords.length !== customDictionary.length) {
-        setCustomDictionary(nextWords);
+      const alreadyStored = customDictionary.some(
+        (entry) => entry.toLocaleLowerCase() === word.toLocaleLowerCase()
+      );
+      if (!alreadyStored && customDictionary.length >= MAX_USER_DICTIONARY_ENTRIES) {
+        toast({
+          title: "Dictionary limit reached",
+          description: `Remove a term before adding another. EchoDraft uses up to ${MAX_USER_DICTIONARY_ENTRIES} custom terms.`,
+          variant: "destructive",
+        });
+      } else if (!alreadyStored) {
+        setCustomDictionary(dedupeDictionaryEntries([...customDictionary, word]));
       }
       setNewDictionaryWord("");
     }
@@ -93,12 +115,30 @@ export default function DictionarySection(props: Props) {
     }
 
     const runImport = () => {
+      const availableSlots = Math.max(0, MAX_USER_DICTIONARY_ENTRIES - customDictionary.length);
+      const existingKeys = new Set(customDictionary.map((word) => word.toLocaleLowerCase()));
+      const mergeAdditions = batchWords
+        .filter((word) => !existingKeys.has(word.toLocaleLowerCase()))
+        .slice(0, availableSlots);
       const nextWords =
         dictionaryImportMode === "replace"
-          ? batchWords
-          : dedupeDictionaryEntries([...customDictionary, ...batchWords]);
+          ? dedupeDictionaryEntries(batchWords)
+          : dedupeDictionaryEntries(
+              [...customDictionary, ...mergeAdditions],
+              MAX_STORED_DICTIONARY_ENTRIES
+            );
 
       const addedCount = Math.max(0, nextWords.length - customDictionary.length);
+      const requestedNewCount = batchWords.filter(
+        (word) =>
+          !customDictionary.some(
+            (existing) => existing.toLocaleLowerCase() === word.toLocaleLowerCase()
+          )
+      ).length;
+      const capacityRemoved =
+        dictionaryImportMode === "merge"
+          ? Math.max(0, requestedNewCount - addedCount)
+          : Math.max(0, batchWords.length - nextWords.length);
       const replacedCount = customDictionary.length;
       setCustomDictionary(nextWords);
 
@@ -106,8 +146,8 @@ export default function DictionarySection(props: Props) {
         title: dictionaryImportMode === "replace" ? "Dictionary replaced" : "Dictionary merged",
         description:
           dictionaryImportMode === "replace"
-            ? `Replaced ${replacedCount} existing words with ${nextWords.length} imported words.`
-            : `Imported ${batchWords.length} words (${addedCount} new additions).`,
+            ? `Replaced ${replacedCount} existing words with ${nextWords.length} imported words${capacityRemoved ? `; ${capacityRemoved} skipped at the ${MAX_USER_DICTIONARY_ENTRIES}-term limit` : ""}.`
+            : `Merged ${batchWords.length} valid unique terms (${addedCount} new additions${capacityRemoved ? `; ${capacityRemoved} skipped at the ${MAX_USER_DICTIONARY_ENTRIES}-term limit` : ""}).`,
         variant: "success",
       });
     };
@@ -161,7 +201,7 @@ export default function DictionarySection(props: Props) {
 
       toast({
         title: "File imported",
-        description: `Loaded ${importedWords.length} valid unique terms from file${result.unsupportedRemoved ? `; skipped ${result.unsupportedRemoved} unsupported entries` : ""}.`,
+        description: `Loaded ${importedWords.length} valid unique terms from file${result.unsupportedRemoved ? `; skipped ${result.unsupportedRemoved} unsupported entries` : ""}${result.capacityRemoved ? `; skipped ${result.capacityRemoved} beyond the ${MAX_USER_DICTIONARY_ENTRIES}-term limit` : ""}.`,
         variant: "success",
       });
     } catch (error) {
@@ -238,6 +278,8 @@ export default function DictionarySection(props: Props) {
         preview={{
           parsedCount: dictionaryBatchPreview.parsedCount,
           uniqueWordsCount: dictionaryBatchPreview.uniqueWordsCount,
+          importableCount: dictionaryBatchPreview.importableCount,
+          capacitySkipped: dictionaryBatchPreview.capacitySkipped,
           duplicatesRemoved: dictionaryBatchPreview.duplicatesRemoved,
           invalidEntriesRemoved: dictionaryBatchPreview.invalidEntriesRemoved,
         }}

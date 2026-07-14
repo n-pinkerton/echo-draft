@@ -2,6 +2,7 @@ const { isTruthyFlag } = require("./utils/flags");
 const { CACHE_TTL_MS } = require("./clipboard/constants");
 const { getLinuxSessionInfo } = require("./clipboard/linuxSession");
 const {
+  isClipboardSnapshotRestorable,
   restoreClipboardSnapshot,
   scheduleClipboardRestore,
   snapshotClipboard,
@@ -32,6 +33,10 @@ const {
 const { pasteMacOS, pasteMacOSWithOsascript } = require("./clipboard/macos/macosPaste");
 const { pasteLinux } = require("./clipboard/linux/linuxPaste");
 const { checkPasteTools } = require("./clipboard/pasteTools");
+const {
+  WINDOWS_CLIPBOARD_RESTORE_PENDING,
+  retryPendingWindowsClipboardRestoration,
+} = require("./clipboard/windows/windowsClipboardRestore");
 const crypto = require("crypto");
 
 const INSERTION_TARGET_TTL_MS = 30 * 60 * 1000;
@@ -59,9 +64,10 @@ function resolveClipboardDeps(overrides = {}) {
   const spawn = deps.spawn || childProcess.spawn;
   const spawnSync = deps.spawnSync || childProcess.spawnSync;
 
-  const { killProcess } = deps.killProcess
-    ? { killProcess: deps.killProcess }
-    : require("../utils/process");
+  const processUtils = require("../utils/process");
+  const killProcess = deps.killProcess || processUtils.killProcess;
+  const terminateProcessTreeAndWait =
+    deps.terminateProcessTreeAndWait || processUtils.terminateProcessTreeAndWait;
 
   return {
     env,
@@ -72,6 +78,7 @@ function resolveClipboardDeps(overrides = {}) {
     spawn,
     spawnSync,
     killProcess,
+    terminateProcessTreeAndWait,
     fs: deps.fs || require("fs"),
     path: deps.path || require("path"),
     debugLogger: deps.debugLogger || require("./debugLogger"),
@@ -92,6 +99,8 @@ class ClipboardManager {
     this.fastPastePath = null;
     this.fastPasteChecked = false;
     this.insertionTargetCapabilities = new Map();
+    this.pasteQueue = Promise.resolve();
+    this.pendingWindowsClipboardRestoration = null;
   }
 
   _isWayland() {
@@ -157,11 +166,11 @@ class ClipboardManager {
   }
 
   restoreClipboardSnapshot(snapshot, webContents = null) {
-    restoreClipboardSnapshot(this, snapshot, webContents);
+    return restoreClipboardSnapshot(this, snapshot, webContents);
   }
 
-  scheduleClipboardRestore(snapshot, delayMs, webContents = null) {
-    scheduleClipboardRestore(this, snapshot, delayMs, webContents);
+  scheduleClipboardRestore(snapshot, delayMs, webContents = null, lease = {}) {
+    return scheduleClipboardRestore(this, snapshot, delayMs, webContents, lease);
   }
 
   runWindowsPowerShellScript(script, args = []) {
@@ -248,21 +257,49 @@ class ClipboardManager {
     }
   }
 
-  async pasteText(text, options = {}) {
+  pasteText(text, options = {}) {
+    const operation = this.pasteQueue.then(
+      () => this._pasteText(text, options),
+      () => this._pasteText(text, options)
+    );
+    this.pasteQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  async _pasteText(text, options = {}) {
     if (typeof text !== "string" || text.length > MAX_CLIPBOARD_TEXT_CHARS) {
       throw new Error("Clipboard text must be a string within the supported size limit.");
     }
     const startTime = Date.now();
     const platform = this.deps.platform;
     let method = "unknown";
+    let outcome;
     const webContents = options.webContents;
 
     try {
+      if (platform === "win32" && this.pendingWindowsClipboardRestoration) {
+        const pendingRestore = await retryPendingWindowsClipboardRestoration(this);
+        if (pendingRestore?.success === false) {
+          const error = new Error(
+            "EchoDraft is still protecting clipboard data from the previous insertion."
+          );
+          error.code = WINDOWS_CLIPBOARD_RESTORE_PENDING;
+          throw error;
+        }
+      }
       const originalClipboardSnapshot = this.snapshotClipboard();
       this.safeLog("💾 Saved original clipboard snapshot", {
         formats: originalClipboardSnapshot.formats.length,
         textLength: (originalClipboardSnapshot.text || "").length,
       });
+
+      if (platform === "win32" && !isClipboardSnapshotRestorable(originalClipboardSnapshot)) {
+        const error = new Error(
+          "EchoDraft left the clipboard unchanged because it contains Windows data that cannot be restored safely."
+        );
+        error.code = "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED";
+        throw error;
+      }
 
       if (platform === "linux" && this._isWayland()) {
         this._writeClipboardWayland(text, webContents);
@@ -287,7 +324,10 @@ class ClipboardManager {
         await this.pasteMacOS(originalClipboardSnapshot, options);
       } else if (platform === "win32") {
         method = "authenticated-send-input";
-        await this.pasteWindows(originalClipboardSnapshot, options);
+        outcome = await this.pasteWindows(originalClipboardSnapshot, {
+          ...options,
+          expectedClipboardText: text,
+        });
       } else {
         method = "linux-tools";
         await this.pasteLinux(originalClipboardSnapshot, options);
@@ -299,6 +339,7 @@ class ClipboardManager {
         elapsedMs: Date.now() - startTime,
         textLength: text.length,
       });
+      return outcome;
     } catch (error) {
       this.safeLog("❌ Paste operation failed", {
         platform,

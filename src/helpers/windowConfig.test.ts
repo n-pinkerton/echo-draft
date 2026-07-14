@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { WindowPositionUtil } from "./windowConfig.js";
+import { CONTROL_PANEL_CONFIG, MAIN_WINDOW_CONFIG, WindowPositionUtil } from "./windowConfig.js";
 
 const createWindow = () => ({
   isVisible: vi.fn(() => true),
@@ -11,6 +11,19 @@ const createWindow = () => ({
 });
 
 describe("WindowPositionUtil.setupAlwaysOnTop", () => {
+  it("keeps dictation capture responsive while another application has focus", () => {
+    expect(MAIN_WINDOW_CONFIG.webPreferences.backgroundThrottling).toBe(false);
+    expect(MAIN_WINDOW_CONFIG.focusable).toBe(false);
+  });
+
+  it("keeps the resizable control panel above a usable minimum size", () => {
+    expect(CONTROL_PANEL_CONFIG).toMatchObject({
+      resizable: true,
+      minWidth: 760,
+      minHeight: 600,
+    });
+  });
+
   it("uses the Windows pop-up-menu level", () => {
     const window = createWindow();
 

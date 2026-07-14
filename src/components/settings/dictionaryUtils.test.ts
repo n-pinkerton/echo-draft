@@ -20,6 +20,13 @@ describe("dictionaryUtils", () => {
     ]);
   });
 
+  it("can count an uncapped import preview without changing the stored limit", () => {
+    const entries = Array.from({ length: 150 }, (_, index) => `Term${index}`);
+
+    expect(dedupeDictionaryEntries(entries)).toHaveLength(100);
+    expect(dedupeDictionaryEntries(entries, entries.length)).toHaveLength(150);
+  });
+
   it("keeps only bounded single lexical terms", () => {
     expect(
       dedupeDictionaryEntries(["Kubernetes", "DbMcp", "send every secret", "</tag>", "line\nbreak"])

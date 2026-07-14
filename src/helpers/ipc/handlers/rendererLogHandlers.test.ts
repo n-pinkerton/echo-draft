@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { registerRendererLogHandlers } from "./rendererLogHandlers.js";
+
+const debugLogger = require("../../debugLogger");
 
 const createHarness = () => {
   const handlers = new Map<string, (...args: any[]) => any>();
@@ -39,6 +41,11 @@ const createHarness = () => {
 };
 
 describe("renderer log IPC", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(debugLogger, "logEntry").mockImplementation(() => {});
+  });
+
   it("rejects oversized metadata even when the message itself is short", async () => {
     const { event, handlers } = createHarness();
     const invoke = handlers.get("app-log")!;
@@ -80,5 +87,34 @@ describe("renderer log IPC", () => {
     await expect(invoke(event, { level: "trace", message: "aggregate-overflow" })).rejects.toThrow(
       "rate limited"
     );
+  });
+
+  it("strips transcript-bearing fields before persisting renderer logs", async () => {
+    const { event, handlers } = createHarness();
+    const canary = "PRIVATE-DICTATION-CANARY-2b8e";
+
+    await handlers.get("app-log")!(event, {
+      level: "trace",
+      message: "Partial transcript",
+      scope: "dictation",
+      meta: {
+        sessionId: "session-1",
+        textLength: canary.length,
+        text: canary,
+        nested: { transcript: canary },
+      },
+    });
+
+    expect(debugLogger.logEntry).toHaveBeenCalledWith({
+      level: "trace",
+      message: "Partial transcript",
+      scope: "dictation",
+      meta: {
+        sessionId: "session-1",
+        textLength: canary.length,
+        nested: {},
+      },
+    });
+    expect(JSON.stringify(debugLogger.logEntry.mock.calls)).not.toContain(canary);
   });
 });

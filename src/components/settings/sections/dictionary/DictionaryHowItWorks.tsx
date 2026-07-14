@@ -7,16 +7,19 @@ export default function DictionaryHowItWorks() {
       <SettingsPanel>
         <SettingsPanelRow>
           <p className="text-[12px] text-muted-foreground leading-relaxed">
-            Single words in your dictionary can be provided as lexical hints to transcription
-            engines that expose a safe structured hint field. This helps with uncommon names,
-            technical terms, and brands that are frequently misrecognized.
+            EchoDraft can use up to 100 saved words to help spell uncommon names, technical terms,
+            and brands. Supported transcription engines receive only those words in their dedicated
+            spelling-hint field. When you use your own API key for text cleanup, the cleanup model
+            can receive the same words as preferred spellings - for example, to correct a
+            final-vowel recognition error such as “Rilji” to your saved name “Rilje.”
           </p>
         </SettingsPanelRow>
         <SettingsPanelRow>
           <p className="text-[12px] text-muted-foreground leading-relaxed">
             <span className="font-medium text-foreground">Tip</span> — Add one term per entry, such
-            as "Synty" and "SyntyStudios". EchoDraft does not send dictionary text as a free-text
-            instruction to cloud models; unsupported providers simply transcribe without a hint.
+            as "Synty" and "SyntyStudios". Dictionary entries are never sent as instructions.
+            Providers without a spelling field simply transcribe without these hints, and managed
+            EchoDraft Cloud does not receive your private dictionary.
           </p>
         </SettingsPanelRow>
       </SettingsPanel>

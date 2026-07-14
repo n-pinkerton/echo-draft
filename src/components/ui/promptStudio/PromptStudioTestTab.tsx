@@ -6,6 +6,7 @@ import ReasoningService from "../../../services/ReasoningService";
 import { ReasoningCleanupService } from "../../../helpers/audio/reasoning/reasoningCleanupService";
 import { getModelProvider } from "../../../models/ModelRegistry";
 import logger from "../../../utils/logger";
+import { getCleanupResultNote } from "./cleanupResultNote";
 
 type ProviderConfig = {
   label: string;
@@ -104,17 +105,7 @@ export function PromptStudioTestTab({ managedByCloud, onCopyText }: PromptStudio
         true
       );
       setTestResult(result.text);
-      if (result.cleanup?.status === "fallback") {
-        setTestResultNote(
-          result.cleanup?.fallbackReason === "fidelity_rejected"
-            ? "Preservation checks rejected the rewrite and kept the original text."
-            : "Cleanup could not complete, so the original text was kept."
-        );
-      } else if (result.cleanup?.status === "unchanged") {
-        setTestResultNote("The production cleanup path found no safe wording change to apply.");
-      } else {
-        setTestResultNote("Processed with the same preservation and fidelity checks as dictation.");
-      }
+      setTestResultNote(getCleanupResultNote(result.cleanup));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error("PromptStudio test failed", { error: errorMessage }, "prompt-studio");
@@ -196,8 +187,8 @@ export function PromptStudioTestTab({ managedByCloud, onCopyText }: PromptStudio
           aria-describedby="cleanup-policy-test-help"
         />
         <p id="cleanup-policy-test-help" className="text-[10px] text-muted-foreground/60 mt-1.5">
-          Runs the production preservation and fidelity checks. Try a question or request to
-          confirm it is preserved instead of executed.
+          Runs the production preservation and fidelity checks. Try a question or request to confirm
+          it is preserved instead of executed.
         </p>
       </div>
 
@@ -209,7 +200,11 @@ export function PromptStudioTestTab({ managedByCloud, onCopyText }: PromptStudio
           className="w-full"
         >
           <Play className="w-3.5 h-3.5 mr-2" />
-          {managedByCloud ? "Unavailable in Managed Mode" : isLoading ? "Processing..." : "Run Test"}
+          {managedByCloud
+            ? "Unavailable in Managed Mode"
+            : isLoading
+              ? "Processing..."
+              : "Run Test"}
         </Button>
       </div>
 

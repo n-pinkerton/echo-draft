@@ -100,6 +100,7 @@ export class CloudTranscriber {
       const cloudReasoningMode = normalizeCloudMode(
         localStorage.getItem("cloudReasoningMode") || ECHO_DRAFT_CLOUD_MODE
       );
+      let attemptedManagedCleanupModel = null;
 
       try {
         if (cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE) {
@@ -130,6 +131,7 @@ export class CloudTranscriber {
           if (!reasonResult.text || !reasonResult.text.trim()) {
             throw new Error("Cloud reasoning returned an empty cleanup response.");
           }
+          attemptedManagedCleanupModel = reasonResult.model || null;
 
           if (typeof this.reasoningCleanupService?.validateCleanupCandidate !== "function") {
             throw new Error("Cleanup preservation validation is unavailable.");
@@ -146,7 +148,9 @@ export class CloudTranscriber {
             applied: true,
             status: processedText === rawText ? "unchanged" : "applied",
             fallbackReason: null,
-            model: reasonResult.model || null,
+            model: attemptedManagedCleanupModel,
+            appliedModel: attemptedManagedCleanupModel,
+            modelSource: "managed",
             provider: ECHO_DRAFT_CLOUD_SOURCE,
             retryCount: 0,
             metrics: validated.assessment.metrics,
@@ -193,6 +197,8 @@ export class CloudTranscriber {
               status: processedText === rawText ? "unchanged" : "applied",
               fallbackReason: null,
               model: reasoningModel,
+              appliedModel: result.appliedModel || reasoningModel,
+              modelSource: "selected",
               provider: localStorage.getItem("reasoningProvider") || "auto",
               retryCount: result.retryCount,
               metrics: result.assessment?.metrics || {},
@@ -228,11 +234,18 @@ export class CloudTranscriber {
             reasonError?.code === "CLEANUP_FIDELITY_REJECTED"
               ? "fidelity_rejected"
               : "provider_error",
-          model: managedCleanup ? null : localStorage.getItem("reasoningModel") || null,
+          model: managedCleanup
+            ? attemptedManagedCleanupModel
+            : localStorage.getItem("reasoningModel") || null,
+          appliedModel: null,
+          modelSource: managedCleanup ? "managed" : "selected",
           provider: managedCleanup
             ? ECHO_DRAFT_CLOUD_SOURCE
             : localStorage.getItem("reasoningProvider") || "auto",
-          retryCount: reasonError?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
+          retryCount: managedCleanup
+            ? 0
+            : Number(reasonError?.cleanupRetryCount) ||
+              (reasonError?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0),
           ...(reasonError?.assessment?.metrics ? { metrics: reasonError.assessment.metrics } : {}),
         };
         this.logger?.error?.(

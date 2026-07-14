@@ -1,5 +1,89 @@
 const { spawn } = require("child_process");
 
+const PROCESS_TERMINATION_TIMEOUT_MS = 3_000;
+
+const hasProcessExited = (proc) => !proc || proc.exitCode != null || proc.signalCode != null;
+
+function waitForProcessExit(proc, timeoutMs) {
+  if (hasProcessExited(proc)) return Promise.resolve(true);
+  if (typeof proc?.once !== "function") return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      proc.off?.("exit", onExit);
+      proc.off?.("close", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timeoutId = setTimeout(() => finish(false), timeoutMs);
+    proc.once("exit", onExit);
+    proc.once("close", onExit);
+  });
+}
+
+function waitForCommandExit(proc, timeoutMs) {
+  if (!proc || typeof proc.once !== "function") return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (success) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      proc.off?.("error", onError);
+      proc.off?.("close", onClose);
+      resolve(success);
+    };
+    const onError = () => finish(false);
+    const onClose = (code) => finish(code === 0);
+    const timeoutId = setTimeout(() => {
+      try {
+        proc.kill?.("SIGKILL");
+      } catch {}
+      finish(false);
+    }, timeoutMs);
+    proc.once("error", onError);
+    proc.once("close", onClose);
+  });
+}
+
+/**
+ * Requests process-tree termination and resolves only after the target child
+ * confirms exit, or false after the bounded confirmation deadline.
+ */
+async function terminateProcessTreeAndWait(proc, signal = "SIGKILL", options = {}) {
+  if (hasProcessExited(proc)) return true;
+
+  const timeoutMs =
+    Number.isFinite(Number(options.timeoutMs)) && Number(options.timeoutMs) > 0
+      ? Number(options.timeoutMs)
+      : PROCESS_TERMINATION_TIMEOUT_MS;
+  const platform = options.platform || process.platform;
+  const spawnImpl = options.spawnImpl || spawn;
+  const startedAt = Date.now();
+  const exitPromise = waitForProcessExit(proc, timeoutMs);
+
+  try {
+    if (platform === "win32" && signal === "SIGKILL") {
+      const taskkill = spawnImpl("taskkill", ["/pid", String(proc.pid), "/f", "/t"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      const elapsedMs = Date.now() - startedAt;
+      await waitForCommandExit(taskkill, Math.max(1, timeoutMs - elapsedMs));
+    } else {
+      proc.kill(signal);
+    }
+  } catch {
+    // Exit confirmation below is authoritative, including termination races.
+  }
+
+  return await exitPromise;
+}
+
 /**
  * Cross-platform process termination
  * Windows doesn't support SIGTERM/SIGKILL signals the same way Unix does
@@ -142,5 +226,7 @@ async function runCommand(cmd, args = [], options = {}) {
 module.exports = {
   runCommand,
   killProcess,
+  terminateProcessTreeAndWait,
+  PROCESS_TERMINATION_TIMEOUT_MS,
   TIMEOUTS,
 };

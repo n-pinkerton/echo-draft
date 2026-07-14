@@ -7,16 +7,41 @@ describe("ReasoningCleanupService", () => {
     localStorage.clear();
   });
 
-  it("returns normalized text when no reasoning model is selected", async () => {
+  it("preserves exact source text when requested cleanup is not configured", async () => {
     const reasoningService = { isAvailable: vi.fn(), processText: vi.fn() };
     const logger = { logReasoning: vi.fn() };
     const svc = new ReasoningCleanupService({ logger, reasoningService });
 
     localStorage.setItem("useReasoningModel", "true");
 
-    const out = await svc.processTranscription(" hello  ", "openai", null);
-    expect(out).toBe("hello");
+    const original = "  Keep Alpha — and Beta exactly.  ";
+    const out = await svc.processTranscriptionWithOutcome(original, "openai", null);
+    expect(out).toMatchObject({
+      text: original,
+      cleanup: { status: "fallback", fallbackReason: "not_configured" },
+    });
     expect(reasoningService.isAvailable).not.toHaveBeenCalled();
+    expect(reasoningService.processText).not.toHaveBeenCalled();
+  });
+
+  it("preserves exact source text when requested cleanup is unavailable", async () => {
+    const reasoningService = { isAvailable: vi.fn(async () => false), processText: vi.fn() };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+    const original = "  Keep Alpha — and Beta exactly.  ";
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: { status: "fallback", fallbackReason: "unavailable" },
+    });
     expect(reasoningService.processText).not.toHaveBeenCalled();
   });
 
@@ -58,7 +83,7 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
-  it("accepts a context-selected near-homophone repair from the trusted product glossary", async () => {
+  it("does not rewrite an ordinary lowercase word into a product name", async () => {
     const original = "Use the codecs agent to review the release note today.";
     const cleaned = "Use the Codex agent to review the release note today.";
     const reasoningService = {
@@ -74,8 +99,8 @@ describe("ReasoningCleanupService", () => {
     localStorage.setItem("reasoningProvider", "openai");
     localStorage.setItem("useReasoningModel", "true");
 
-    await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(cleaned);
-    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+    await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(original);
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
   it("does not let a user dictionary entry authorize a common-word substitution", async () => {
@@ -94,6 +119,267 @@ describe("ReasoningCleanupService", () => {
     localStorage.setItem("reasoningProvider", "openai");
     localStorage.setItem("useReasoningModel", "true");
     localStorage.setItem("customDictionary", JSON.stringify(["Farm"]));
+
+    await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(original);
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["The price is final.", "The prize is final."],
+    ["Use three samples.", "Use there samples."],
+  ])(
+    "strictly retries and preserves the exact source after a one-edit lexical substitution: %s",
+    async (original, changed) => {
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(
+          async (_text: string, _model: string, _agent: null, _options: Record<string, unknown>) =>
+            changed
+        ),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+
+      await expect(
+        svc.processTranscriptionWithOutcome(original, "openai", null)
+      ).resolves.toMatchObject({
+        text: original,
+        cleanup: {
+          status: "fallback",
+          fallbackReason: "fidelity_rejected",
+          retryCount: 1,
+        },
+      });
+      expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+      expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
+        cleanupPromptMode: "strict-preservation",
+      });
+    }
+  );
+
+  it("retries and falls back when a dictionary target would rename a different person", async () => {
+    const original = "Please ask Mary to review the release note today.";
+    const changed = "Please ask Mara to review the release note today.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(
+        async (_text: string, _model: string, _agent: null, _options: Record<string, unknown>) =>
+          changed
+      ),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("customDictionary", JSON.stringify(["Mara"]));
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: {
+        status: "fallback",
+        fallbackReason: "fidelity_rejected",
+        retryCount: 1,
+      },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+    expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
+      cleanupPromptMode: "strict-preservation",
+    });
+  });
+
+  it("accepts Rilje as a bounded dictionary-backed near-homophone correction", async () => {
+    const original = "Please ask Rilji to review the release note today.";
+    const cleaned = "Please ask Rilje to review the release note today.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => original),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
+
+    await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(cleaned);
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "Keep identifier RILJI unchanged.",
+    "Keep variable RilJi unchanged.",
+    "Please preserve the literal Rilji exactly.",
+    "Keep Rilji unchanged.",
+    "Leave Rilji exactly as written.",
+    "Do not alter Rilji.",
+    'Keep " Rilji " exactly.',
+    "Keep ` Rilji ` exactly.",
+    "Rilji is still the identifier.",
+    "Rilji remains an identifier.",
+    "Keep the identifier in this example set to Rilji.",
+    "Rilji should not be corrected.",
+    "Rilji should not be respelled.",
+    "Rilji should not be renamed.",
+    "Rilji shouldn't be corrected.",
+    "Rilji is not to be changed.",
+    "Rilji must never be renamed.",
+    "Rilji has not been respelled.",
+    "Call Rilji the identifier in this example.",
+    "Please call Rilji a literal token.",
+    "Show Rilji as the label in the interface.",
+  ])(
+    "keeps an unchanged provider result out of the Rilje alias in protected context: %s",
+    async (original) => {
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(async () => original),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+      localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
+
+      await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(original);
+      expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    ["Sushi is ready.", "Sushe"],
+    ["Bikini was approved.", "Bikine"],
+    ["Houdini reviewed the proposal.", "Houdine"],
+    ["Delhi remains available.", "Delhe"],
+    ["Sushi says fresh on the label.", "Sushe"],
+    ["Houdini says the render failed.", "Houdine"],
+  ])(
+    "does not apply a dictionary-shaped alias to a non-person subject: %s",
+    async (original, preferred) => {
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(async () => original),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+      localStorage.setItem("customDictionary", JSON.stringify([preferred]));
+
+      await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(original);
+      expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    ["Please read to Sam question mark", "Please read to Sam?"],
+    ["Can you explain to Sam question mark", "Can you explain to Sam?"],
+    ["Please write down for the team question mark", "Please write down for the team?"],
+    ["Can you pronounce for Sam question mark", "Can you pronounce for Sam?"],
+    ["Do you read to Sam question mark", "Do you read to Sam?"],
+    ["Did you write for the team question mark", "Did you write for the team?"],
+  ])(
+    "falls back when cleanup consumes a formatting phrase as a missing direct object: %s",
+    async (original, unsafe) => {
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(async () => unsafe),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+
+      await expect(
+        svc.processTranscriptionWithOutcome(original, "openai", null)
+      ).resolves.toMatchObject({
+        text: original,
+        cleanup: {
+          status: "fallback",
+          fallbackReason: "fidelity_rejected",
+          retryCount: 1,
+        },
+      });
+      expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each([
+    ["Please read this to Sam question mark", "Please read this to Sam?"],
+    ["Can you explain the issue to Sam question mark", "Can you explain the issue to Sam?"],
+    [
+      "Please write down the answer for the team question mark",
+      "Please write down the answer for the team?",
+    ],
+    ["Can you pronounce the name for Sam question mark", "Can you pronounce the name for Sam?"],
+    ["Do you read this to Sam question mark", "Do you read this to Sam?"],
+    [
+      "Did you write the answer for the team question mark",
+      "Did you write the answer for the team?",
+    ],
+    ["Should we proceed question mark", "Should we proceed?"],
+    ["Can we start question mark", "Can we start?"],
+    ["Will it work question mark", "Will it work?"],
+  ])("accepts complete spoken-formatting cleanup end to end: %s", async (original, cleaned) => {
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => cleaned),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(cleaned);
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects cleanup that changes an already-correct Rilje spelling", async () => {
+    const original = "Please ask Rilje to review the release note today.";
+    const changed = "Please ask Rilji to review the release note today.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => changed),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
 
     await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(original);
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
@@ -132,7 +418,7 @@ describe("ReasoningCleanupService", () => {
     localStorage.setItem("reasoningModel", "gpt-5.6-terra");
     localStorage.setItem("useReasoningModel", "true");
 
-    await expect(svc.processTranscription(" hello  ", "openai", null)).resolves.toBe("hello");
+    await expect(svc.processTranscription(" hello  ", "openai", null)).resolves.toBe(" hello  ");
   });
 
   it("normalizes banned dash characters in reasoning output", async () => {
@@ -228,9 +514,11 @@ describe("ReasoningCleanupService", () => {
 
   it("retries with strict preservation when the first cleanup over-summarises", async () => {
     const original =
-      "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about release.";
+      "please keep the Friday deadline the budget caveat the fallback owner the July pilot example and the unresolved security question before notifying both teams about release";
     const preserved =
-      "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about the release.";
+      "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about release.";
+    const sourceFormatted =
+      "Please keep the Friday deadline the budget caveat the fallback owner the July pilot example and the unresolved security question before notifying both teams about release";
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
       processText: vi
@@ -247,17 +535,58 @@ describe("ReasoningCleanupService", () => {
 
     const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
 
-    expect(result.text).toBe(preserved);
+    expect(result.text).toBe(sourceFormatted);
     expect(result.cleanup).toMatchObject({
       attempted: true,
       applied: true,
       status: "applied",
       retryCount: 1,
-      appliedModel: "gpt-5.6-sol",
+      appliedModel: "gpt-5.6-terra",
     });
-    expect(reasoningService.processText).toHaveBeenNthCalledWith(2, original, "gpt-5.6-sol", null, {
-      cleanupPromptMode: "strict-preservation",
-      reasoningEffort: "medium",
+    expect(reasoningService.processText).toHaveBeenNthCalledWith(
+      2,
+      original,
+      "gpt-5.6-terra",
+      null,
+      {
+        cleanupPromptMode: "strict-preservation",
+        reasoningEffort: "low",
+      }
+    );
+  });
+
+  it("keeps a token-locked retry when only the source has an incomplete workflow fragment", async () => {
+    const original =
+      "Keep doing the lightweight pass until review clears and then the final validation gates.";
+    const punctuationOnly =
+      "Keep doing the lightweight pass until review clears, and then the final validation gates.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce(punctuationOnly)
+        .mockResolvedValueOnce(punctuationOnly),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: {
+        applied: true,
+        status: "unchanged",
+        fallbackReason: null,
+        retryCount: 1,
+        appliedModel: "gpt-5.6-luna",
+      },
     });
   });
 
@@ -318,13 +647,19 @@ describe("ReasoningCleanupService", () => {
         status: "unchanged",
         applied: true,
         retryCount: 1,
-        appliedModel: "gpt-5.6-sol",
+        appliedModel: "gpt-5.6-luna",
       },
     });
-    expect(reasoningService.processText).toHaveBeenNthCalledWith(2, original, "gpt-5.6-sol", null, {
-      cleanupPromptMode: "strict-preservation",
-      reasoningEffort: "medium",
-    });
+    expect(reasoningService.processText).toHaveBeenNthCalledWith(
+      2,
+      original,
+      "gpt-5.6-luna",
+      null,
+      {
+        cleanupPromptMode: "strict-preservation",
+        reasoningEffort: "low",
+      }
+    );
   });
 
   it("retries technical-token rewrites and unjustified whole-output quotation", async () => {
@@ -356,13 +691,19 @@ describe("ReasoningCleanupService", () => {
         status: "unchanged",
         applied: true,
         retryCount: 1,
-        appliedModel: "gpt-5.6-sol",
+        appliedModel: "gpt-5.6-luna",
       },
     });
-    expect(reasoningService.processText).toHaveBeenNthCalledWith(2, original, "gpt-5.6-sol", null, {
-      cleanupPromptMode: "strict-preservation",
-      reasoningEffort: "medium",
-    });
+    expect(reasoningService.processText).toHaveBeenNthCalledWith(
+      2,
+      original,
+      "gpt-5.6-luna",
+      null,
+      {
+        cleanupPromptMode: "strict-preservation",
+        reasoningEffort: "low",
+      }
+    );
   });
 
   it("honors an explicit cleanup reasoning effort", async () => {
@@ -420,7 +761,7 @@ describe("ReasoningCleanupService", () => {
     );
   });
 
-  it("records a failed Sol rescue as an attempted retry", async () => {
+  it("records a failed selected-model retry as an attempted retry", async () => {
     const original =
       "Keep reference 42, preserve the budget caveat, retain the Friday deadline, name the fallback owner, and notify both teams before release.";
     const reasoningService = {
@@ -452,7 +793,32 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
-  it("rejects a Sol rescue when relation-marker wording changes", async () => {
+  it("preserves exact source punctuation and whitespace on provider fallback", async () => {
+    const original = "  Keep Alpha — and Beta exactly.  ";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => {
+        throw new Error("Provider unavailable");
+      }),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: { status: "fallback", fallbackReason: "provider_error" },
+    });
+  });
+
+  it("rejects a strict retry when relation-marker wording changes", async () => {
     const original =
       "Review the draft, then bring the wording back before making the change. Keep reference 42, the budget caveat, the customer example, the fallback owner, and the Friday deadline in the review, because both teams must approve the final wording before publication.";
     const rescued =
@@ -481,13 +847,9 @@ describe("ReasoningCleanupService", () => {
         retryCount: 1,
       },
     });
-    expect(logger.logReasoning).not.toHaveBeenCalledWith(
-      "REASONING_SOL_RESCUE_ACCEPTED",
-      expect.anything()
-    );
   });
 
-  it("rejects a Sol rescue that changes a sequenced action into an attached gerund", async () => {
+  it("rejects a strict retry that changes a sequenced action into an attached gerund", async () => {
     const original =
       "Pause and assess efficiency, delegation, and sprint size, and then use a risk-based approach until the final gate. Keep reference 42, the fallback owner, and the Friday deadline in the review.";
     const rescued =
@@ -520,7 +882,7 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
-  it("does not override an order-sensitive fidelity rejection after the Sol retry", async () => {
+  it("does not override an order-sensitive fidelity rejection after the strict retry", async () => {
     const original =
       "Review the alpha draft and archive the beta copy. Record the gamma note and retain the delta example. Verify the epsilon owner and preserve the zeta caveat. Notify the eta group and contact the theta team. Include the iota schedule and keep the kappa label.";
     const reordered =
@@ -552,11 +914,11 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
-  it("falls back when the strict Sol retry inserts unmatched explanatory wording", async () => {
+  it("falls back when the strict retry inserts one otherwise harmless function word", async () => {
     const original =
-      "Please keep the budget caveat, fallback owner, customer example, and Friday deadline in the release note.";
+      "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about release.";
     const inserted =
-      "Please keep the budget caveat, fallback owner, customer example, and Friday deadline, with added clarity, in the release note.";
+      "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about the release.";
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
       processText: vi
@@ -564,10 +926,8 @@ describe("ReasoningCleanupService", () => {
         .mockResolvedValueOnce("Keep the important details.")
         .mockResolvedValueOnce(inserted),
     };
-    const svc = new ReasoningCleanupService({
-      logger: { logReasoning: vi.fn() },
-      reasoningService,
-    });
+    const logger = { logReasoning: vi.fn() };
+    const svc = new ReasoningCleanupService({ logger, reasoningService });
 
     localStorage.setItem("reasoningModel", "gpt-5.6-luna");
     localStorage.setItem("reasoningProvider", "openai");
@@ -584,6 +944,13 @@ describe("ReasoningCleanupService", () => {
         retryCount: 1,
       },
     });
+    expect(logger.logReasoning).toHaveBeenCalledWith(
+      "REASONING_FIDELITY_REJECTED",
+      expect.objectContaining({
+        reasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
+        metrics: expect.objectContaining({ strictLexicalFirstMismatchIndex: expect.any(Number) }),
+      })
+    );
   });
 
   it("keeps an explicit request reason while repairing its sentence fragment", async () => {
@@ -613,7 +980,40 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(1);
   });
 
-  it("still rejects a Sol rescue that loses a critical literal", async () => {
+  it("checks the strict lexical contract after deterministic output repairs", async () => {
+    const original =
+      "Can you check whether the staging config differs? Because the new runner delegates tasks differently. Then tell me what you recommend.";
+    const retryBeforeRepair =
+      "Can you check whether the staging config differs? The new runner delegates tasks differently. Then tell me what you recommend.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("Please check the staging configuration and report back.")
+        .mockResolvedValueOnce(retryBeforeRepair),
+    };
+    const logger = { logReasoning: vi.fn() };
+    const svc = new ReasoningCleanupService({ logger, reasoningService });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: { status: "fallback", fallbackReason: "fidelity_rejected", retryCount: 1 },
+    });
+    expect(logger.logReasoning).toHaveBeenCalledWith(
+      "REASONING_FIDELITY_REJECTED",
+      expect.objectContaining({
+        reasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
+      })
+    );
+  });
+
+  it("still rejects a strict retry that loses a critical literal", async () => {
     const original =
       "Review reference 42, keep the budget caveat, retain the customer example, name the fallback owner, preserve the Friday deadline, and notify both teams before release.";
     const reasoningService = {
@@ -685,7 +1085,7 @@ describe("ReasoningCleanupService", () => {
 
   it("keeps the original and records a truthful fallback when both cleanup attempts lose content", async () => {
     const original =
-      "Keep reference 42, do not remove the budget caveat, preserve the Friday deadline, retain the July pilot example, and ask whether both teams approved release?";
+      "Keep reference 42 — do not remove the budget caveat, preserve the Friday deadline, retain the July pilot example, and ask whether both teams approved release?";
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
       processText: vi.fn(async () => "Release summary complete."),

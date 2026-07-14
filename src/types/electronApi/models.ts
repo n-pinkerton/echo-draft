@@ -20,6 +20,7 @@ export interface CleanupReasoningIpcOptions {
   cleanupPromptMode?: "standard" | "preservation-first" | "strict-preservation";
   reasoningEffort?: "none" | "low" | "medium";
   language?: string;
+  dictionaryEntries?: string[];
 }
 
 export interface ElectronAPIModels {

@@ -7,6 +7,7 @@ export const createAudioManagerCallbacks = (deps) => {
   const {
     activeSessionRef,
     audioManagerRef,
+    sessionsByIdRef,
     recordingSessionIdRef,
     removeJob,
     setIsProcessing,
@@ -38,14 +39,46 @@ export const createAudioManagerCallbacks = (deps) => {
         setPartialTranscript("");
       }
     },
-    onError: (error) => {
-      void playErrorCue?.();
-      activeSessionRef.current = null;
-      const wasRecording = Boolean(recordingSessionIdRef.current);
-      recordingSessionIdRef.current = null;
-      if (!wasRecording) {
+    onError: (error = {}) => {
+      const errorSessionId =
+        typeof error?.context?.sessionId === "string" && error.context.sessionId.trim()
+          ? error.context.sessionId.trim()
+          : null;
+      const recordingSessionId = recordingSessionIdRef.current;
+      const targetsActiveRecording = Boolean(
+        recordingSessionId && (!errorSessionId || errorSessionId === recordingSessionId)
+      );
+      const retiresUnqueuedRecording =
+        error.code === "RECORDER_STOP_TIMEOUT" && Boolean(errorSessionId);
+
+      if (!recordingSessionId || targetsActiveRecording) {
+        void playErrorCue?.();
+      }
+
+      if (retiresUnqueuedRecording) {
+        // A recorder-stop timeout never admitted audio to the processing FIFO.
+        // Retire only that session so it cannot remain as a ghost processing job
+        // in the tray or make a replacement dictation appear queued.
+        sessionsByIdRef?.current?.delete?.(errorSessionId);
+        removeJob?.(errorSessionId);
+      } else if (errorSessionId && !targetsActiveRecording) {
+        sessionsByIdRef?.current?.delete?.(errorSessionId);
+      }
+      if (
+        targetsActiveRecording ||
+        (!recordingSessionId &&
+          (!errorSessionId || activeSessionRef.current?.sessionId === errorSessionId))
+      ) {
+        activeSessionRef.current = null;
+      }
+      if (targetsActiveRecording) {
+        recordingSessionIdRef.current = null;
+      }
+
+      if (!recordingSessionId || targetsActiveRecording) {
         updateStage("error", {
           message: error.description || error.message || "An unknown error occurred",
+          ...(errorSessionId ? { sessionId: errorSessionId } : {}),
         });
       }
 
@@ -85,11 +118,13 @@ export const createAudioManagerCallbacks = (deps) => {
         const nextStatus =
           event.stage === "listening"
             ? "recording"
-            : event.stage === "cancelled"
-              ? "cancelled"
-              : event.stage === "error"
-                ? "error"
-                : "processing";
+            : event.stage === "queued"
+              ? "queued"
+              : event.stage === "cancelled"
+                ? "cancelled"
+                : event.stage === "error"
+                  ? "error"
+                  : "processing";
 
         const jobPatch = { status: nextStatus };
         if (jobIdFromEvent !== null) {
@@ -177,16 +212,27 @@ export const createAudioManagerCallbacks = (deps) => {
           event.transportRetrying !== undefined ? event.transportRetrying : prev.transportRetrying,
       }));
     },
-    onPartialTranscript: (text) => {
+    onPartialTranscript: (text, context = null) => {
+      const partialSessionId =
+        typeof context?.sessionId === "string" && context.sessionId.trim()
+          ? context.sessionId.trim()
+          : null;
+      if (
+        recordingSessionIdRef.current &&
+        partialSessionId &&
+        partialSessionId !== recordingSessionIdRef.current
+      ) {
+        return;
+      }
+
       setPartialTranscript(text);
 
       if (getRendererLogLevel() === "trace") {
         logger.trace(
           "Partial transcript",
           {
-            sessionId: recordingSessionIdRef.current,
+            sessionId: partialSessionId || recordingSessionIdRef.current,
             textLength: text.length,
-            text,
           },
           "dictation"
         );

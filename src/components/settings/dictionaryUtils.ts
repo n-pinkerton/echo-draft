@@ -1,8 +1,13 @@
-import { sanitizeLexicalDictionaryEntries } from "../../utils/dictionaryLexicon.cjs";
+import {
+  MAX_STORED_DICTIONARY_ENTRIES as SHARED_MAX_STORED_DICTIONARY_ENTRIES,
+  MAX_USER_DICTIONARY_ENTRIES as SHARED_MAX_USER_DICTIONARY_ENTRIES,
+  sanitizeLexicalDictionaryEntries,
+} from "../../utils/dictionaryLexicon.cjs";
 
 const DICTIONARY_SPLIT_REGEX = /[\n,;\t]+/g;
-const MAX_DICTIONARY_ENTRIES = 10_000;
 const MAX_DICTIONARY_ENTRY_LENGTH = 80;
+export const MAX_USER_DICTIONARY_ENTRIES = SHARED_MAX_USER_DICTIONARY_ENTRIES;
+export const MAX_STORED_DICTIONARY_ENTRIES = SHARED_MAX_STORED_DICTIONARY_ENTRIES;
 
 export const normalizeDictionaryEntry = (entry: string): string | null =>
   sanitizeLexicalDictionaryEntries([entry], {
@@ -17,9 +22,12 @@ export const parseDictionaryEntries = (input: string): string[] =>
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-export const dedupeDictionaryEntries = (entries: string[]): string[] =>
+export const dedupeDictionaryEntries = (
+  entries: string[],
+  maxEntries = MAX_USER_DICTIONARY_ENTRIES
+): string[] =>
   sanitizeLexicalDictionaryEntries(entries, {
-    maxEntries: MAX_DICTIONARY_ENTRIES,
+    maxEntries,
     maxEntryLength: MAX_DICTIONARY_ENTRY_LENGTH,
     maxWords: 1,
   });

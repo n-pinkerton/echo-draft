@@ -6,7 +6,7 @@ import { useHotkeyCapture } from "./hotkeyInput/useHotkeyCapture";
 
 export interface HotkeyInputProps {
   value: string;
-  onChange: (hotkey: string) => void;
+  onChange: (hotkey: string) => void | Promise<void>;
   onBlur?: () => void;
   disabled?: boolean;
   autoFocus?: boolean;
@@ -261,4 +261,3 @@ export function HotkeyInput({
 }
 
 export default HotkeyInput;
-

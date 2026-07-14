@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useTranscriptionSettings } from "./useTranscriptionSettings";
@@ -69,5 +69,22 @@ describe("useTranscriptionSettings custom endpoint approval", () => {
       "OAuth",
     ]);
     expect(setDictionary).toHaveBeenCalledWith(["Node.js", "OAuth"]);
+  });
+
+  it("preserves legacy dictionaries beyond the provider payload limit", async () => {
+    const legacyWords = Array.from({ length: 104 }, (_, index) => `Term${index + 1}`);
+    legacyWords.push("Benje");
+    localStorage.setItem("customDictionary", JSON.stringify(legacyWords));
+    const setDictionary = vi.fn(async () => ({}));
+    (window as any).electronAPI = {
+      getDictionary: vi.fn(async () => []),
+      setDictionary,
+    };
+
+    const { result } = renderHook(() => useTranscriptionSettings());
+
+    expect(result.current.customDictionary).toEqual(legacyWords);
+    expect(JSON.parse(localStorage.getItem("customDictionary") || "[]")).toEqual(legacyWords);
+    await waitFor(() => expect(setDictionary).toHaveBeenCalledWith(legacyWords));
   });
 });

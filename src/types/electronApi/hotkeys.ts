@@ -21,7 +21,33 @@ export interface ElectronAPIHotkeys {
     callback: (data: { hotkey: string; error: string; suggestions: string[] }) => void
   ) => () => void;
   onWindowsPushToTalkUnavailable?: (
-    callback: (data: { reason: string; message: string }) => void
+    callback: (data: {
+      reason?: string;
+      routeId?: "insert" | "clipboard";
+      fallbackActive?: boolean;
+      recoveryPending?: boolean;
+      recordingSafetyStopped?: boolean;
+      unavailableRoutes?: Array<{
+        reason?: string;
+        routeId?: "insert" | "clipboard";
+        fallbackActive?: boolean;
+        recoveryPending?: boolean;
+        recordingSafetyStopped?: boolean;
+      }>;
+    }) => void
+  ) => () => void;
+  onWindowsPushToTalkRecovered?: (
+    callback: (data: {
+      routeId?: "insert" | "clipboard";
+      remainingUnavailableRoutes?: Array<"insert" | "clipboard">;
+      remainingUnavailableRouteStates?: Array<{
+        reason?: string;
+        routeId?: "insert" | "clipboard";
+        fallbackActive?: boolean;
+        recoveryPending?: boolean;
+        recordingSafetyStopped?: boolean;
+      }>;
+    }) => void
   ) => () => void;
 
   // Windows Push-to-Talk notifications
@@ -29,4 +55,3 @@ export interface ElectronAPIHotkeys {
   notifyHotkeyChanged?: (hotkey: string) => void;
   notifyClipboardHotkeyChanged?: (hotkey: string) => void;
 }
-

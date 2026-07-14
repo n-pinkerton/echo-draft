@@ -95,10 +95,10 @@ describe("DictationQuickStart", () => {
       />
     );
 
-    expect(screen.getByText("Last cleanup was unavailable · original kept")).toBeInTheDocument();
+    expect(screen.getByText("Last cleanup request failed · original kept")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Configure AI cleanup. Last cleanup was unavailable · original kept",
+        name: "Configure AI cleanup. Last cleanup request failed · original kept",
       })
     ).toBeInTheDocument();
   });

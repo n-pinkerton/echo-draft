@@ -10,6 +10,62 @@ type ToastFn = (args: {
   duration?: number;
 }) => void;
 
+type CleanupSummary = {
+  requested?: boolean;
+  status?: string;
+  fallbackReason?: string | null;
+  retryCount?: number;
+} | null;
+
+export function getFileTranscriptionCompletionToast(cleanup: CleanupSummary) {
+  const fallback = Boolean(cleanup?.requested && cleanup.status === "fallback");
+  if (!fallback) {
+    return {
+      title: "Transcribed",
+      description: "Saved to history.",
+      variant: "success" as const,
+      duration: 2500,
+    };
+  }
+
+  if (cleanup?.fallbackReason === "fidelity_rejected") {
+    const retryAttempted = Number(cleanup.retryCount) > 0;
+    return {
+      title: "Transcribed · original preserved",
+      description: retryAttempted
+        ? "Both cleanup attempts failed preservation checks, so the original transcript was saved."
+        : "Cleanup failed preservation checks, so the original transcript was saved.",
+      variant: "default" as const,
+      duration: 5000,
+    };
+  }
+
+  if (cleanup?.fallbackReason === "not_configured") {
+    return {
+      title: "Transcribed · cleanup needs setup",
+      description: "Cleanup is not configured, so the original transcript was saved.",
+      variant: "default" as const,
+      duration: 5000,
+    };
+  }
+
+  if (cleanup?.fallbackReason === "unavailable") {
+    return {
+      title: "Transcribed · cleanup unavailable",
+      description: "The cleanup provider was unavailable, so the original transcript was saved.",
+      variant: "default" as const,
+      duration: 5000,
+    };
+  }
+
+  return {
+    title: "Transcribed · cleanup failed",
+    description: "The cleanup request failed, so the original transcript was saved.",
+    variant: "default" as const,
+    duration: 5000,
+  };
+}
+
 const createSessionId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -205,17 +261,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
             throw new Error("Saved transcription to history failed");
           }
 
-          const cleanupFallback = Boolean(
-            result.cleanup?.requested && result.cleanup?.status === "fallback"
-          );
-          toast({
-            title: cleanupFallback ? "Transcribed · original preserved" : "Transcribed",
-            description: cleanupFallback
-              ? "Cleanup was safely skipped and the original transcript was saved."
-              : "Saved to history.",
-            variant: cleanupFallback ? "default" : "success",
-            duration: cleanupFallback ? 5000 : 2500,
-          });
+          toast(getFileTranscriptionCompletionToast(result.cleanup));
 
           logger.info(
             "File transcription saved",

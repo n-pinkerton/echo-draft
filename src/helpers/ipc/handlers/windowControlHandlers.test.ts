@@ -76,10 +76,10 @@ describe("windowControlHandlers", () => {
   it("shows the click-through recording indicator only for the dictation renderer", () => {
     const harness = createHarness();
 
-    expect(harness.handles.get("show-recording-indicator")?.(harness.dictationEvent)).toEqual({
-      success: true,
-    });
-    expect(harness.windowManager.showRecordingIndicator).toHaveBeenCalledTimes(1);
+    expect(
+      harness.handles.get("show-recording-indicator")?.(harness.dictationEvent, "WITH_TOAST")
+    ).toEqual({ success: true });
+    expect(harness.windowManager.showRecordingIndicator).toHaveBeenCalledWith("WITH_TOAST");
     expect(() => harness.handles.get("show-recording-indicator")?.(harness.controlEvent)).toThrow(
       /renderer is not trusted/i
     );

@@ -88,13 +88,18 @@ describe("clipboardHandlers", () => {
 
   it("resolves the capability in main and strips unapproved paste options", async () => {
     const { handlers, sender, clipboardManager, opaqueTarget, target } = createHarness();
-    await handlers.get("paste-text")?.({ sender, senderFrame: sender.mainFrame }, "dictated text", {
-      sessionId: "session-1",
-      insertionTarget: opaqueTarget,
-      fromStreaming: true,
-      forged: "ignored",
-    });
+    const result = await handlers.get("paste-text")?.(
+      { sender, senderFrame: sender.mainFrame },
+      "dictated text",
+      {
+        sessionId: "session-1",
+        insertionTarget: opaqueTarget,
+        fromStreaming: true,
+        forged: "ignored",
+      }
+    );
 
+    expect(result).toEqual({ success: true });
     expect(clipboardManager.consumeInsertionTargetCapability).toHaveBeenCalledWith(opaqueTarget, {
       ownerId: 17,
       sessionId: "session-1",
@@ -106,8 +111,49 @@ describe("clipboardHandlers", () => {
     });
   });
 
-  it("rejects untrusted frames, stale capabilities, and oversized text", async () => {
+  it("returns a sanitized operational reason when authenticated insertion fails", async () => {
     const { handlers, sender, clipboardManager, opaqueTarget } = createHarness();
+    clipboardManager.pasteText.mockRejectedValueOnce(
+      Object.assign(new Error("private native detail"), {
+        code: "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED",
+      })
+    );
+
+    await expect(
+      handlers.get("paste-text")?.({ sender, senderFrame: sender.mainFrame }, "dictated text", {
+        sessionId: "session-1",
+        insertionTarget: opaqueTarget,
+      })
+    ).resolves.toEqual({
+      success: false,
+      errorCode: "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED",
+    });
+  });
+
+  it("reports insertion success separately from a clipboard-restoration warning", async () => {
+    const { handlers, sender, clipboardManager, opaqueTarget } = createHarness();
+    clipboardManager.pasteText.mockResolvedValueOnce({
+      success: true,
+      injected: true,
+      clipboardRestored: false,
+      warningCode: "WINDOWS_CLIPBOARD_RESTORE_FAILED",
+    });
+
+    await expect(
+      handlers.get("paste-text")?.({ sender, senderFrame: sender.mainFrame }, "dictated text", {
+        sessionId: "session-1",
+        insertionTarget: opaqueTarget,
+      })
+    ).resolves.toEqual({
+      success: true,
+      inserted: true,
+      clipboardRestored: false,
+      warningCode: "WINDOWS_CLIPBOARD_RESTORE_FAILED",
+    });
+  });
+
+  it("rejects untrusted frames and oversized text but structures trusted preflight failures", async () => {
+    const { handlers, sender, clipboardManager, windowManager, opaqueTarget } = createHarness();
     const foreignSender: any = { id: 99, getURL: () => "file:///foreign.html" };
 
     await expect(
@@ -118,19 +164,27 @@ describe("clipboardHandlers", () => {
       )
     ).rejects.toMatchObject({ code: "UNTRUSTED_RENDERER" });
 
-    clipboardManager.consumeInsertionTargetCapability.mockReturnValueOnce(null);
     await expect(
       handlers.get("paste-text")?.({ sender, senderFrame: sender.mainFrame }, "text", {
         fromStreaming: true,
       })
-    ).rejects.toMatchObject({ code: "MISSING_INSERTION_TARGET" });
+    ).resolves.toEqual({ success: false, errorCode: "MISSING_INSERTION_TARGET" });
 
+    windowManager.isIssuedDictationSession.mockReturnValueOnce(false);
     await expect(
       handlers.get("paste-text")?.({ sender, senderFrame: sender.mainFrame }, "text", {
         sessionId: "session-1",
         insertionTarget: opaqueTarget,
       })
-    ).rejects.toMatchObject({ code: "INVALID_INSERTION_TARGET" });
+    ).resolves.toEqual({ success: false, errorCode: "INVALID_INSERTION_SESSION" });
+
+    clipboardManager.consumeInsertionTargetCapability.mockReturnValueOnce(null);
+    await expect(
+      handlers.get("paste-text")?.({ sender, senderFrame: sender.mainFrame }, "text", {
+        sessionId: "session-1",
+        insertionTarget: opaqueTarget,
+      })
+    ).resolves.toEqual({ success: false, errorCode: "INVALID_INSERTION_TARGET" });
 
     await expect(
       handlers.get("write-clipboard")?.(

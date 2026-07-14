@@ -81,9 +81,13 @@ describe("recordingHandlers", () => {
   });
 
   it("stops streaming recording while lifecycle progress owns the stop cue", async () => {
+    let resolveFinalization!: (value: boolean) => void;
+    const finalization = new Promise<boolean>((resolve) => {
+      resolveFinalization = resolve;
+    });
     const audioManager = {
       getState: () => ({ isRecording: true, isStreaming: true, isProcessing: false }),
-      stopStreamingRecording: vi.fn(async () => true),
+      stopStreamingRecording: vi.fn(() => finalization),
       stopRecording: vi.fn(() => true),
     };
     const audioManagerRef = { current: audioManager };
@@ -110,9 +114,223 @@ describe("recordingHandlers", () => {
       upsertJob,
     });
 
-    await stop({ sessionId: "s-1" });
+    await expect(stop({ sessionId: "s-1" })).resolves.toBe(true);
 
     expect(audioManager.stopStreamingRecording).toHaveBeenCalled();
+    resolveFinalization(true);
+  });
+
+  it("releases the operation lane after streaming microphone closure, before finalization", async () => {
+    let resolveFinalization!: (value: boolean) => void;
+    const finalization = new Promise<boolean>((resolve) => {
+      resolveFinalization = resolve;
+    });
+    let state = {
+      isRecording: true,
+      isStreaming: true,
+      isProcessing: false,
+      queuedProcessingJobs: 0,
+    };
+    const startRecording = vi.fn(async () => {
+      state = { ...state, isRecording: true };
+      return true;
+    });
+    const audioManager = {
+      getState: () => state,
+      shouldUseStreaming: () => true,
+      stopStreamingRecording: vi.fn(() => {
+        state = { ...state, isRecording: false, isStreaming: false, isProcessing: true };
+        return finalization;
+      }),
+      stopRecording: vi.fn(),
+      startRecording,
+      startStreamingRecording: vi.fn(),
+    };
+    const activeSessionRef = {
+      current: { sessionId: "first", outputMode: "insert", triggeredAt: 1 } as any,
+    };
+    const recordingSessionIdRef = { current: "first" as string | null };
+    const normalizeTriggerPayload = (payload: any) => ({
+      outputMode: payload.outputMode || "insert",
+      sessionId: payload.sessionId,
+      triggeredAt: payload.triggeredAt || 1,
+    });
+    const common = {
+      activeSessionRef,
+      audioManagerRef: { current: audioManager },
+      normalizeTriggerPayload,
+      recordingSessionIdRef,
+      upsertJob: vi.fn(() => ({ jobId: 2 })),
+    };
+    const stop = createStopRecordingHandler({
+      ...common,
+      latestProgressRef: { current: { recordedMs: 500 } },
+    });
+    const start = createStartRecordingHandler({
+      ...common,
+      recordingStartedAtRef: { current: null },
+      removeJob: vi.fn(),
+      sessionStartedAtRef: { current: null },
+      sessionsByIdRef: { current: new Map() },
+      updateStage: vi.fn(),
+      playStartCue: vi.fn(),
+      electronAPI: { captureInsertionTarget: vi.fn(async () => ({ success: false })) },
+    });
+    const queue = createRecordingOperationQueue();
+
+    await queue.run(() => stop({ sessionId: "first" }));
+    await queue.run(() => start({ sessionId: "second", outputMode: "insert" }));
+
+    expect(startRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "second", outputMode: "insert" })
+    );
+    expect(audioManager.startStreamingRecording).not.toHaveBeenCalled();
+    resolveFinalization(true);
+  });
+
+  it("waits for a non-streaming recording to close and enqueue before starting the next", async () => {
+    let resolveClose!: (value: boolean) => void;
+    const closed = new Promise<boolean>((resolve) => {
+      resolveClose = resolve;
+    });
+    let state = { isRecording: true, isStreaming: false, isProcessing: false };
+    const startRecording = vi.fn(async () => {
+      state = { ...state, isRecording: true };
+      return true;
+    });
+    const audioManager = {
+      getState: () => state,
+      shouldUseStreaming: () => false,
+      stopRecordingAndWaitForClose: vi.fn(async () => {
+        const didClose = await closed;
+        state = { ...state, isRecording: false, isProcessing: true };
+        return didClose;
+      }),
+      stopRecording: vi.fn(),
+      stopStreamingRecording: vi.fn(),
+      startRecording,
+      startStreamingRecording: vi.fn(),
+    };
+    const activeSessionRef = {
+      current: { sessionId: "first", outputMode: "insert", triggeredAt: 1 } as any,
+    };
+    const recordingSessionIdRef = { current: "first" as string | null };
+    const normalizeTriggerPayload = (payload: any) => ({
+      outputMode: payload.outputMode || "insert",
+      sessionId: payload.sessionId,
+      triggeredAt: payload.triggeredAt || 1,
+    });
+    const common = {
+      activeSessionRef,
+      audioManagerRef: { current: audioManager },
+      normalizeTriggerPayload,
+      recordingSessionIdRef,
+      upsertJob: vi.fn(() => ({ jobId: 2 })),
+    };
+    const stop = createStopRecordingHandler({
+      ...common,
+      latestProgressRef: { current: { recordedMs: 500 } },
+    });
+    const start = createStartRecordingHandler({
+      ...common,
+      recordingStartedAtRef: { current: null },
+      removeJob: vi.fn(),
+      sessionStartedAtRef: { current: null },
+      sessionsByIdRef: { current: new Map() },
+      updateStage: vi.fn(),
+      playStartCue: vi.fn(),
+      electronAPI: { captureInsertionTarget: vi.fn(async () => ({ success: false })) },
+    });
+    const queue = createRecordingOperationQueue();
+
+    const stopPromise = queue.run(() => stop({ sessionId: "first" }));
+    const startPromise = queue.run(() =>
+      start({ sessionId: "second", outputMode: "insert", triggeredAt: 2 })
+    );
+    await Promise.resolve();
+    expect(startRecording).not.toHaveBeenCalled();
+
+    resolveClose(true);
+    await Promise.all([stopPromise, startPromise]);
+    expect(startRecording).toHaveBeenCalledOnce();
+  });
+
+  it("allows insert-mode recording during processing and queues it as non-streaming audio", async () => {
+    const startRecording = vi.fn(async () => true);
+    const startStreamingRecording = vi.fn(async () => true);
+    const audioManager = {
+      getState: () => ({
+        isRecording: false,
+        isStreaming: false,
+        isProcessing: true,
+        queuedProcessingJobs: 1,
+      }),
+      shouldUseStreaming: () => true,
+      startRecording,
+      startStreamingRecording,
+    };
+    const session = {
+      outputMode: "insert",
+      sessionId: "stacked-insert",
+      triggeredAt: 10,
+      insertionTarget: null,
+    };
+    const updateStage = vi.fn();
+    const start = createStartRecordingHandler({
+      activeSessionRef: { current: null },
+      audioManagerRef: { current: audioManager },
+      normalizeTriggerPayload: () => session,
+      recordingSessionIdRef: { current: null },
+      recordingStartedAtRef: { current: null },
+      removeJob: vi.fn(),
+      sessionStartedAtRef: { current: null },
+      sessionsByIdRef: { current: new Map() },
+      updateStage,
+      upsertJob: vi.fn(() => ({ jobId: 2 })),
+      playStartCue: vi.fn(),
+      electronAPI: { captureInsertionTarget: vi.fn(async () => ({ success: false })) },
+    });
+
+    await expect(start({ outputMode: "insert" })).resolves.toBe(true);
+
+    expect(startRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "stacked-insert", outputMode: "insert", jobId: 2 })
+    );
+    expect(startStreamingRecording).not.toHaveBeenCalled();
+    expect(updateStage).toHaveBeenCalledWith(
+      "listening",
+      expect.objectContaining({ message: "Previous dictation processing" })
+    );
+  });
+
+  it("marks a stopped insert-mode recording as queued behind active processing", async () => {
+    const audioManager = {
+      getState: () => ({ isRecording: true, isStreaming: false, isProcessing: true }),
+      stopStreamingRecording: vi.fn(),
+      stopRecording: vi.fn(() => true),
+    };
+    const upsertJob = vi.fn();
+    const stop = createStopRecordingHandler({
+      activeSessionRef: {
+        current: { sessionId: "stacked-insert", outputMode: "insert", triggeredAt: 1 },
+      },
+      audioManagerRef: { current: audioManager },
+      latestProgressRef: { current: { recordedMs: 1_250 } },
+      normalizeTriggerPayload: (payload: any) => ({
+        outputMode: payload.outputMode || "insert",
+        sessionId: payload.sessionId || "stacked-insert",
+        triggeredAt: payload.triggeredAt || 1,
+      }),
+      recordingSessionIdRef: { current: "stacked-insert" },
+      upsertJob,
+    });
+
+    await expect(stop({ sessionId: "fresh-toggle-id" })).resolves.toBe(true);
+
+    expect(upsertJob).toHaveBeenCalledWith(
+      "stacked-insert",
+      expect.objectContaining({ status: "queued", recordedMs: 1_250 })
+    );
   });
 
   it("preserves the active session when a tap stop payload has a fresh ID", async () => {
