@@ -47,6 +47,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 🧹 **Model Cleanup**: One-click removal of cached Whisper models with uninstall hooks to keep disks tidy
 - 🌐 **Cross-Platform**: Works on macOS, Windows, and Linux
 - ⚡ **Automatic Pasting**: Transcribed text automatically pastes at your cursor location
+- 🧵 **Stacked Dictation**: Start another recording while earlier audio is processing; jobs are delivered in recording order
 - 🧭 **Tray-First Interface**: Use the system tray icon for dictation status, last-copy actions, settings, and app access
 - 🔄 **OpenAI Responses API**: Using the latest Responses API for improved performance
 - 🛡️ **Preservation-First Cleanup**: Suspicious compression, changed polarity, missing literals, or assistant-style execution triggers a literal retry and safely falls back to the original text
@@ -320,6 +321,8 @@ npm run build:linux  # Linux
 4. **Text appears** - Transcribed text is automatically pasted at your cursor location, followed by a distinct completion chime
 5. **Use tray actions** - Click the tray icon to start clipboard dictation, copy the last dictation, open the Control Panel, or quit
 
+You can press the hotkey again and record another dictation while earlier audio is processing. EchoDraft queues complete recordings in order. In insertion mode each result is inserted sequentially into its captured application target; in clipboard mode each result replaces the clipboard when that job completes. A failed job is reported without discarding later queued work.
+
 ### Control Panel
 
 - **Access**: Click the tray icon, then choose **Open Control Panel**
@@ -348,13 +351,13 @@ EchoDraft uses a fixed, model-specific cleanup policy built in the trusted main 
 - Keeps questions, requests, caveats, examples, names, numbers, qualifiers, uncertainty, and polarity
 - Preserves model identifiers and file, folder, path, directory, and agent-related tokens instead of guessing a cleaner spelling
 - Adds quotation marks to explicit speech, not around an entire request merely because it reads like a message
-- Gives rejected OpenAI Luna or Terra output one strict Sol preservation retry before keeping the original text
-- Retries suspicious output conservatively and keeps the original transcript if preservation cannot be verified
+- Gives rejected OpenAI BYOK output one token-locked retry on the selected model and effort; the generated word sequence is checked before source-safe mechanics are accepted
+- Retries suspicious output conservatively and keeps the original wording if preservation cannot be verified; an independently verified dictionary-backed person-name spelling may still be retained
 
 **🤖 AI Provider Options**:
 
 - **OpenAI cleanup**: GPT-5.6 Terra, GPT-5.6 Luna, and GPT-5.6 Sol
-- **OpenAI GPT-5 reasoning**: Choose None (fastest), Low (recommended default), or Medium (most thorough) under _Settings → AI Text Enhancement_. Higher effort can help with complex wording but may take longer.
+- **OpenAI GPT-5 reasoning**: Choose None (recommended default for Luna), Low (more reasoning), or Medium (most thorough) under _Settings → AI Text Enhancement_. In the current real-audio Luna comparison, None matched Low on usable output quality and was materially faster. A rejected first pass can trigger one strict retry using the same selected model and effort.
 - **Anthropic**: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5
 - **Google**: Gemini 2.5 Pro/Flash/Flash-Lite
 - **Groq**: Ultra-fast Llama and Mixtral inference
@@ -374,7 +377,7 @@ Improve transcription accuracy for specific names and technical terms on support
 
 1. **Access Settings**: Open Control Panel → Settings → Custom Dictionary
 2. **Add Terms**: Enter one word, name, identifier, or technical token per entry
-3. **How It Works**: Supported engines receive terms through a structured lexical-hint field. EchoDraft never sends dictionary entries as a free-text cloud prompt; unsupported providers transcribe without dictionary hints.
+3. **How It Works**: EchoDraft sanitizes entries to single lexical terms. For OpenAI transcription, the trusted main process constructs a fixed lexical hint from those terms; supported non-OpenAI engines use their provider-specific hint field. BYOK cleanup receives only the sanitized spellings as trusted lexical data, allowing a tightly bounded final-`i` recognition variant to use a listed final-`e` person-name spelling only in clear name grammar while the fidelity guard prevents unrelated substitutions. Unsupported transcription providers transcribe without hints, and managed EchoDraft Cloud does not receive the private dictionary.
 
 **Examples of words to add**:
 
@@ -793,7 +796,7 @@ A: EchoDraft supports 58 languages including English, Spanish, French, German, C
 
 ## Project Status
 
-EchoDraft is actively maintained and ready for production use. Current version: 1.4.9
+EchoDraft is actively maintained and ready for production use. Current version: 1.4.10
 
 - ✅ Core functionality complete
 - ✅ Cross-platform support (macOS, Windows, Linux)

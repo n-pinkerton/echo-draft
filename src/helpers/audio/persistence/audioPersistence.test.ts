@@ -38,6 +38,8 @@ describe("audioPersistence", () => {
     await expect(safePasteWithResult(manager, "hello", {})).resolves.toEqual({
       success: false,
       errorCode: "WINDOWS_SECURE_PASTE_INPUT_LAYOUT_INVALID",
+      clipboardWriteCommitted: false,
+      clipboardRetained: false,
     });
   });
 
@@ -70,8 +72,18 @@ describe("audioPersistence", () => {
     await expect(
       Promise.all([safePasteWithResult({}, "first", {}), safePasteWithResult({}, "second", {})])
     ).resolves.toEqual([
-      { success: false, errorCode: "MISSING_INSERTION_TARGET" },
-      { success: false, errorCode: "INVALID_INSERTION_SESSION" },
+      {
+        success: false,
+        errorCode: "MISSING_INSERTION_TARGET",
+        clipboardWriteCommitted: false,
+        clipboardRetained: false,
+      },
+      {
+        success: false,
+        errorCode: "INVALID_INSERTION_SESSION",
+        clipboardWriteCommitted: false,
+        clipboardRetained: false,
+      },
     ]);
   });
 

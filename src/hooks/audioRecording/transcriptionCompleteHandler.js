@@ -8,33 +8,62 @@ const CLIPBOARD_PROTECTION_FAILURE_CODES = new Set([
   "WINDOWS_CLIPBOARD_RESTORE_PENDING",
 ]);
 
-export const getCleanupFallbackFeedback = (fallbackReason, retryCount = 0) => {
+export const getCleanupFallbackFeedback = (
+  fallbackReason,
+  retryCount = 0,
+  preferredSpellingCorrectionCount = 0
+) => {
+  const spellingCount = Math.max(0, Number(preferredSpellingCorrectionCount) || 0);
+  const appliedDictionarySpelling = spellingCount > 0;
+  const preservedDescription = appliedDictionarySpelling
+    ? `EchoDraft applied ${spellingCount === 1 ? "one" : spellingCount} verified dictionary ${
+        spellingCount === 1 ? "spelling" : "spellings"
+      } and otherwise kept the original transcript.`
+    : "EchoDraft kept every original word.";
+  const title = appliedDictionarySpelling
+    ? "Transcript preserved with dictionary spelling"
+    : "Original transcript preserved";
+
   if (fallbackReason === "fidelity_rejected") {
     const retryAttempted = Number(retryCount) > 0;
     return {
-      description: retryAttempted
-        ? "Both AI cleanup attempts failed preservation checks, so EchoDraft kept every original word."
-        : "AI cleanup failed preservation checks, so EchoDraft kept every original word.",
-      stageMessage: retryAttempted
-        ? "Original transcript used; neither cleanup attempt passed preservation checks."
-        : "Original transcript used; cleanup did not pass preservation checks.",
+      title,
+      description: `${
+        retryAttempted
+          ? "Both AI cleanup attempts failed preservation checks."
+          : "AI cleanup failed preservation checks."
+      } ${preservedDescription}`,
+      stageMessage: appliedDictionarySpelling
+        ? "Cleanup fallback used; verified dictionary spelling applied."
+        : retryAttempted
+          ? "Original transcript used; neither cleanup attempt passed preservation checks."
+          : "Original transcript used; cleanup did not pass preservation checks.",
     };
   }
   if (fallbackReason === "not_configured") {
     return {
-      description: "AI cleanup is not configured, so EchoDraft used the original transcript.",
-      stageMessage: "Original transcript used; cleanup needs setup.",
+      title,
+      description: `AI cleanup is not configured. ${preservedDescription}`,
+      stageMessage: appliedDictionarySpelling
+        ? "Cleanup needs setup; verified dictionary spelling applied."
+        : "Original transcript used; cleanup needs setup.",
     };
   }
   if (fallbackReason === "unavailable") {
     return {
-      description: "AI cleanup was unavailable, so EchoDraft used the original transcript.",
-      stageMessage: "Original transcript used; cleanup was unavailable.",
+      title,
+      description: `AI cleanup was unavailable. ${preservedDescription}`,
+      stageMessage: appliedDictionarySpelling
+        ? "Cleanup unavailable; verified dictionary spelling applied."
+        : "Original transcript used; cleanup was unavailable.",
     };
   }
   return {
-    description: "The AI cleanup request failed, so EchoDraft used the original transcript.",
-    stageMessage: "Original transcript used; cleanup request failed.",
+    title,
+    description: `The AI cleanup request failed. ${preservedDescription}`,
+    stageMessage: appliedDictionarySpelling
+      ? "Cleanup request failed; verified dictionary spelling applied."
+      : "Original transcript used; cleanup request failed.",
   };
 };
 
@@ -121,7 +150,11 @@ export const createTranscriptionCompleteHandler = (deps) => {
     const cleanup = result?.cleanup && typeof result.cleanup === "object" ? result.cleanup : null;
     const cleanupFallback = Boolean(cleanup?.requested && cleanup?.status === "fallback");
     const cleanupFallbackFeedback = cleanupFallback
-      ? getCleanupFallbackFeedback(cleanup?.fallbackReason, cleanup?.retryCount)
+      ? getCleanupFallbackFeedback(
+          cleanup?.fallbackReason,
+          cleanup?.retryCount,
+          cleanup?.metrics?.preferredSpellingCorrectionCount
+        )
       : null;
     logger.info(
       "Dictation transcription complete",
@@ -163,7 +196,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       if (cleanupFallback) {
         assertDeliveryActive();
         toast({
-          title: "Original transcript preserved",
+          title: cleanupFallbackFeedback.title,
           description: cleanupFallbackFeedback.description,
           variant: "default",
           duration: 5000,
@@ -224,6 +257,12 @@ export const createTranscriptionCompleteHandler = (deps) => {
           pasteResult?.inserted === true &&
           pasteResult?.clipboardRestored === false
         );
+        const transcriptAlreadyInClipboard = pasteResult?.clipboardRetained === true;
+        const clipboardChangedAfterPaste = Boolean(
+          !pasteSucceeded &&
+            pasteResult?.clipboardWriteCommitted === true &&
+            !transcriptAlreadyInClipboard
+        );
         if (clipboardRestoreWarning) {
           deliveryReasonCode = pasteResult?.warningCode || "WINDOWS_CLIPBOARD_RESTORE_FAILED";
         } else if (!pasteSucceeded) {
@@ -260,6 +299,26 @@ export const createTranscriptionCompleteHandler = (deps) => {
             description: restorationPending
               ? "EchoDraft will retry the previous clipboard recovery. This dictation remains in History."
               : "EchoDraft left your clipboard unchanged. Use Copy Last Dictation from the tray or History.",
+            variant: "default",
+            duration: 6000,
+          });
+        } else if (transcriptAlreadyInClipboard) {
+          clipboardSucceeded = true;
+          deliveryStatus = "clipboard_fallback";
+          deliveryError = "Automatic insertion failed; text was kept in the clipboard.";
+          toast({
+            title: "Insert failed—text kept in clipboard",
+            description: "Paste it manually with Ctrl+V.",
+            variant: "default",
+            duration: 5000,
+          });
+        } else if (clipboardChangedAfterPaste) {
+          deliveryStatus = "clipboard_changed";
+          deliveryError =
+            "Automatic insertion failed; EchoDraft preserved newer clipboard contents instead of overwriting them.";
+          toast({
+            title: "Insert failed—newer clipboard kept",
+            description: "This dictation remains in History and under Copy Last Dictation.",
             variant: "default",
             duration: 6000,
           });
@@ -535,6 +594,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
             : deliveryStatus === "clipboard_fallback" ||
                 deliveryStatus === "inserted_clipboard_warning" ||
                 deliveryStatus === "clipboard_protected" ||
+                deliveryStatus === "clipboard_changed" ||
                 !saveSucceeded ||
                 cleanupFallback
               ? "warning"
@@ -554,15 +614,17 @@ export const createTranscriptionCompleteHandler = (deps) => {
                   ? deliveryReasonCode === "WINDOWS_CLIPBOARD_RESTORE_PENDING"
                     ? "Insert paused; previous clipboard recovery is still pending."
                     : "Insert paused; existing clipboard left unchanged."
-                  : deliveryStatus === "failed"
-                    ? "Automatic text delivery failed."
-                    : saveSucceeded
-                      ? cleanupFallback
-                        ? cleanupFallbackFeedback.stageMessage
-                        : null
-                      : session.outputMode === "insert" && pasteSucceeded
-                        ? "Inserted, but history save failed."
-                        : "Saved to clipboard, but history save failed.",
+                  : deliveryStatus === "clipboard_changed"
+                    ? "Insert failed; newer clipboard contents preserved."
+                    : deliveryStatus === "failed"
+                      ? "Automatic text delivery failed."
+                      : saveSucceeded
+                        ? cleanupFallback
+                          ? cleanupFallbackFeedback.stageMessage
+                          : null
+                        : session.outputMode === "insert" && pasteSucceeded
+                          ? "Inserted, but history save failed."
+                          : "Saved to clipboard, but history save failed.",
           provider,
           model,
           generatedChars: result.text.length,
@@ -605,6 +667,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
           deliveryStatus === "clipboard_fallback" ||
           deliveryStatus === "inserted_clipboard_warning" ||
           deliveryStatus === "clipboard_protected" ||
+          deliveryStatus === "clipboard_changed" ||
           !saveSucceeded ||
           cleanupFallback
         ) {

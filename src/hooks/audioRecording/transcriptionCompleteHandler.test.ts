@@ -447,6 +447,59 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.playWarningCue).toHaveBeenCalledOnce();
   });
 
+  it("preserves newer clipboard content after a delayed insertion failure", async () => {
+    const safePasteWithResult = vi.fn(async () => ({
+      success: false,
+      errorCode: "WINDOWS_SECURE_PASTE_FOREGROUND_CHANGED_BEFORE_INJECTION",
+      clipboardWriteCommitted: true,
+      clipboardRetained: false,
+    }));
+    const harness = createDeliveryHarness({ outputMode: "insert", safePasteWithResult });
+
+    await harness.run();
+
+    expect(harness.writeClipboard).not.toHaveBeenCalled();
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
+      status: "delivery_issue",
+      pasteSucceeded: false,
+      clipboardSucceeded: false,
+      delivery: {
+        status: "clipboard_changed",
+        succeeded: false,
+        reasonCode: "WINDOWS_SECURE_PASTE_FOREGROUND_CHANGED_BEFORE_INJECTION",
+      },
+    });
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Insert failed—newer clipboard kept" })
+    );
+    expect(harness.updateStage).toHaveBeenCalledWith(
+      "warning",
+      expect.objectContaining({ message: "Insert failed; newer clipboard contents preserved." })
+    );
+    expect(harness.playWarningCue).toHaveBeenCalledOnce();
+  });
+
+  it("does not rewrite a transcript that the failed paste already retained", async () => {
+    const safePasteWithResult = vi.fn(async () => ({
+      success: false,
+      errorCode: "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED",
+      clipboardWriteCommitted: true,
+      clipboardRetained: true,
+    }));
+    const harness = createDeliveryHarness({ outputMode: "insert", safePasteWithResult });
+
+    await harness.run();
+
+    expect(harness.writeClipboard).not.toHaveBeenCalled();
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta.delivery).toMatchObject({
+      status: "clipboard_fallback",
+      succeeded: true,
+    });
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Insert failed—text kept in clipboard" })
+    );
+  });
+
   it("records successful insertion with a clipboard-restoration warning without copying again", async () => {
     const safePasteWithResult = vi.fn(async () => ({
       success: true,
@@ -857,5 +910,16 @@ describe("getCleanupFallbackFeedback", () => {
       description: expect.stringContaining("Both"),
       stageMessage: expect.stringContaining("neither"),
     });
+  });
+
+  it("truthfully describes a verified dictionary spelling retained during fallback", () => {
+    expect(getCleanupFallbackFeedback("fidelity_rejected", 1, 1)).toMatchObject({
+      title: "Transcript preserved with dictionary spelling",
+      description: expect.stringContaining("one verified dictionary spelling"),
+      stageMessage: expect.stringContaining("verified dictionary spelling applied"),
+    });
+    expect(getCleanupFallbackFeedback("fidelity_rejected", 1, 1).description).toContain(
+      "otherwise kept the original transcript"
+    );
   });
 });

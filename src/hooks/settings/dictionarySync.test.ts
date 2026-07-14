@@ -30,7 +30,7 @@ describe("syncDictionaryOnStartup", () => {
 
   it("seeds every valid legacy word beyond the provider payload limit", async () => {
     const legacyWords = Array.from({ length: 104 }, (_, index) => `Legacy${index + 1}`);
-    legacyWords.push("Benje");
+    legacyWords.push("Rilje");
     const setDictionary = vi.fn(async () => ({}));
 
     const result = await syncDictionaryOnStartup({

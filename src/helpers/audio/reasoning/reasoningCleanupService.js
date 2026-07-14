@@ -74,7 +74,7 @@ export class ReasoningCleanupService {
       typeof window !== "undefined" && window.localStorage
         ? localStorage.getItem("cleanupReasoningEffort") || ""
         : "";
-    return storedValue === "none" || storedValue === "medium" ? storedValue : "low";
+    return storedValue === "low" || storedValue === "medium" ? storedValue : "none";
   }
 
   _getPreferredSpellings() {
@@ -166,6 +166,32 @@ export class ReasoningCleanupService {
     const startTime = Date.now();
     const reasoningEffort = this._getReasoningEffort();
     const fidelityOptions = { preferredSpellings: this._getPreferredSpellings() };
+    const preferredSourceCandidate = applyTrustedPreferredSpellingAliases(
+      text,
+      text,
+      fidelityOptions.preferredSpellings
+    );
+    const preferredSourceAssessment = assessCleanupFidelity(
+      text,
+      preferredSourceCandidate,
+      fidelityOptions
+    );
+    // The alias helper itself is the authorization boundary: it only emits an
+    // occurrence-bound, dictionary-backed person-name spelling repair. Prepare
+    // that source before asking the model to edit it so ordinary punctuation or
+    // filler changes cannot make token-count alignment suppress the name fix.
+    const preparedText = preferredSourceAssessment.accepted ? preferredSourceCandidate : text;
+    const preparedCorrectionCount = preferredSourceAssessment.accepted
+      ? preferredSourceAssessment.metrics.preferredSpellingCorrectionCount || 0
+      : 0;
+    const includePreparedCorrectionMetrics = (assessment) => ({
+      ...assessment,
+      metrics: {
+        ...assessment.metrics,
+        preferredSpellingCorrectionCount:
+          (assessment.metrics.preferredSpellingCorrectionCount || 0) + preparedCorrectionCount,
+      },
+    });
     const signal = runtime?.signal || null;
     let retryAttempted = false;
     let attemptedRetryModel = null;
@@ -173,11 +199,11 @@ export class ReasoningCleanupService {
       throwIfTranscriptionCancelled(signal);
       const preferredSpellings = fidelityOptions.preferredSpellings;
       const firstResult = applyTrustedPreferredSpellingAliases(
-        text,
+        preparedText,
         repairCleanupOutput(
-          text,
+          preparedText,
           sanitizeProcessedText(
-            await this.reasoningService.processText(text, model, null, {
+            await this.reasoningService.processText(preparedText, model, null, {
               cleanupPromptMode: "preservation-first",
               reasoningEffort,
               ...(signal ? { signal } : {}),
@@ -187,7 +213,9 @@ export class ReasoningCleanupService {
         preferredSpellings
       );
       throwIfTranscriptionCancelled(signal);
-      const firstAssessment = assessCleanupFidelity(text, firstResult, fidelityOptions);
+      const firstAssessment = includePreparedCorrectionMetrics(
+        assessCleanupFidelity(preparedText, firstResult, fidelityOptions)
+      );
 
       if (firstAssessment.accepted) {
         const processingTimeMs = Date.now() - startTime;
@@ -221,9 +249,9 @@ export class ReasoningCleanupService {
       attemptedRetryModel = retryModel;
       throwIfTranscriptionCancelled(signal);
       const generatedRetryResult = repairCleanupOutput(
-        text,
+        preparedText,
         sanitizeProcessedText(
-          await this.reasoningService.processText(text, retryModel, null, {
+          await this.reasoningService.processText(preparedText, retryModel, null, {
             cleanupPromptMode: "strict-preservation",
             reasoningEffort: retryReasoningEffort,
             ...(signal ? { signal } : {}),
@@ -232,7 +260,7 @@ export class ReasoningCleanupService {
       );
       throwIfTranscriptionCancelled(signal);
       const generatedRetryLexicalAssessment = assessStrictCleanupLexicalFidelity(
-        text,
+        preparedText,
         generatedRetryResult,
         {
           language:
@@ -242,23 +270,29 @@ export class ReasoningCleanupService {
         }
       );
       const retryResult = generatedRetryLexicalAssessment.accepted
-        ? applyStrictCleanupTokensToOriginalPunctuation(text, generatedRetryResult, {
+        ? applyStrictCleanupTokensToOriginalPunctuation(preparedText, generatedRetryResult, {
             language:
               typeof localStorage !== "undefined"
                 ? localStorage.getItem("preferredLanguage") || "auto"
                 : "auto",
           })
         : generatedRetryResult;
-      const retrySemanticAssessment = assessCleanupFidelity(text, retryResult, fidelityOptions);
+      const retrySemanticAssessment = includePreparedCorrectionMetrics(
+        assessCleanupFidelity(preparedText, retryResult, fidelityOptions)
+      );
       // The strict retry is allowed to repair mechanics only. Enforce that
       // contract after sanitization and deterministic repairs so neither the
       // model nor a post-processor can silently add, remove, or reorder words.
-      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(text, retryResult, {
+      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(
+        preparedText,
+        retryResult,
+        {
         language:
           typeof localStorage !== "undefined"
             ? localStorage.getItem("preferredLanguage") || "auto"
             : "auto",
-      });
+        }
+      );
       // A token-locked retry cannot repair a source-inherent trailing workflow
       // fragment without violating its lexical contract. Once exact lexical
       // preservation is proven, keep the source-formatted result instead of
@@ -374,6 +408,7 @@ export class ReasoningCleanupService {
       status: requested ? "fallback" : "disabled",
       fallbackReason: requested ? null : "disabled",
       model: reasoningModel || null,
+      ...(reasoningModel ? { modelSource: "selected" } : {}),
       appliedModel: null,
       provider: reasoningProvider || "auto",
       retryCount: 0,
@@ -466,11 +501,47 @@ export class ReasoningCleanupService {
         fallbackToCleanup: true,
       });
 
+      const preferredSpellings = this._getPreferredSpellings();
+      const preferredFallbackCandidate = applyTrustedPreferredSpellingAliases(
+        sourceText,
+        sourceText,
+        preferredSpellings
+      );
+      const preferredFallbackAssessment = assessCleanupFidelity(
+        sourceText,
+        preferredFallbackCandidate,
+        { preferredSpellings }
+      );
+      const preferredFallbackText = preferredFallbackAssessment.accepted
+        ? preferredFallbackCandidate
+        : sourceText;
+      const preferredSpellingCorrectionCount =
+        preferredFallbackAssessment.accepted && preferredFallbackText !== sourceText
+          ? preferredFallbackAssessment.metrics.preferredSpellingCorrectionCount || 0
+          : 0;
+      const preferredSpellingApplied = preferredSpellingCorrectionCount > 0;
+      const errorMetrics = error?.assessment?.metrics || null;
+      const fallbackMetrics =
+        errorMetrics || preferredSpellingApplied
+          ? {
+              ...(errorMetrics || {}),
+              ...(preferredSpellingApplied
+                ? {
+                    preferredSpellingCorrectionCount: Math.max(
+                      errorMetrics?.preferredSpellingCorrectionCount || 0,
+                      preferredSpellingCorrectionCount
+                    ),
+                  }
+                : {}),
+            }
+          : null;
+
       return {
-        // Fallback means cleanup made no accepted change. Preserve the recognizer
-        // output byte-for-byte instead of running a sanitizer that can alter its
-        // punctuation (for example converting an em dash).
-        text: sourceText,
+        // Model cleanup made no accepted change. Preserve the recognizer output
+        // byte-for-byte except for an independently authorized, dictionary-backed
+        // person-name spelling repair. Do not run a general sanitizer here because
+        // it can alter punctuation (for example converting an em dash).
+        text: preferredSpellingApplied ? preferredFallbackText : sourceText,
         cleanup: {
           ...baseOutcome,
           attempted: true,
@@ -480,7 +551,8 @@ export class ReasoningCleanupService {
             error?.code === "CLEANUP_FIDELITY_REJECTED" ? "fidelity_rejected" : "provider_error",
           retryCount:
             error?.cleanupRetryCount === 1 || error?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
-          ...(error?.assessment?.metrics ? { metrics: error.assessment.metrics } : {}),
+          preferredSpellingApplied,
+          ...(fallbackMetrics ? { metrics: fallbackMetrics } : {}),
         },
       };
     }

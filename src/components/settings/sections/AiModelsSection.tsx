@@ -73,6 +73,10 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
   const isCloudMode = isSignedIn && cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE;
   const supportsCleanupReasoningEffort =
     reasoningProvider === "openai" && reasoningModel.startsWith("gpt-5");
+  const isLunaCleanupModel = reasoningModel === "gpt-5.6-luna";
+  const cleanupReasoningDescription = isLunaCleanupModel
+    ? "Controls cleanup and its one possible safety retry. None is recommended for Luna: current real-audio tests found the same usable output quality with materially lower latency. Low adds reasoning for harder wording. A safety retry is a second request using the same selected model and effort, so it can add latency and BYOK API usage."
+    : "Controls cleanup and its one possible safety retry. None is fastest, while Low adds reasoning for harder wording and Medium is the most thorough. A safety retry is a second request using the same selected model and effort, so it can add latency and BYOK API usage.";
 
   return (
     <div className="space-y-4">
@@ -84,8 +88,18 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
       {/* Enable toggle — always at top */}
       <SettingsPanel>
         <SettingsPanelRow>
-          <SettingsRow label="Enable text cleanup" description="AI improves transcription quality">
-            <Toggle checked={useReasoningModel} onChange={setUseReasoningModel} />
+          <SettingsRow
+            label="Enable text cleanup"
+            description="AI improves transcription quality"
+            controlId="enable-text-cleanup"
+          >
+            <Toggle
+              id="enable-text-cleanup"
+              checked={useReasoningModel}
+              onChange={setUseReasoningModel}
+              ariaLabel="Enable text cleanup"
+              ariaDescribedBy="enable-text-cleanup-description"
+            />
           </SettingsRow>
         </SettingsPanelRow>
       </SettingsPanel>
@@ -242,7 +256,7 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
                   <SettingsPanelRow>
                     <SettingsRow
                       label="Cleanup reasoning"
-                      description="Controls cleanup and its one possible safety retry. Low is recommended for reliability; None is faster but may preserve the original more often. A safety retry is a second request using the same selected model and effort, so it can add latency and BYOK API usage."
+                      description={cleanupReasoningDescription}
                       controlId="cleanup-reasoning-effort"
                     >
                       <select
@@ -255,8 +269,10 @@ export default function AiModelsSection(props: AiModelsSectionProps) {
                         }
                         className="h-9 min-w-[150px] rounded-lg border border-border bg-background px-3 text-xs font-medium text-foreground outline-none transition-colors focus:border-primary focus:ring-[3px] focus:ring-primary/15"
                       >
-                        <option value="none">None — fastest first pass</option>
-                        <option value="low">Low — recommended</option>
+                        <option value="none">
+                          {isLunaCleanupModel ? "None — recommended for Luna" : "None — fastest"}
+                        </option>
+                        <option value="low">Low — more reasoning</option>
                         <option value="medium">Medium — most thorough</option>
                       </select>
                     </SettingsRow>

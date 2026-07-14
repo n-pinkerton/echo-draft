@@ -134,6 +134,7 @@ describe("ClipboardManager", () => {
 
     expect(error.message).toMatch(/original app/i);
     expect(error.message).not.toMatch(/SecretApp|Private patient record|42|9/);
+    expect((error as any).clipboardWriteCommitted).toBe(true);
   });
 
   it("serializes stacked Windows insertions through clipboard restoration", async () => {

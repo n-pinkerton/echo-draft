@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 
 import AudioManager from "../../helpers/audioManager";
 import logger from "../../utils/logger";
+import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 
 type ToastFn = (args: {
   title: string;
@@ -15,6 +16,8 @@ type CleanupSummary = {
   status?: string;
   fallbackReason?: string | null;
   retryCount?: number;
+  preferredSpellingApplied?: boolean;
+  metrics?: Record<string, unknown>;
 } | null;
 
 export function getFileTranscriptionCompletionToast(cleanup: CleanupSummary) {
@@ -25,6 +28,16 @@ export function getFileTranscriptionCompletionToast(cleanup: CleanupSummary) {
       description: "Saved to history.",
       variant: "success" as const,
       duration: 2500,
+    };
+  }
+
+  if (cleanupAppliedPreferredSpelling(cleanup)) {
+    return {
+      title: "Transcribed · wording preserved",
+      description:
+        "Cleanup was not applied; the recognizer wording was saved with a verified dictionary spelling correction.",
+      variant: "default" as const,
+      duration: 5000,
     };
   }
 

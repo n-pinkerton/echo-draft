@@ -37,6 +37,7 @@ const createHarness = () => {
     issueInsertionTargetCapability: vi.fn(() => opaqueTarget),
     consumeInsertionTargetCapability: vi.fn(() => target),
     pasteText: vi.fn(async () => undefined),
+    readClipboard: vi.fn(async () => "dictated text"),
     writeClipboard: vi.fn(async () => ({ success: true })),
     checkPasteTools: vi.fn(() => ({ platform: "win32", available: true })),
     checkAccessibilityPermissions: vi.fn(async () => true),
@@ -116,6 +117,7 @@ describe("clipboardHandlers", () => {
     clipboardManager.pasteText.mockRejectedValueOnce(
       Object.assign(new Error("private native detail"), {
         code: "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED",
+        clipboardWriteCommitted: true,
       })
     );
 
@@ -127,6 +129,31 @@ describe("clipboardHandlers", () => {
     ).resolves.toEqual({
       success: false,
       errorCode: "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED",
+      clipboardWriteCommitted: true,
+      clipboardRetained: true,
+    });
+  });
+
+  it("reports when newer clipboard content replaced EchoDraft's failed-paste lease", async () => {
+    const { handlers, sender, clipboardManager, opaqueTarget } = createHarness();
+    clipboardManager.pasteText.mockRejectedValueOnce(
+      Object.assign(new Error("private native detail"), {
+        code: "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED",
+        clipboardWriteCommitted: true,
+      })
+    );
+    clipboardManager.readClipboard.mockResolvedValueOnce("newer user clipboard");
+
+    await expect(
+      handlers.get("paste-text")?.({ sender, senderFrame: sender.mainFrame }, "dictated text", {
+        sessionId: "session-1",
+        insertionTarget: opaqueTarget,
+      })
+    ).resolves.toEqual({
+      success: false,
+      errorCode: "WINDOWS_SECURE_PASTE_SEND_INPUT_FAILED",
+      clipboardWriteCommitted: true,
+      clipboardRetained: false,
     });
   });
 

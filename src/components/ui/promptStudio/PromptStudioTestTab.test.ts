@@ -41,4 +41,16 @@ describe("getCleanupResultNote", () => {
       getCleanupResultNote({ status: "fallback", fallbackReason: "provider_error" })
     ).toContain("request failed");
   });
+
+  it("describes a dictionary-only fallback without claiming the original was unchanged", () => {
+    const note = getCleanupResultNote({
+      status: "fallback",
+      fallbackReason: "provider_error",
+      preferredSpellingApplied: true,
+    });
+
+    expect(note).toContain("recognizer wording was kept");
+    expect(note).toContain("verified dictionary spelling correction");
+    expect(note).not.toContain("original text was kept");
+  });
 });

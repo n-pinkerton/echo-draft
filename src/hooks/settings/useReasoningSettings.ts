@@ -41,10 +41,10 @@ export function useReasoningSettings() {
   }, [reasoningProvider]);
 
   const [cleanupReasoningEffort, setCleanupReasoningEffort] =
-    useLocalStorage<CleanupReasoningEffort>("cleanupReasoningEffort", "low", {
+    useLocalStorage<CleanupReasoningEffort>("cleanupReasoningEffort", "none", {
       serialize: String,
       deserialize: (value) =>
-        value === "none" || value === "low" || value === "medium" ? value : "low",
+        value === "none" || value === "low" || value === "medium" ? value : "none",
     });
 
   const [cloudReasoningBaseUrl, setCloudReasoningBaseUrlStored] = useLocalStorage(

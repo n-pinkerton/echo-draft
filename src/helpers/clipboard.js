@@ -274,6 +274,7 @@ class ClipboardManager {
     const platform = this.deps.platform;
     let method = "unknown";
     let outcome;
+    let clipboardWriteCommitted = false;
     const webContents = options.webContents;
 
     try {
@@ -306,6 +307,7 @@ class ClipboardManager {
       } else {
         this.deps.clipboard.writeText(text);
       }
+      clipboardWriteCommitted = true;
       this.safeLog("📋 Text copied to clipboard", { textLength: text.length });
 
       if (platform === "darwin") {
@@ -341,13 +343,18 @@ class ClipboardManager {
       });
       return outcome;
     } catch (error) {
+      const pasteError = error instanceof Error ? error : new Error(String(error));
+      // The trusted IPC boundary uses this boolean to distinguish an immediate
+      // preflight failure from a delayed paste failure after EchoDraft leased
+      // the clipboard. Never attach clipboard contents to the error.
+      pasteError.clipboardWriteCommitted = clipboardWriteCommitted;
       this.safeLog("❌ Paste operation failed", {
         platform,
         method,
         elapsedMs: Date.now() - startTime,
-        error: error.message,
+        error: pasteError.message,
       });
-      throw error;
+      throw pasteError;
     }
   }
 

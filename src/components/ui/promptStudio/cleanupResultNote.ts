@@ -1,14 +1,20 @@
 import { getReasoningModelLabel } from "../../../models/ModelRegistry";
+import { cleanupAppliedPreferredSpelling } from "../../../utils/cleanupOutcome";
 
 type CleanupResultSummary = {
   status?: string;
   fallbackReason?: string | null;
   retryCount?: number;
   appliedModel?: string | null;
+  preferredSpellingApplied?: boolean;
+  metrics?: Record<string, unknown>;
 } | null;
 
 export function getCleanupResultNote(cleanup: CleanupResultSummary): string {
   if (cleanup?.status === "fallback") {
+    if (cleanupAppliedPreferredSpelling(cleanup)) {
+      return "Cleanup was not applied; the recognizer wording was kept with a verified dictionary spelling correction.";
+    }
     if (cleanup.fallbackReason === "fidelity_rejected") {
       return (cleanup.retryCount || 0) > 0
         ? "Both cleanup attempts failed preservation checks, so the original text was kept."

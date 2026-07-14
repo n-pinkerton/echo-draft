@@ -2363,7 +2363,7 @@ describe("authorized real-audio transcription and cleanup", () => {
       const apiKey = requireEnvironmentValue(environment, "OPENAI_API_KEY");
       const cleanupModel = environment.ECHODRAFT_REAL_AUDIO_CLEANUP_MODEL || "gpt-5.6-luna";
       const cleanupReasoningEffort =
-        environment.ECHODRAFT_REAL_AUDIO_CLEANUP_REASONING_EFFORT?.toLowerCase() || "low";
+        environment.ECHODRAFT_REAL_AUDIO_CLEANUP_REASONING_EFFORT?.toLowerCase() || "none";
       const { canonicalName, recognitionVariant } = getPreferredNameEvalCase();
       const storage = new MemoryStorage();
       Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
@@ -2447,7 +2447,7 @@ describe("authorized real-audio transcription and cleanup", () => {
       const { canonicalName, recognitionVariant } = getPreferredNameEvalCase();
       const transcriptionModel = getSelectedTranscriptionModel(environment);
       const requestedCleanupReasoningEffort =
-        environment.ECHODRAFT_REAL_AUDIO_CLEANUP_REASONING_EFFORT?.toLowerCase() || "low";
+        environment.ECHODRAFT_REAL_AUDIO_CLEANUP_REASONING_EFFORT?.toLowerCase() || "none";
       if (!["none", "low", "medium"].includes(requestedCleanupReasoningEffort)) {
         throw new Error("ECHODRAFT_REAL_AUDIO_CLEANUP_REASONING_EFFORT is invalid.");
       }

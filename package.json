@@ -1,7 +1,7 @@
 {
   "name": "echodraft",
   "productName": "EchoDraft",
-  "version": "1.4.9",
+  "version": "1.4.10",
   "description": "A desktop dictation application using whisper.cpp for speech-to-text transcription",
   "main": "main.js",
   "private": true,
@@ -48,7 +48,9 @@
     "preview": "cd src && vite preview",
     "clean": "node cleanup.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "smoke:windows-hotkey": "node scripts/smoke/windowsTapHotkey.live.cjs",
+    "smoke:windows-paste": "node scripts/smoke/runWindowsSecurePaste.live.cjs"
   },
   "keywords": [
     "dictation",

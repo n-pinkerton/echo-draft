@@ -49,6 +49,303 @@ describe("assessCleanupFidelity", () => {
     ).toBe("Ask rilji to brief Morgan today.");
   });
 
+  it("keeps repeated person and technical occurrences independently authorized", () => {
+    const original = "Email Rilji and set the variable Rilji to true.";
+    const preferredOnly = "Email Rilje and set the variable Rilji to true.";
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(
+      preferredOnly
+    );
+    expect(
+      assessCleanupFidelity(original, preferredOnly, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+    expect(
+      assessCleanupFidelity(original, "Email Rilje and set the variable Rilje to true.", {
+        preferredSpellings: ["Rilje"],
+      })
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+  });
+
+  it("does not let a non-governing directed verb clear technical occurrence context", () => {
+    const original = "Email Rilji, then set the variable and ask whether Rilji is true.";
+    const preferredOnly =
+      "Email Rilje, then set the variable and ask whether Rilji is true.";
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(
+      preferredOnly
+    );
+    expect(
+      assessCleanupFidelity(original, preferredOnly, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+    expect(
+      assessCleanupFidelity(
+        original,
+        "Email Rilje, then set the variable and ask whether Rilje is true.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+  });
+
+  it("does not treat a technical object called by a name as a person", () => {
+    const original = "Email Rilji, then set the variable called Rilji to true.";
+    const preferredOnly = "Email Rilje, then set the variable called Rilji to true.";
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(
+      preferredOnly
+    );
+    expect(
+      assessCleanupFidelity(original, preferredOnly, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+    expect(
+      assessCleanupFidelity(
+        original,
+        "Email Rilje, then set the variable called Rilje to true.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+  });
+
+  it("protects a technical object across a long called-name noun phrase", () => {
+    const original =
+      "Email Rilji, then check whether the variable used in production is called Rilji.";
+    const preferredOnly =
+      "Email Rilje, then check whether the variable used in production is called Rilji.";
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(
+      preferredOnly
+    );
+    expect(
+      assessCleanupFidelity(original, preferredOnly, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+    expect(
+      assessCleanupFidelity(
+        original,
+        "Email Rilje, then check whether the variable used in production is called Rilje.",
+        { preferredSpellings: ["Rilje"] }
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+  });
+
+  it.each([
+    "Update the variable, then call Rilji about the review.",
+    "Update the variable, so call Rilji about the review.",
+    "After checking the function, I called Rilji about the release.",
+    "After checking the function, my manager called Rilji.",
+    "After checking the method, Sarah from support called Rilji.",
+    "Sarah called Rilji about the review.",
+    "Call Rilji about the meeting with Sarah.",
+    "I called Rilji from home about the review.",
+    "Please call Rilji via Teams about the proposal.",
+    "I called Rilji from home about the API issue.",
+  ])("allows a new person-call action after technical context: %s", (original) => {
+    const expected = original.replace("Rilji", "Rilje");
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(expected);
+    expect(
+      assessCleanupFidelity(original, expected, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+  });
+
+  it("keeps a technical noun phrase blocked when call names the object", () => {
+    const original = "Set the variable we should call Rilji to true.";
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
+    expect(
+      assessCleanupFidelity(original, "Set the variable we should call Rilje to true.", {
+        preferredSpellings: ["Rilje"],
+      })
+    ).toMatchObject({
+      accepted: false,
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
+  it("does not treat bare then call inside a technical noun phrase as a new action", () => {
+    const original = "Set the variable we should then call Rilji to true.";
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
+    expect(
+      assessCleanupFidelity(original, "Set the variable we should then call Rilje to true.", {
+        preferredSpellings: ["Rilje"],
+      })
+    ).toMatchObject({
+      accepted: false,
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
+  it("does not inherit person authorization into a distant technical clause reference", () => {
+    const original =
+      "Email Rilji, then set the variable in production before mentioning Rilji.";
+    const expected =
+      "Email Rilje, then set the variable in production before mentioning Rilji.";
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(expected);
+    expect(
+      assessCleanupFidelity(original, expected, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+  });
+
+  it.each([
+    "Email Rilji, then set the password to Rilji.",
+    "Email Rilji, then switch the environment to Rilji.",
+    "Email Rilji, then use Rilji as the project codename.",
+    "Email Rilji. I'm happy to have Rilji as the password.",
+    "Email Rilji. I'm happy to have Rilji as the environment name.",
+    "Email Rilji. I'm happy to have Rilji as the project codename.",
+    "Email Rilji. Rilji responded to the API request with status 200.",
+    "Email Rilji. Rilji joined the cluster.",
+    "Email Rilji and copy the value to Rilji.",
+    "Email Rilji and move the endpoint to Rilji.",
+    "Email Rilji and forward packets to Rilji.",
+    "I talk with Rilji and bind network packets to Rilji.",
+  ])("requires person evidence before correcting a repeated literal value: %s", (original) => {
+    const firstOccurrenceOnly = original.replace("Rilji", "Rilje");
+    const bothOccurrences = original.replaceAll("Rilji", "Rilje");
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(
+      firstOccurrenceOnly
+    );
+    expect(
+      assessCleanupFidelity(original, firstOccurrenceOnly, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+    expect(
+      assessCleanupFidelity(original, bothOccurrences, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: false,
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 1 }),
+    });
+  });
+
+  it.each([
+    "After checking the function, Worker called Rilji with two arguments.",
+    "After checking the method, PowerShell called Rilji with the input.",
+    "Inside the function, we called Rilji with two arguments.",
+    "Inside the function, we called Rilji without arguments.",
+    "Inside the function, we called Rilji using the payload.",
+    "Inside the function, we called Rilji from the handler.",
+    "Inside the function, we called Rilji and awaited the result.",
+    "Inside the function, we called Rilji with a config object.",
+    "We called Rilji asynchronously using the payload.",
+    "We called Rilji twice without arguments.",
+    "We called Rilji and logged the response.",
+    "We called Rilji to inspect the response.",
+    "We called Rilji and checked the status.",
+    "We called Rilji, passing the payload.",
+    "We called Rilji, using the response object.",
+    "We called Rilji, quietly passing the payload.",
+    "We called Rilji, and asynchronously using the response object.",
+    "We called Rilji, supplying the payload.",
+    "We called Rilji, supplying opaque material, then talked about the review.",
+    "We called Rilji, supplying QX-17 and later talked about the review.",
+    "We called Rilji, supplying QX-17 after we talked about the review.",
+    "We called Rilji to inspect the response and logged notes about the review.",
+    "Inside the function, we called Rilji, then talked about the review.",
+    "Worker called Rilji to confirm the return value.",
+    "Inside the function, Worker called Rilji about the review.",
+    "Inside the function, we called the module with Rilji.",
+  ])("does not infer a human caller from capitalization alone: %s", (original) => {
+    const changed = original.replace("Rilji", "Rilje");
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
+    expect(
+      assessCleanupFidelity(original, changed, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: false,
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
+  it.each([
+    "The unit test expected Rilji but received another value.",
+    "The function expected Rilji as the return value.",
+    "Send Rilji to the API as the payload.",
+    "Send the request by pointing the endpoint to Rilji.",
+    "Send the configuration by mapping the environment to Rilji.",
+    "Send the request to copy the value to Rilji.",
+    "Through the API, send Rilji the report payload.",
+    "After checking the function, send Rilji the report payload.",
+    "In the function, notify Rilji with the payload.",
+    "In the handler, message Rilji with the response.",
+    "In the function, notify Rilji, passing the payload.",
+    "In the function, notify Rilji, sending the payload.",
+    "Notify Rilji, sending bytes.",
+    "Notify Rilji, sending opaque material, then talked about the review.",
+    "Message Rilji with the payload about the error.",
+    "Notify Rilji using the callback.",
+    "Through the API, send Rilji the report JSON.",
+    "Send Rilji the report bytes.",
+    "Send Rilji the report data.",
+    "From the API handler, send Rilji the report.",
+    "From the production API request handler this morning, send Rilji the report.",
+    "Inside the workflow, give Rilji the analysis.",
+    "After checking the function, send Rilji the report.",
+    "After updating the configuration, show Rilji the analysis.",
+    "Talk with the client and forward network packets to Rilji.",
+    "Speak with the customer and bind network traffic to Rilji.",
+    "Talk with the client and transmit network packets to Rilji.",
+    "Talk with the client and report network packets to Rilji.",
+    "Talk with the client and document system results to Rilji.",
+    "Talk with Sarah and Worker sends network packets to Rilji.",
+    "From the server, send Rilji the report.",
+    "Inside the service, give Rilji the analysis.",
+    "From the database, show Rilji the report.",
+  ])("keeps ambiguous technical verbs from authorizing a person alias: %s", (original) => {
+    const changed = original.replace("Rilji", "Rilje");
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
+    expect(
+      assessCleanupFidelity(original, changed, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: false,
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
   it.each([
     "Keep Rilji unchanged.",
     "Leave Rilji exactly as written.",
@@ -77,8 +374,73 @@ describe("assessCleanupFidelity", () => {
     ["I spoke with Rilji about the proposal.", "I spoke with Rilje about the proposal."],
     ["Rilji, please review the proposal.", "Rilje, please review the proposal."],
     ["Hello Rilji.", "Hello Rilje."],
+    [
+      "Whenever we refer to Rilji Patterson, use the full name.",
+      "Whenever we refer to Rilje Patterson, use the full name.",
+    ],
+    ["As I said to Rilji, I will reply soon.", "As I said to Rilje, I will reply soon."],
+    ["Analyse Rilji's report again.", "Analyse Rilje's report again."],
+    ["We should chat to Rilji about this.", "We should chat to Rilje about this."],
+    ["What are we expecting from Rilji?", "What are we expecting from Rilje?"],
+    [
+      "I should chat to Rilji about this. Rilji will join the meeting.",
+      "I should chat to Rilje about this. Rilje will join the meeting.",
+    ],
+    ["Ask Rilji to attend. Rilji said yes.", "Ask Rilje to attend. Rilje said yes."],
+    ["Please send the latest draft over to Rilji.", "Please send the latest draft over to Rilje."],
+    ["Send the quarterly update to Rilji.", "Send the quarterly update to Rilje."],
+    ["Send the completed report to Rilji.", "Send the completed report to Rilje."],
+    ["Send the approved draft to Rilji.", "Send the approved draft to Rilje."],
+    ["Send the onboarding documents to Rilji.", "Send the onboarding documents to Rilje."],
+    ["Send the exported figures to Rilji.", "Send the exported figures to Rilje."],
+    [
+      "Send the report from the meeting to Rilji.",
+      "Send the report from the meeting to Rilje.",
+    ],
+    [
+      "Send the message with the attachment to Rilji.",
+      "Send the message with the attachment to Rilje.",
+    ],
+    ["Send the article by Sarah to Rilji.", "Send the article by Sarah to Rilje."],
+    [
+      "Send the documents for Sarah and Morgan to Rilji.",
+      "Send the documents for Sarah and Morgan to Rilje.",
+    ],
+    [
+      "Send the Alice and Bob reports to Rilji.",
+      "Send the Alice and Bob reports to Rilje.",
+    ],
+    [
+      "Send the report through the secure channel to Rilji.",
+      "Send the report through the secure channel to Rilje.",
+    ],
+    ["Send Rilji a copy of the report.", "Send Rilje a copy of the report."],
+    ["Give Rilji a call about the review.", "Give Rilje a call about the review."],
+    ["I called Rilji, asking about the review.", "I called Rilje, asking about the review."],
+    ["Email Rilji. Rilji approved the draft.", "Email Rilje. Rilje approved the draft."],
+    ["Email Rilji. Rilji emailed back.", "Email Rilje. Rilje emailed back."],
+    [
+      "Email Rilji. Rilji confirmed the meeting.",
+      "Email Rilje. Rilje confirmed the meeting.",
+    ],
+    [
+      "Email Rilji. Rilji reviewed the proposal.",
+      "Email Rilje. Rilje reviewed the proposal.",
+    ],
+    [
+      "Email Rilji. Rilji attended the meeting.",
+      "Email Rilje. Rilje attended the meeting.",
+    ],
+    ["Email Rilji. Rilji called me back.", "Email Rilje. Rilje called me back."],
   ])("repairs Rilji only in positive person-name grammar: %s", (original, expected) => {
     expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(expected);
+  });
+
+  it.each([
+    "Please send the report and supporting notes to Rilji.",
+    "Please send the draft, notes, and summary to Rilji.",
+  ])("fails closed when lowercase coordination could start a new predicate: %s", (original) => {
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
   });
 
   it.each([
@@ -88,6 +450,8 @@ describe("assessCleanupFidelity", () => {
     ["Delhi remains available.", "Delhe"],
     ["Sushi says fresh on the label.", "Sushe"],
     ["Houdini says the render failed.", "Houdine"],
+    ["Sushi's flavor is fresh.", "Sushe"],
+    ["We were lucky to have Sushi with lunch.", "Sushe"],
   ])(
     "does not rewrite a non-person subject from dictionary shape alone: %s",
     (original, preferred) => {

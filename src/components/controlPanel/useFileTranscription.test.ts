@@ -29,6 +29,21 @@ describe("getFileTranscriptionCompletionToast", () => {
     });
   });
 
+  it("reports a verified dictionary correction without claiming the original was unchanged", () => {
+    const toast = getFileTranscriptionCompletionToast({
+      requested: true,
+      status: "fallback",
+      fallbackReason: "provider_error",
+      preferredSpellingApplied: true,
+    });
+
+    expect(toast).toMatchObject({
+      title: "Transcribed · wording preserved",
+      description: expect.stringContaining("verified dictionary spelling correction"),
+    });
+    expect(toast.description).not.toContain("original transcript");
+  });
+
   it.each([
     ["not_configured", "cleanup needs setup", "not configured"],
     ["unavailable", "cleanup unavailable", "provider was unavailable"],

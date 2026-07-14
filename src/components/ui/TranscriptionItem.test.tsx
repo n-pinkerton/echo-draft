@@ -138,6 +138,7 @@ describe("TranscriptionItem", () => {
               status: "applied",
               model: "gpt-5.6-luna",
               appliedModel: "gpt-5.6-sol",
+              modelSource: "selected",
               retryCount: 1,
             },
           }) as any
@@ -194,6 +195,35 @@ describe("TranscriptionItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     const cleanupStatus = screen.getByText(/Cleanup: applied/);
     expect(cleanupStatus).toHaveTextContent("Managed model: OpenAI GPT-5.6 Luna");
+    expect(cleanupStatus).not.toHaveTextContent("Selected:");
+  });
+
+  it("uses a neutral model label for legacy history without model provenance", () => {
+    render(
+      <TranscriptionItem
+        item={
+          makeItem("Legacy cleanup text", {
+            cleanup: {
+              requested: true,
+              attempted: true,
+              applied: true,
+              status: "applied",
+              model: "gpt-5.6-luna",
+            },
+          }) as any
+        }
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    const cleanupStatus = screen.getByText(/Cleanup: applied/);
+    expect(cleanupStatus).toHaveTextContent("Model: OpenAI GPT-5.6 Luna");
     expect(cleanupStatus).not.toHaveTextContent("Selected:");
   });
 
@@ -263,5 +293,71 @@ describe("TranscriptionItem", () => {
     const cleanupStatus = screen.getByText(/Cleanup: original transcript preserved/);
     expect(cleanupStatus).toHaveTextContent("Safety retry: not applied");
     expect(cleanupStatus).not.toHaveTextContent("Retry model: OpenAI GPT-5.6 Sol");
+  });
+
+  it("reports dictionary spelling repair without claiming the fallback was byte-identical", () => {
+    render(
+      <TranscriptionItem
+        item={
+          makeItem("Recognizer wording with corrected name", {
+            cleanup: {
+              requested: true,
+              attempted: true,
+              applied: false,
+              status: "fallback",
+              fallbackReason: "provider_error",
+              preferredSpellingApplied: true,
+              metrics: { preferredSpellingCorrectionCount: 1 },
+            },
+          }) as any
+        }
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Wording kept · dictionary spelling")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByText(/Cleanup: recognizer wording preserved/)).toHaveTextContent(
+      "verified dictionary spelling applied"
+    );
+    expect(screen.queryByText(/Cleanup: original transcript preserved/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["inserted_clipboard_warning", "Inserted · clipboard recovery"],
+    ["clipboard_protected", "Insert paused · clipboard protected"],
+    ["clipboard_changed", "Insert failed · newer clipboard kept"],
+  ])("explains the %s delivery state in history", (deliveryStatus, badge) => {
+    render(
+      <TranscriptionItem
+        item={
+          makeItem("Original raw text", {
+            status: "delivery_issue",
+            delivery: {
+              status: deliveryStatus,
+              succeeded: false,
+              reasonCode: "WINDOWS_CLIPBOARD_RESTORE_PENDING",
+            },
+          }) as any
+        }
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(badge)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByText("Delivery")).toBeInTheDocument();
+    expect(screen.getByText("Delivery reason")).toBeInTheDocument();
+    expect(screen.getByText("WINDOWS_CLIPBOARD_RESTORE_PENDING")).toBeInTheDocument();
   });
 });

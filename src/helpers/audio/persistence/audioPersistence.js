@@ -10,7 +10,12 @@ export async function safePasteWithResult(_manager, text, options = {}) {
         { errorCode: code },
         "paste"
       );
-      return { success: false, errorCode: code };
+      return {
+        success: false,
+        errorCode: code,
+        clipboardWriteCommitted: result?.clipboardWriteCommitted === true,
+        clipboardRetained: result?.clipboardRetained === true,
+      };
     }
     return {
       success: true,

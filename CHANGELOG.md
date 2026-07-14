@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.10] - 2026-07-14
+
+### Added
+
+- **Stacked Dictation**: Lets a new recording start while earlier audio is still processing, then transcribes and delivers every job in recording order for both automatic insertion and clipboard modes. The recording indicator and tray show queued work, and one failed job no longer drops later dictations.
+
+### Fixed
+
+- **Focus-Safe Windows Hotkeys**: Uses Windows' registered-hotkey path with repeat suppression for tap-to-toggle shortcuts, so changing focus—including to a higher-integrity window—cannot leave a live recording dependent on clicking the tray to stop. The low-level hook remains limited to push-to-talk and modifier-only shortcuts that require key-up events.
+- **Windows Hotkey Lifecycle**: Keeps shortcut capture, startup, resume, and crash recovery behind one serialized controller; frames split native-helper output, requires a readiness deadline, and never overlaps a replacement with a helper whose exit is unconfirmed.
+- **Overlapping Push-To-Talk Routes**: Gives Insert and Clipboard push-to-talk one shared owner, so pressing or releasing the other route cannot stop and truncate the active recording.
+- **Windows Automatic Insertion**: Corrects the 64-bit Windows input structure used for Ctrl+V, safely releases any keys left down by a partial native injection, records content-free delivery reason codes, and verifies the real insertion path with an isolated live smoke test.
+- **Clipboard Lease Protection**: Detects whether a failed insertion left the dictation in the clipboard or the user copied something newer, avoiding duplicate writes and preserving newer clipboard contents.
+- **Clipboard And Log Privacy**: Atomically restores stable text, HTML, RTF, and image representations, ignores empty duplicate format buffers that could erase valid clipboard text, preserves a custom-only format when no stable representation exists, and strips transcript-bearing fields before renderer diagnostics can be persisted.
+- **Cleanup False Rejections**: Makes the guarded same-model retry explicitly token-locked and verifies its complete lexical sequence after output repair. Accepted retries retain the source punctuation and separators, preventing a model-generated punctuation change from altering meaning while still permitting safe sentence-start capitalization.
+- **Cleanup Fallback Clarity**: Separates preservation rejection, missing setup, provider unavailability, and request failure messages; records the number of cleanup candidates that actually ran; and reports whether the selected model's safety retry was accepted.
+- **Dictionary-Backed Names**: Passes sanitized single-token dictionary spellings to BYOK cleanup as trusted lexical data and allows only tightly bounded, context-supported final-vowel repairs. A verified person-name spelling survives an AI cleanup fallback while all other recognizer wording remains unchanged.
+- **Dictionary Context Safety**: Authorizes each person-name occurrence independently, keeps same-spelled variables and identifiers unchanged, and requires the independent fidelity gate to accept every deterministic spelling repair.
+- **Dictionary Prompt Safety**: Builds OpenAI transcription hints in the trusted main process from allowlisted lexical entries and retries without hints if a silent recording appears to echo them.
+- **History Delivery Clarity**: Distinguishes clipboard recovery, protected clipboard, newer clipboard, and failed-delivery outcomes; preserves safe reason codes and cleanup-model provenance; and keeps fallback wording truthful when a dictionary spelling was applied.
+
+### Changed
+
+- **OpenAI Transcription Default**: Uses `gpt-4o-transcribe` for new OpenAI BYOK setups, while keeping the lower-cost mini model available.
+- **Luna Reasoning Default**: Uses None for new settings after the real-audio comparison found no usable quality gain from Low and materially lower latency from None. Existing explicit selections remain unchanged.
+
+## [1.4.9] - 2026-07-14
+
+### Fixed
+
+- **Packaged Renderer Startup**: Corrected the packaged CommonJS/ES module boundary that could leave the installed control panel blank, and strengthened bundle and release-gate checks around the packaged renderer.
+
 ## [1.4.8] - 2026-07-13
 
 ### Added

@@ -25,28 +25,43 @@
 2. Verify mic is selected: Sound settings → Input
 3. Test recording in Windows Voice Recorder first
 
+### Automatic Insertion Failed but the Clipboard Worked
+
+**Symptoms:** EchoDraft finishes a dictation and copies the text, but it does not appear at the original cursor.
+
+**Meaning:** Transcription succeeded, but Windows rejected or could not authenticate the insertion target. EchoDraft preserves the result on the clipboard instead of discarding it. Current builds also record a content-free delivery reason code in the history item so this can be diagnosed without logging dictated text.
+
+**Solutions:**
+
+1. Install the latest EchoDraft build; version 1.4.10 corrects a 64-bit Windows input-layout error that could make every simulated Ctrl+V fail.
+2. Keep the target app open while the dictation processes. If its window or process restarts, EchoDraft will not inject into the replacement window.
+3. Open the history item and check its delivery detail. The text remains available there and on the clipboard after a safe fallback.
+4. If failures continue, reproduce once with debug logging enabled and report the delivery reason code; the transcript itself is not needed.
+
 ### A Dictation Hotkey Stops Responding
 
 **Symptoms:** A configured shortcut worked earlier but no longer starts dictation, or one press starts and immediately stops recording.
 
 **Solutions:**
 
-1. Install the latest EchoDraft build. Current builds suppress Windows key-repeat toggles and automatically recover shortcuts after resume, workstation unlock, or an unexpected native-listener exit.
+1. Install the latest EchoDraft build. Current builds use a focus-independent, repeat-safe Windows route for tap shortcuts and automatically recover shortcuts after resume, workstation unlock, or an unexpected native-listener exit.
 2. Open Settings → General → Hotkeys and confirm both displayed shortcuts. Choose a supported single key or chord if a warning appears.
 3. Lock and unlock Windows once, then test the shortcut again. EchoDraft should re-register both routes automatically.
 4. If it still fails, enable debug mode, reproduce once, and use Settings → Developer → Open Logs Folder. Look for hotkey registration or native-listener status entries; transcript content is not required.
+
+Tap shortcuts continue through ordinary and elevated focus changes. Push-to-talk and modifier-only shortcuts still require the native key-up listener; if one of those behaves differently only over an elevated application, switch temporarily to tap mode and include the listener status entries in the report.
 
 ### Cleanup Kept the Original Text
 
 **Symptoms:** History shows **Original preserved**, or the text has punctuation unchanged.
 
-**Meaning:** EchoDraft could not safely verify the AI cleanup. It keeps the complete raw transcript instead of accepting possible summarisation, changed polarity, prompt execution, or lost details.
+**Meaning:** Check the cleanup detail in History. **Safety check rejected the rewrite** means every cleanup candidate that actually ran failed preservation checks, so EchoDraft kept the recognizer wording. The only permitted fallback edit is an independently verified, dictionary-backed person-name spelling; the raw transcript remains visible in History. Managed EchoDraft Cloud cleanup currently makes one candidate request. OpenAI BYOK can also make one token-locked retry on the selected model and effort; History says **Safety retry: not applied** only when that second pass ran and was rejected. **Needs setup**, **provider unavailable**, and **request failed** instead identify configuration, availability, or provider errors; they do not mean the text itself failed a fidelity check.
 
 **Solutions:**
 
-1. Confirm an OpenAI cleanup model and key are configured in Settings → AI Models.
-2. Try GPT-5.6 Terra or Sol, then dictate again.
-3. If this repeats, open the history item’s cleanup details for the safe fallback reason. The original transcript remains available and is never replaced by a rejected cleanup.
+1. Open the history item’s cleanup details and note the specific fallback reason.
+2. For setup, availability, or request failures, confirm the selected model, API key, and network connection in Settings → AI Models.
+3. For repeated preservation rejections on Luna, try Low reasoning if the faster None setting falls back too often, or try GPT-5.6 Terra or Sol, then dictate again. A rejected model rewrite is never delivered; the raw transcript remains available in History.
 
 ### Microphone Too Quiet
 

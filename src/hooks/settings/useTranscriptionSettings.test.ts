@@ -73,7 +73,7 @@ describe("useTranscriptionSettings custom endpoint approval", () => {
 
   it("preserves legacy dictionaries beyond the provider payload limit", async () => {
     const legacyWords = Array.from({ length: 104 }, (_, index) => `Term${index + 1}`);
-    legacyWords.push("Benje");
+    legacyWords.push("Rilje");
     localStorage.setItem("customDictionary", JSON.stringify(legacyWords));
     const setDictionary = vi.fn(async () => ({}));
     (window as any).electronAPI = {

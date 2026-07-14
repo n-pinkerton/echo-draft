@@ -10,6 +10,7 @@ import {
 
 import { getReasoningModelLabel } from "../../models/ModelRegistry";
 import { formatHotkeyLabel } from "../../utils/hotkeys";
+import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 import controlPanelShortcut from "../../shared/controlPanelShortcut.json";
 import { Button } from "../ui/button";
 import QuickMicrophoneSelect from "./QuickMicrophoneSelect";
@@ -17,6 +18,8 @@ import QuickMicrophoneSelect from "./QuickMicrophoneSelect";
 type CleanupSummary = {
   status?: string;
   fallbackReason?: string | null;
+  preferredSpellingApplied?: boolean;
+  metrics?: Record<string, unknown>;
 } | null;
 
 type Props = {
@@ -95,16 +98,19 @@ export default function DictationQuickStart(props: Props) {
     };
   }, []);
   const cleanupFallback = cleanupEnabled && latestCleanup?.status === "fallback";
+  const dictionarySpellingApplied = cleanupAppliedPreferredSpelling(latestCleanup);
   const cleanupNeedsSetup = cleanupEnabled && !cleanupManagedByCloud && !cleanupModel;
   const cleanupWarning = cleanupFallback || cleanupNeedsSetup;
   const cleanupFallbackLabel =
-    latestCleanup?.fallbackReason === "fidelity_rejected"
-      ? "Last cleanup changed too much · original kept"
-      : latestCleanup?.fallbackReason === "not_configured"
-        ? "Last cleanup needed setup · original kept"
-        : latestCleanup?.fallbackReason === "unavailable"
-          ? "Last cleanup was unavailable · original kept"
-          : "Last cleanup request failed · original kept";
+    dictionarySpellingApplied
+      ? "Last cleanup not applied · wording kept · dictionary spelling applied"
+      : latestCleanup?.fallbackReason === "fidelity_rejected"
+        ? "Last cleanup changed too much · original kept"
+        : latestCleanup?.fallbackReason === "not_configured"
+          ? "Last cleanup needed setup · original kept"
+          : latestCleanup?.fallbackReason === "unavailable"
+            ? "Last cleanup was unavailable · original kept"
+            : "Last cleanup request failed · original kept";
   const cleanupStatusLabel = cleanupFallback
     ? cleanupFallbackLabel
     : cleanupNeedsSetup

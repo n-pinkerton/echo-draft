@@ -534,32 +534,78 @@ const getRawLexicalTokenMatches = (value) =>
 const getRawLexicalTokens = (value) => getRawLexicalTokenMatches(value).map((match) => match[0]);
 
 const PREFERRED_SPELLING_ALIAS_NAME_SHAPE = /^\p{Lu}[\p{Ll}\p{M}]{4,}$/u;
+const PREFERRED_SPELLING_ALIAS_SURNAME_SHAPE = /^\p{Lu}[\p{Ll}\p{M}]{1,}$/u;
+const PREFERRED_SPELLING_ALIAS_POSSESSIVE_SUFFIX = /(['’‘ʼ][sS])$/u;
+const PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS = new Set([
+  "account",
+  "analysis",
+  "calendar",
+  "call",
+  "comments",
+  "copy",
+  "email",
+  "feedback",
+  "figures",
+  "message",
+  "proposal",
+  "report",
+  "review",
+  "role",
+  "schedule",
+  "team",
+  "work",
+]);
 const PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS = new Set([
   "agent",
   "alias",
+  "api",
   "argument",
+  "callback",
   "class",
+  "cluster",
   "code",
+  "codename",
   "column",
   "command",
+  "configuration",
   "constant",
   "directory",
+  "database",
+  "endpoint",
   "enum",
+  "environment",
   "field",
   "file",
   "folder",
   "function",
+  "handler",
   "identifier",
+  "input",
   "key",
   "label",
   "literal",
   "method",
   "model",
+  "module",
+  "network",
+  "object",
   "option",
+  "output",
   "parameter",
+  "password",
   "path",
+  "packet",
+  "payload",
+  "process",
+  "project",
   "property",
+  "request",
+  "response",
+  "script",
+  "server",
+  "service",
   "setting",
+  "status",
   "string",
   "symbol",
   "table",
@@ -567,12 +613,27 @@ const PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS = new Set([
   "term",
   "text",
   "token",
+  "traffic",
   "type",
   "value",
   "variable",
+  "workflow",
   "word",
   "words",
 ]);
+const isPreferredSpellingTechnicalContextWord = (word) => {
+  const normalized = String(word || "");
+  if (PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(normalized)) return true;
+  if (normalized.endsWith("ies")) {
+    return PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(
+      `${normalized.slice(0, -3)}y`
+    );
+  }
+  return (
+    normalized.endsWith("s") &&
+    PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(normalized.slice(0, -1))
+  );
+};
 const PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS = new Set([
   "ask",
   "asked",
@@ -580,14 +641,12 @@ const PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS = new Set([
   "briefed",
   "call",
   "called",
+  "chat",
+  "chatted",
   "contact",
   "contacted",
   "email",
   "emailed",
-  "give",
-  "gave",
-  "hear",
-  "heard",
   "invite",
   "invited",
   "meet",
@@ -598,10 +657,6 @@ const PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS = new Set([
   "notified",
   "remind",
   "reminded",
-  "send",
-  "sent",
-  "show",
-  "showed",
   "speak",
   "spoke",
   "talk",
@@ -611,7 +666,149 @@ const PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS = new Set([
   "thanked",
   "told",
 ]);
+const PREFERRED_SPELLING_ALIAS_TECHNICAL_NAMING_VERBS = new Set(["call", "called"]);
+const PREFERRED_SPELLING_ALIAS_PERSON_DOUBLE_OBJECT_VERBS = new Set([
+  "gave",
+  "give",
+  "send",
+  "sent",
+  "show",
+  "showed",
+]);
 const PREFERRED_SPELLING_ALIAS_RECIPIENT_LINKERS = new Set(["for", "from", "to", "with"]);
+const PREFERRED_SPELLING_ALIAS_RECIPIENT_GOVERNORS = new Map([
+  ["for", new Set(["email", "emailed", "message", "messaged", "send", "sent", "show", "showed"])],
+  ["from", new Set(["expect", "expected", "expecting", "hear", "heard"])],
+  [
+    "to",
+    new Set([
+      "ask",
+      "asked",
+      "brief",
+      "briefed",
+      "chat",
+      "chatted",
+      "email",
+      "emailed",
+      "give",
+      "gave",
+      "message",
+      "messaged",
+      "notify",
+      "notified",
+      "refer",
+      "referred",
+      "remind",
+      "reminded",
+      "say",
+      "said",
+      "send",
+      "sent",
+      "show",
+      "showed",
+      "speak",
+      "spoke",
+      "talk",
+      "talked",
+      "tell",
+      "thank",
+      "thanked",
+      "told",
+    ]),
+  ],
+  ["with", new Set(["chat", "chatted", "meet", "met", "speak", "spoke", "talk", "talked"])],
+]);
+const PREFERRED_SPELLING_ALIAS_PERSON_CALL_PURPOSE =
+  /\b(?:about|concerning|regarding)\b|\bto\s+(?:ask|check\s+in|discuss|follow\s+up|talk)\b|\bon\s+(?:the\s+)?phone\b/iu;
+const PREFERRED_SPELLING_ALIAS_CALL_INVOCATION_CONTINUATION =
+  /^(?:await|check|forward|inspect|log|pass|return|use)\w*\b|\band\s+(?:await|call|check|forward|inspect|log|pass|return|use)\w*\b/iu;
+const PREFERRED_SPELLING_ALIAS_AMBIGUOUS_TECHNICAL_DIRECT_VERBS = new Set([
+  "contact",
+  "contacted",
+  "email",
+  "emailed",
+  "message",
+  "messaged",
+  "notify",
+  "notified",
+]);
+const PREFERRED_SPELLING_ALIAS_RECIPIENT_BOUNDARY_WORDS = new Set([
+  "after",
+  "although",
+  "because",
+  "before",
+  "but",
+  "however",
+  "so",
+  "then",
+  "while",
+]);
+const PREFERRED_SPELLING_ALIAS_RECIPIENT_STRUCTURAL_BARRIERS = new Set([
+  "by",
+  "through",
+  "using",
+  "via",
+]);
+const PREFERRED_SPELLING_ALIAS_RECIPIENT_DETERMINERS = new Set([
+  "a",
+  "an",
+  "her",
+  "his",
+  "our",
+  "the",
+  "their",
+  "your",
+]);
+const PREFERRED_SPELLING_ALIAS_RECIPIENT_NOMINAL_PREPOSITIONS = new Set([
+  "about",
+  "by",
+  "for",
+  "from",
+  "of",
+  "over",
+  "through",
+  "under",
+  "with",
+]);
+const PREFERRED_SPELLING_ALIAS_RECIPIENT_PREDICATE_BARRIERS = new Set([
+  "assign",
+  "assigned",
+  "bind",
+  "bound",
+  "call",
+  "called",
+  "configure",
+  "configured",
+  "copy",
+  "copied",
+  "direct",
+  "directed",
+  "forward",
+  "forwarded",
+  "map",
+  "mapped",
+  "move",
+  "moved",
+  "name",
+  "named",
+  "rename",
+  "renamed",
+  "set",
+  "store",
+  "stored",
+  "switch",
+  "switched",
+  "point",
+  "pointed",
+  "route",
+  "routed",
+  "use",
+  "used",
+  "write",
+  "wrote",
+]);
+const PREFERRED_SPELLING_ALIAS_REPEATED_PERSON_SUBJECT_SUFFIX =
+  /^(?:(?:can|could|should|will|would)\s+(?:attend\s+(?:the\s+)?(?:call|meeting)\b|help\s+(?:me|us|the\s+team)\b|join\s+(?:(?:the\s+)?(?:call|meeting|team)|us)\b|meet\s+(?:me|us|the\s+team)\b|reply\s+(?:to\s+)?(?:me|us)\b|speak\s+(?:to|with)\s+(?:me|us|the\s+team)\b|talk\s+(?:to|with)\s+(?:me|us|the\s+team)\b)|approved\s+(?:the\s+)?(?:draft|plan|proposal|report)\b|attended\s+(?:the\s+)?(?:call|meeting)\b|called\s+(?:me|us)\s+back\b|confirmed\s+(?:the\s+)?(?:appointment|call|meeting)\b|emailed\s+(?:back|me|us)\b|joined\s+(?:(?:the\s+)?(?:call|meeting|team)|us)\b|replied\s+(?:back|to\s+(?:me|us|the\s+(?:email|invitation|message)))\b|reviewed\s+(?:the\s+)?(?:draft|plan|proposal|report)\b|said\s+(?:no|yes)\b|spoke\s+(?:to|with)\s+(?:me|us|the\s+team)\b)/iu;
 const PREFERRED_SPELLING_ALIAS_PRESERVATION_PREFIX =
   /\b(?:do not|never)\s+(?:alter|change|correct|edit|rename|replace|respell|rewrite)\b/iu;
 const PREFERRED_SPELLING_ALIAS_PRESERVATION_SUFFIX =
@@ -687,14 +884,14 @@ const hasPreferredSpellingTechnicalDefinition = (suffixWords) => {
   const firstDescriptor = suffixWords[cursor] || "";
   if (
     firstDescriptor &&
-    !PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(firstDescriptor) &&
+    !isPreferredSpellingTechnicalContextWord(firstDescriptor) &&
     /(?:ed|ing)$/u.test(firstDescriptor)
   ) {
     return false;
   }
   return suffixWords
     .slice(cursor, cursor + 4)
-    .some((word) => PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(word));
+    .some(isPreferredSpellingTechnicalContextWord);
 };
 
 const hasPreferredSpellingTechnicalObjectComplement = (suffixWords) => {
@@ -702,12 +899,198 @@ const hasPreferredSpellingTechnicalObjectComplement = (suffixWords) => {
   while (["a", "an", "that", "the", "this"].includes(suffixWords[cursor])) {
     cursor += 1;
   }
-  return PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(suffixWords[cursor]);
+  return isPreferredSpellingTechnicalContextWord(suffixWords[cursor]);
+};
+
+const hasPreferredSpellingTechnicalPrefix = (prefixWords) => {
+  const nearbyStart = Math.max(0, prefixWords.length - 5);
+  return prefixWords
+    .slice(nearbyStart)
+    .some(isPreferredSpellingTechnicalContextWord);
+};
+
+const getPreferredSpellingPredicatePrefixWords = (clausePrefix) => {
+  const raw = String(clausePrefix || "");
+  const boundaryIndex = Math.max(
+    raw.lastIndexOf(","),
+    raw.lastIndexOf(":"),
+    raw.lastIndexOf("—"),
+    raw.lastIndexOf("–")
+  );
+  return getWords(raw.slice(boundaryIndex + 1));
+};
+
+const getPreferredSpellingPredicateSuffixWords = (clauseSuffix) => {
+  const raw = String(clauseSuffix || "");
+  const boundaryMatch = raw.match(/[,:—–]|\b(?:and|but|then)\b/iu);
+  return getWords(boundaryMatch ? raw.slice(0, boundaryMatch.index) : raw);
+};
+
+const getPreferredSpellingCommaContinuation = (clauseSuffix) => {
+  const raw = String(clauseSuffix || "");
+  const commaIndex = raw.indexOf(",");
+  if (commaIndex < 0) return null;
+  const words = getWords(raw.slice(commaIndex + 1));
+  const startsIndependentClause = ["but", "so", "then"].includes(words[0]);
+  let headIndex = words[0] === "and" ? 1 : 0;
+  while (headIndex < words.length && /ly$/u.test(words[headIndex])) headIndex += 1;
+  return {
+    commaIndex,
+    hasTechnicalContext: words.some(isPreferredSpellingTechnicalContextWord),
+    isAttachedParticiple:
+      !startsIndependentClause && /(?:ed|ing)$/u.test(words[headIndex] || ""),
+    startsIndependentClause,
+  };
+};
+
+const getPreferredSpellingAttachedSuffixText = (
+  clauseSuffix,
+  { stopAtCoordinatedPredicate = true } = {}
+) => {
+  const raw = String(clauseSuffix || "");
+  const commaContinuation = getPreferredSpellingCommaContinuation(raw);
+  let local = raw;
+  if (commaContinuation) {
+    if (
+      commaContinuation.startsIndependentClause ||
+      (!commaContinuation.isAttachedParticiple &&
+        !commaContinuation.hasTechnicalContext)
+    ) {
+      local = raw.slice(0, commaContinuation.commaIndex);
+    } else {
+      const attachedTail = raw.slice(commaContinuation.commaIndex + 1);
+      const nextBoundary = attachedTail.search(/,|\b(?:and\s+)?then\b|\b(?:but|so)\b/iu);
+      if (nextBoundary >= 0) {
+        local = raw.slice(0, commaContinuation.commaIndex + 1 + nextBoundary);
+      }
+    }
+  }
+
+  // A coordinated action is not a complement of this recipient. Keep
+  // call-style continuations such as "and awaited the result" attached so
+  // technical invocations remain fail-closed.
+  if (!stopAtCoordinatedPredicate) return local;
+  const predicateBoundary = local.match(
+    /\band\s+(?:assign|bind|configure|copy|direct|forward|map|move|name|notify|point|route|send|set|show|store|switch|write)\w*\b/iu
+  );
+  return predicateBoundary ? local.slice(0, predicateBoundary.index) : local;
+};
+
+const hasLocalPreferredSpellingPersonPurpose = (suffixText) => {
+  const normalized = normalizeForComparison(suffixText);
+  const coordinatedBoundary = normalized.search(
+    /\b(?:after|although|and|because|before|but|once|since|so|then|when|while)\b/iu
+  );
+  const purposeScope =
+    coordinatedBoundary >= 0 ? normalized.slice(0, coordinatedBoundary) : normalized;
+  const purposeMatch = purposeScope.match(PREFERRED_SPELLING_ALIAS_PERSON_CALL_PURPOSE);
+  if (!purposeMatch) return false;
+
+  // Purpose evidence must govern this occurrence. A later "about" cannot
+  // turn an earlier payload/response complement into a person reference.
+  return !getWords(purposeScope.slice(0, purposeMatch.index)).some(
+    isPreferredSpellingTechnicalContextWord
+  );
+};
+
+const hasTrustedPreferredSpellingPersonDoubleObject = (suffixWords) => {
+  let cursor = 0;
+  while (
+    ["a", "an", "her", "his", "our", "the", "their", "your"].includes(
+      suffixWords[cursor]
+    )
+  ) {
+    cursor += 1;
+  }
+  const object = suffixWords[cursor] || "";
+  if (!PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS.has(object)) return false;
+
+  const trailingTimeWords = new Set(["later", "now", "today", "tomorrow", "tonight"]);
+  const remainder = suffixWords.slice(cursor + 1);
+  if (remainder.every((word) => trailingTimeWords.has(word))) return true;
+
+  let relation;
+  if (object === "copy" && remainder[0] === "of") relation = "of";
+  if (object === "call" && ["about", "concerning", "regarding"].includes(remainder[0])) {
+    relation = remainder[0];
+  }
+  if (!relation) return false;
+
+  cursor = 1;
+  while (["a", "an", "the"].includes(remainder[cursor])) cursor += 1;
+  if (!PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS.has(remainder[cursor] || "")) return false;
+  return remainder.slice(cursor + 1).every((word) => trailingTimeWords.has(word));
+};
+
+const hasTrustedPreferredSpellingPersonDoubleObjectPrefix = (clausePrefix) =>
+  /^\s*(?:please\s+)?(?:(?:i|we|you|he|she|they)\s+)?(?:gave|give|send|sent|show|showed)\s*$/iu.test(
+    String(clausePrefix || "")
+  );
+
+const getPreferredSpellingCoordinatedPredicatePrefix = (clausePrefix) => {
+  const raw = String(clausePrefix || "");
+  const boundaries = Array.from(raw.matchAll(/\b(?:and|but|then)\b/giu));
+  const lastBoundary = boundaries.at(-1);
+  return lastBoundary
+    ? raw.slice((lastBoundary.index || 0) + lastBoundary[0].length)
+    : raw;
+};
+
+const startsNewPreferredSpellingPersonCall = (clausePrefix, clauseSuffix) => {
+  const raw = String(clausePrefix || "");
+  const technicalPrefix = getWords(raw).some((word) =>
+    isPreferredSpellingTechnicalContextWord(word)
+  );
+  const personPurpose = hasLocalPreferredSpellingPersonPurpose(
+    getPreferredSpellingAttachedSuffixText(clauseSuffix, {
+      stopAtCoordinatedPredicate: false,
+    })
+  );
+
+  // "call/called X" also names functions, variables, and literal values. Only
+  // waive that ambiguity when grammar independently identifies a human caller
+  // or a person-directed purpose; capitalization alone is deliberately not
+  // evidence because tools such as PowerShell and Worker are capitalized too.
+  if (/\b(?:i|we|you|he|she|they)\s+called\s*$/iu.test(raw)) {
+    return !technicalPrefix || personPurpose;
+  }
+  if (
+    /\b(?:(?:a|an|her|his|my|our|the|their|your)\s+)(?:(?:account|project|team)\s+)?(?:adviser|advisor|assistant|chair|client|colleague|consultant|coordinator|customer|director|founder|lawyer|manager|mentor|owner|partner|recruiter|representative|specialist|supervisor|lead)\s+called\s*$/iu.test(
+      raw
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b\p{Lu}[\p{L}'’-]*\s+from\s+(?:finance|hr|legal|marketing|operations|sales|support)\s+called\s*$/u.test(
+      raw
+    )
+  ) {
+    return true;
+  }
+
+  if (!personPurpose) return false;
+  return (
+    /(?:^|[,;:—–]\s*|\b(?:and|but|so)\s+)(?:then\s+)?(?:please\s+)?call\s*$/iu.test(
+      raw
+    ) ||
+    (!technicalPrefix &&
+      /(?:^|[,;:—–]\s*|\b(?:and|but|so)\s+)(?:then\s+)?(?:\p{L}[\p{L}'’-]*\s+){1,4}called\s*$/iu.test(
+        raw
+      ))
+  );
 };
 
 const isLikelyPreferredSpellingPersonName = (rawToken) => /^[\p{Lu}]/u.test(rawToken || "");
 
-const hasDirectedPreferredSpellingPersonContext = (clauseMatches, sourceIndex) => {
+const splitPreferredSpellingAliasToken = (rawToken) => {
+  const raw = String(rawToken || "");
+  const suffixMatch = raw.match(PREFERRED_SPELLING_ALIAS_POSSESSIVE_SUFFIX);
+  const suffix = suffixMatch?.[0] || "";
+  return { stem: suffix ? raw.slice(0, -suffix.length) : raw, suffix };
+};
+
+const hasDirectedPreferredSpellingPersonContext = (raw, clauseMatches, sourceIndex) => {
   const words = clauseMatches.map((match) => getWords(match[0])[0] || "");
   const previousWord = words[sourceIndex - 1] || "";
   if (PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS.has(previousWord)) return true;
@@ -721,22 +1104,82 @@ const hasDirectedPreferredSpellingPersonContext = (clauseMatches, sourceIndex) =
   if (PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS.has(words[cursor])) return true;
 
   if (!PREFERRED_SPELLING_ALIAS_RECIPIENT_LINKERS.has(previousWord)) return false;
-  for (cursor = sourceIndex - 2; cursor >= Math.max(0, sourceIndex - 7); cursor -= 1) {
-    if (PREFERRED_SPELLING_ALIAS_PERSON_DIRECTED_VERBS.has(words[cursor])) return true;
-    if (PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS.has(words[cursor])) return false;
+  const recipientGovernors = PREFERRED_SPELLING_ALIAS_RECIPIENT_GOVERNORS.get(previousWord);
+  if (!recipientGovernors) return false;
+  // Walk to the local governing verb while validating that the intervening
+  // words remain a nominal recipient phrase. Commas and "and" may join object
+  // nouns; structural prepositions and verb-shaped tokens start a new predicate.
+  for (cursor = sourceIndex - 2; cursor >= 0; cursor -= 1) {
+    const currentMatch = clauseMatches[cursor];
+    const nextMatch = clauseMatches[cursor + 1];
+    const currentEnd = (currentMatch?.index || 0) + (currentMatch?.[0]?.length || 0);
+    const nextStart = nextMatch?.index || currentEnd;
+    if (/[;:—–.!?\r\n]/u.test(String(raw || "").slice(currentEnd, nextStart))) return false;
+    if (PREFERRED_SPELLING_ALIAS_RECIPIENT_BOUNDARY_WORDS.has(words[cursor])) return false;
+    if (words[cursor] === "and") {
+      const previousRawToken = clauseMatches[cursor - 1]?.[0] || "";
+      const nextRawToken = clauseMatches[cursor + 1]?.[0] || "";
+      const followingWord = words[cursor + 2] || "";
+      const followsCapitalizedPair = followingWord === previousWord;
+      const followsDeterminedCompound =
+        words[cursor - 2] === "the" &&
+        words[cursor + 3] === previousWord &&
+        /s$/u.test(followingWord);
+      if (
+        !isLikelyPreferredSpellingPersonName(previousRawToken) ||
+        !isLikelyPreferredSpellingPersonName(nextRawToken) ||
+        (!followsCapitalizedPair && !followsDeterminedCompound)
+      ) {
+        return false;
+      }
+    }
+    if (recipientGovernors.has(words[cursor])) return true;
+    if (words[cursor] === "to") return false;
+    const priorWord = words[cursor - 1] || "";
+    const nextWord = words[cursor + 1] || "";
+    if (PREFERRED_SPELLING_ALIAS_RECIPIENT_STRUCTURAL_BARRIERS.has(words[cursor])) {
+      const nominalDeliveryPhrase =
+        ["by", "through"].includes(words[cursor]) &&
+        priorWord &&
+        (PREFERRED_SPELLING_ALIAS_RECIPIENT_DETERMINERS.has(nextWord) ||
+          (words[cursor] === "by" &&
+            isLikelyPreferredSpellingPersonName(clauseMatches[cursor + 1]?.[0])));
+      if (!nominalDeliveryPhrase) return false;
+    }
+    if (PREFERRED_SPELLING_ALIAS_RECIPIENT_PREDICATE_BARRIERS.has(words[cursor])) return false;
+    if (/(?:ed|ing)$/u.test(words[cursor])) {
+      // A participle directly modifying a following noun is nominal; before a
+      // determiner/linker it starts a new predicate ("mapping the endpoint").
+      if (
+        (!nextWord ||
+          PREFERRED_SPELLING_ALIAS_RECIPIENT_DETERMINERS.has(nextWord) ||
+          PREFERRED_SPELLING_ALIAS_RECIPIENT_LINKERS.has(nextWord)) &&
+        !PREFERRED_SPELLING_ALIAS_RECIPIENT_DETERMINERS.has(priorWord)
+      ) {
+        return false;
+      }
+    } else if (
+      PREFERRED_SPELLING_ALIAS_RECIPIENT_DETERMINERS.has(nextWord) &&
+      !PREFERRED_SPELLING_ALIAS_RECIPIENT_NOMINAL_PREPOSITIONS.has(words[cursor])
+    ) {
+      // A non-governor immediately followed by a determiner is acting as a
+      // predicate ("copy the value"), not as an object-list modifier.
+      return false;
+    }
+    if (IRREGULAR_COMPLETION_VERBS.has(words[cursor])) return false;
   }
   return false;
 };
 
-const hasPositivePreferredSpellingPersonContext = (originalText, originalMatches, sourceIndex) => {
+const evaluatePreferredSpellingPersonContext = (originalText, originalMatches, sourceIndex) => {
   const sourceMatch = originalMatches[sourceIndex];
-  if (!sourceMatch) return false;
+  if (!sourceMatch) return { blocked: true, positive: false };
   const sourceStart = sourceMatch.index || 0;
   const sourceEnd = sourceStart + sourceMatch[0].length;
   const raw = String(originalText || "");
   const clauseBounds = getPreferredSpellingAliasClauseBounds(raw, sourceStart, sourceEnd);
   if (isInsidePreferredSpellingDelimitedSpan(raw, sourceStart, sourceEnd, clauseBounds.start)) {
-    return false;
+    return { blocked: true, positive: false };
   }
 
   const clausePrefix = raw.slice(clauseBounds.start, sourceStart);
@@ -748,14 +1191,24 @@ const hasPositivePreferredSpellingPersonContext = (originalText, originalMatches
     PREFERRED_SPELLING_ALIAS_PRESERVATION_SUFFIX.test(normalizedClauseSuffix) ||
     PREFERRED_SPELLING_ALIAS_NEGATED_PASSIVE_EDIT_SUFFIX.test(normalizedClauseSuffix)
   ) {
-    return false;
+    return { blocked: true, positive: false };
   }
+  const prefixWords = getWords(clausePrefix);
+  const predicatePrefixWords = getPreferredSpellingPredicatePrefixWords(clausePrefix);
   const suffixWords = getWords(clauseSuffix);
+  const predicateSuffixWords = getPreferredSpellingPredicateSuffixWords(clauseSuffix);
+  const directAttachedSuffixText = getPreferredSpellingAttachedSuffixText(clauseSuffix);
+  const directAttachedSuffixWords = getWords(directAttachedSuffixText);
+  const callAttachedSuffixText = getPreferredSpellingAttachedSuffixText(clauseSuffix, {
+    stopAtCoordinatedPredicate: false,
+  });
+  const callAttachedSuffixWords = getWords(callAttachedSuffixText);
+  const commaContinuation = getPreferredSpellingCommaContinuation(clauseSuffix);
   if (
     hasPreferredSpellingTechnicalDefinition(suffixWords) ||
     hasPreferredSpellingTechnicalObjectComplement(suffixWords)
   ) {
-    return false;
+    return { blocked: true, positive: false };
   }
 
   const clauseMatches = originalMatches.filter((match) => {
@@ -763,19 +1216,181 @@ const hasPositivePreferredSpellingPersonContext = (originalText, originalMatches
     return start >= clauseBounds.start && start < clauseBounds.end;
   });
   const clauseSourceIndex = clauseMatches.findIndex((match) => (match.index || 0) === sourceStart);
-  if (clauseSourceIndex < 0) return false;
+  if (clauseSourceIndex < 0) return { blocked: true, positive: false };
+  const directedPersonContext = hasDirectedPreferredSpellingPersonContext(
+    raw,
+    clauseMatches,
+    clauseSourceIndex
+  );
+  const immediatePreviousWord = getWords(
+    clauseMatches[clauseSourceIndex - 1]?.[0] || ""
+  )[0];
+  const sourceStem = normalizeForComparison(
+    splitPreferredSpellingAliasToken(sourceMatch[0]).stem
+  );
+  const hasEarlierAuthorizedSamePerson = originalMatches
+    .slice(0, sourceIndex)
+    .some((match, index) => {
+      const candidateStem = normalizeForComparison(
+        splitPreferredSpellingAliasToken(match[0]).stem
+      );
+      return (
+        candidateStem === sourceStem &&
+        evaluatePreferredSpellingPersonContext(originalText, originalMatches, index)
+          .positive
+      );
+    });
+  const hasStandaloneDoubleObjectPrefix =
+    hasTrustedPreferredSpellingPersonDoubleObjectPrefix(clausePrefix);
+  const hasAuthorizedCoordinatedDoubleObjectPrefix =
+    hasEarlierAuthorizedSamePerson &&
+    hasTrustedPreferredSpellingPersonDoubleObjectPrefix(
+      getPreferredSpellingCoordinatedPredicatePrefix(clausePrefix)
+    );
+  const personDoubleObjectContext =
+    (hasStandaloneDoubleObjectPrefix || hasAuthorizedCoordinatedDoubleObjectPrefix) &&
+    hasTrustedPreferredSpellingPersonDoubleObject(predicateSuffixWords) &&
+    PREFERRED_SPELLING_ALIAS_PERSON_DOUBLE_OBJECT_VERBS.has(immediatePreviousWord);
+  const ambiguousTechnicalNamingContext =
+    PREFERRED_SPELLING_ALIAS_TECHNICAL_NAMING_VERBS.has(immediatePreviousWord);
+  const callPersonPurpose = hasLocalPreferredSpellingPersonPurpose(
+    callAttachedSuffixText
+  );
+  const directPersonPurpose = hasLocalPreferredSpellingPersonPurpose(
+    directAttachedSuffixText
+  );
+  const callAttachedSuffixHasTechnicalObject = callAttachedSuffixWords.some(
+    isPreferredSpellingTechnicalContextWord
+  );
+  const technicalCallInvocation =
+    ambiguousTechnicalNamingContext &&
+    ((!callPersonPurpose && commaContinuation?.isAttachedParticiple) ||
+      PREFERRED_SPELLING_ALIAS_CALL_INVOCATION_CONTINUATION.test(
+      normalizeForComparison(callAttachedSuffixText)
+    ) ||
+      (callAttachedSuffixHasTechnicalObject && !callPersonPurpose));
+  const ambiguousTechnicalDirectContext =
+    PREFERRED_SPELLING_ALIAS_AMBIGUOUS_TECHNICAL_DIRECT_VERBS.has(
+      immediatePreviousWord
+    ) &&
+    !directPersonPurpose &&
+    (commaContinuation?.isAttachedParticiple ||
+      [...predicatePrefixWords, ...directAttachedSuffixWords].some(
+        isPreferredSpellingTechnicalContextWord
+      ));
+  const affirmativePersonCall =
+    ambiguousTechnicalNamingContext &&
+    startsNewPreferredSpellingPersonCall(clausePrefix, clauseSuffix);
+  if (
+    technicalCallInvocation ||
+    ambiguousTechnicalDirectContext ||
+    (ambiguousTechnicalNamingContext && !affirmativePersonCall) ||
+    (hasPreferredSpellingTechnicalPrefix(prefixWords) &&
+      !directedPersonContext &&
+      !personDoubleObjectContext)
+  ) {
+    return { blocked: true, positive: false };
+  }
+
+  const nextRawToken = clauseMatches[clauseSourceIndex + 1]?.[0] || "";
+  if (PREFERRED_SPELLING_ALIAS_SURNAME_SHAPE.test(nextRawToken)) {
+    return { blocked: false, positive: true };
+  }
+  const { suffix: sourcePossessiveSuffix } = splitPreferredSpellingAliasToken(sourceMatch[0]);
+  if (
+    sourcePossessiveSuffix &&
+    PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS.has(suffixWords[0] || "")
+  ) {
+    return { blocked: false, positive: true };
+  }
 
   const previousWord = getWords(clauseMatches[clauseSourceIndex - 1]?.[0] || "")[0] || "";
-  if (["dear", "hello", "hi"].includes(previousWord)) return true;
+  if (["dear", "hello", "hi"].includes(previousWord)) {
+    return { blocked: false, positive: true };
+  }
   const vocativeActionIndex = suffixWords[0] === "please" ? 1 : 0;
   if (
     clauseSourceIndex === 0 &&
     /^\s*,/u.test(clauseSuffix) &&
     DIRECTIVE_ACTION_OPENERS.has(suffixWords[vocativeActionIndex])
   ) {
-    return true;
+    return { blocked: false, positive: true };
   }
-  return hasDirectedPreferredSpellingPersonContext(clauseMatches, clauseSourceIndex);
+  return {
+    blocked: false,
+    positive: directedPersonContext || personDoubleObjectContext,
+  };
+};
+
+const hasPreferredSpellingTechnicalClauseContext = (
+  originalText,
+  originalMatches,
+  sourceIndex
+) => {
+  const sourceMatch = originalMatches[sourceIndex];
+  if (!sourceMatch) return true;
+  const sourceStart = sourceMatch.index || 0;
+  const sourceEnd = sourceStart + sourceMatch[0].length;
+  const raw = String(originalText || "");
+  const clauseBounds = getPreferredSpellingAliasClauseBounds(raw, sourceStart, sourceEnd);
+  return getWords(raw.slice(clauseBounds.start, clauseBounds.end)).some((word) =>
+    isPreferredSpellingTechnicalContextWord(word)
+  );
+};
+
+const hasAffirmativeRepeatedPreferredSpellingPersonContext = (
+  originalText,
+  originalMatches,
+  sourceIndex
+) => {
+  const sourceMatch = originalMatches[sourceIndex];
+  if (!sourceMatch) return false;
+  const sourceStart = sourceMatch.index || 0;
+  const sourceEnd = sourceStart + sourceMatch[0].length;
+  const raw = String(originalText || "");
+  const clauseBounds = getPreferredSpellingAliasClauseBounds(raw, sourceStart, sourceEnd);
+  const prefix = normalizeForComparison(raw.slice(clauseBounds.start, sourceStart));
+  if (prefix && !/^(?:and|but)$/u.test(prefix)) return false;
+  const suffix = normalizeForComparison(raw.slice(sourceEnd, clauseBounds.end));
+  return PREFERRED_SPELLING_ALIAS_REPEATED_PERSON_SUBJECT_SUFFIX.test(suffix);
+};
+
+const hasPositivePreferredSpellingPersonContext = (originalText, originalMatches, sourceIndex) => {
+  const current = evaluatePreferredSpellingPersonContext(
+    originalText,
+    originalMatches,
+    sourceIndex
+  );
+  if (current.positive || current.blocked) return current.positive;
+  // A previous person occurrence does not make every matching token a name.
+  // Require affirmative person-reference grammar at this occurrence before
+  // inheriting authorization, so passwords, environments, and codenames remain
+  // literal even when they happen to match a person's dictated name.
+  if (
+    !hasAffirmativeRepeatedPreferredSpellingPersonContext(
+      originalText,
+      originalMatches,
+      sourceIndex
+    )
+  ) {
+    return false;
+  }
+  if (hasPreferredSpellingTechnicalClauseContext(originalText, originalMatches, sourceIndex)) {
+    return false;
+  }
+
+  const sourceWord = getWords(
+    splitPreferredSpellingAliasToken(originalMatches[sourceIndex]?.[0]).stem
+  )[0];
+  if (!sourceWord) return false;
+  return originalMatches.some((match, index) => {
+    if (index === sourceIndex) return false;
+    const candidateWord = getWords(splitPreferredSpellingAliasToken(match[0]).stem)[0];
+    return (
+      candidateWord === sourceWord &&
+      evaluatePreferredSpellingPersonContext(originalText, originalMatches, index).positive
+    );
+  });
 };
 
 const isAuditedPreferredSpellingPersonAlias = (
@@ -784,11 +1399,14 @@ const isAuditedPreferredSpellingPersonAlias = (
   normalizedSource,
   normalizedTarget
 ) => {
+  const sourceToken = splitPreferredSpellingAliasToken(rawSource);
+  const targetToken = splitPreferredSpellingAliasToken(rawTarget);
   if (
-    !PREFERRED_SPELLING_ALIAS_NAME_SHAPE.test(rawSource) ||
-    !PREFERRED_SPELLING_ALIAS_NAME_SHAPE.test(rawTarget) ||
-    normalizedSource !== normalizeForComparison(rawSource) ||
-    normalizedTarget !== normalizeForComparison(rawTarget)
+    !PREFERRED_SPELLING_ALIAS_NAME_SHAPE.test(sourceToken.stem) ||
+    !PREFERRED_SPELLING_ALIAS_NAME_SHAPE.test(targetToken.stem) ||
+    targetToken.suffix ||
+    normalizedSource !== normalizeForComparison(sourceToken.stem) ||
+    normalizedTarget !== normalizeForComparison(targetToken.stem)
   ) {
     return false;
   }
@@ -853,7 +1471,13 @@ export const applyTrustedPreferredSpellingAliases = (
     );
     const matchIndex = cleanedMatches[index].index || 0;
     result += cleaned.slice(cursor, matchIndex);
-    result += possibleTargets.length === 1 ? possibleTargets[0].raw : cleanedRaw;
+    if (possibleTargets.length === 1) {
+      const cleanedSuffix = splitPreferredSpellingAliasToken(cleanedRaw).suffix;
+      const originalSuffix = splitPreferredSpellingAliasToken(originalRaw).suffix;
+      result += possibleTargets[0].raw + (cleanedSuffix || originalSuffix);
+    } else {
+      result += cleanedRaw;
+    }
     cursor = matchIndex + cleanedRaw.length;
   }
   return result + cleaned.slice(cursor);
@@ -909,9 +1533,12 @@ const getPreferredSpellingAlignment = (preferredSpellings, original, cleaned) =>
   if (originalTokens.length === cleanedTokens.length) {
     for (let index = 0; index < originalTokens.length; index += 1) {
       const rawSource = originalTokens[index];
-      const normalizedSourceTokens = getWords(rawSource);
-      const normalizedCleanedTokens = getWords(cleanedTokens[index]);
+      const sourceToken = splitPreferredSpellingAliasToken(rawSource);
+      const cleanedToken = splitPreferredSpellingAliasToken(cleanedTokens[index]);
+      const normalizedSourceTokens = getWords(sourceToken.stem);
+      const normalizedCleanedTokens = getWords(cleanedToken.stem);
       if (normalizedSourceTokens.length !== 1 || normalizedCleanedTokens.length !== 1) continue;
+      if (sourceToken.suffix.toLowerCase() !== cleanedToken.suffix.toLowerCase()) continue;
 
       const normalizedSource = normalizedSourceTokens[0];
       const normalizedCleaned = normalizedCleanedTokens[0];
@@ -933,13 +1560,23 @@ const getPreferredSpellingAlignment = (preferredSpellings, original, cleaned) =>
         continue;
       }
 
-      comparisonOriginalRawTokens[index] = target.raw;
+      comparisonOriginalRawTokens[index] = target.raw + sourceToken.suffix;
       corrections.push({ index, original: normalizedSource, cleaned: target.normalized });
     }
   }
+  let comparisonOriginalText = "";
+  let sourceCursor = 0;
+  for (let index = 0; index < originalMatches.length; index += 1) {
+    const matchIndex = originalMatches[index].index || 0;
+    comparisonOriginalText += original.slice(sourceCursor, matchIndex);
+    comparisonOriginalText += comparisonOriginalRawTokens[index];
+    sourceCursor = matchIndex + originalMatches[index][0].length;
+  }
+  comparisonOriginalText += original.slice(sourceCursor);
   return {
     comparisonOriginalRawTokens,
     comparisonOriginalWords: comparisonOriginalRawTokens.flatMap((token) => getWords(token)),
+    comparisonOriginalText,
     corrections,
   };
 };
@@ -1874,6 +2511,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   // Otherwise an approved canonical spelling repair changes both adjacent
   // bigrams and can look like a clause reorder to the attachment guard.
   const comparisonOriginalWords = preferredSpellingAlignment.comparisonOriginalWords;
+  const comparisonOriginalText = preferredSpellingAlignment.comparisonOriginalText;
   const appliedSpokenFormattingRanges = getAppliedSpokenFormattingRanges(
     original,
     cleaned,
@@ -1984,7 +2622,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   }
   const changedNegationAttachmentCount = explicitQuoteRewrite
     ? 0
-    : countMarkerAttachmentChanges(original, cleaned, NEGATION_MARKERS);
+    : countMarkerAttachmentChanges(comparisonOriginalText, cleaned, NEGATION_MARKERS);
   if (changedNegationAttachmentCount > 0) {
     reasons.push("negation-attachment-change");
   }
@@ -2015,7 +2653,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   );
   const changedRelationAttachmentCount = explicitQuoteRewrite
     ? 0
-    : countMarkerAttachmentChanges(original, cleaned, relationAttachmentMarkers);
+    : countMarkerAttachmentChanges(comparisonOriginalText, cleaned, relationAttachmentMarkers);
   if (changedRelationAttachmentCount > 0) {
     reasons.push("relation-attachment-change");
   }
@@ -2044,7 +2682,10 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   }
   const changedStanceAttachmentCount = explicitQuoteRewrite
     ? 0
-    : countMarkerAttachmentChanges(original, cleaned, [...STANCE_MARKERS, ...STANCE_PHRASES]);
+    : countMarkerAttachmentChanges(comparisonOriginalText, cleaned, [
+        ...STANCE_MARKERS,
+        ...STANCE_PHRASES,
+      ]);
   if (changedStanceAttachmentCount > 0) {
     reasons.push("stance-attachment-change");
   }
@@ -2069,7 +2710,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   }
   const changedModalAttachmentCount = explicitQuoteRewrite
     ? 0
-    : countMarkerAttachmentChanges(original, cleaned, MODAL_MARKERS);
+    : countMarkerAttachmentChanges(comparisonOriginalText, cleaned, MODAL_MARKERS);
   if (changedModalAttachmentCount > 0) {
     reasons.push("modal-attachment-change");
   }

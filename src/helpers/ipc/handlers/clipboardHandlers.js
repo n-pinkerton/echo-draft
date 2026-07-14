@@ -61,9 +61,20 @@ function registerClipboardHandlers(
           : {}),
       };
     } catch (error) {
+      const clipboardWriteCommitted = error?.clipboardWriteCommitted === true;
+      let clipboardRetained = false;
+      if (clipboardWriteCommitted) {
+        try {
+          clipboardRetained = (await clipboardManager.readClipboard()) === text;
+        } catch {
+          clipboardRetained = false;
+        }
+      }
       return {
         success: false,
         errorCode: normalizePasteFailureCode(error),
+        clipboardWriteCommitted,
+        clipboardRetained,
       };
     }
   });

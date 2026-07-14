@@ -32,6 +32,7 @@ function registerWindowsPushToTalk({
       payload: null,
       holdTimer: null,
       safetyTimer: null,
+      suppressed: false,
     },
     clipboard: {
       downTime: 0,
@@ -39,6 +40,7 @@ function registerWindowsPushToTalk({
       payload: null,
       holdTimer: null,
       safetyTimer: null,
+      suppressed: false,
     },
   };
   const unexpectedExitAttempts = new Map();
@@ -60,6 +62,7 @@ function registerWindowsPushToTalk({
   let terminationBlocked = false;
   let terminationRetryTimer = null;
   let terminationRetryAttempts = 0;
+  let activePushRouteId = null;
 
   const isHotkeyCaptureActive = () => hotkeyManager.isInListeningMode?.() === true;
 
@@ -79,6 +82,8 @@ function registerWindowsPushToTalk({
     state.downTime = 0;
     state.isRecording = false;
     state.payload = null;
+    state.suppressed = false;
+    if (activePushRouteId === hotkeyId) activePushRouteId = null;
   };
 
   const forceStopRoute = (hotkeyId = "insert", reason = "listener-refresh") => {
@@ -459,10 +464,22 @@ function registerWindowsPushToTalk({
     });
 
     if (activationMode === "push") {
-      if (routeState.downTime > 0 || routeState.isRecording) {
+      if (routeState.downTime > 0 || routeState.isRecording || routeState.suppressed) {
         debugLogger.debug("[Push-to-Talk] Ignoring repeated key-down", { hotkeyId, outputMode });
         return;
       }
+      if (activePushRouteId && activePushRouteId !== hotkeyId) {
+        // Only the route that reserved the current push can later stop it. Keep
+        // the overlapping key suppressed until its matching key-up so a rejected
+        // renderer start cannot truncate the accepted recording.
+        routeState.suppressed = true;
+        debugLogger.debug("[Push-to-Talk] Suppressing overlapping push route", {
+          hotkeyId,
+          activePushRouteId,
+        });
+        return;
+      }
+      activePushRouteId = hotkeyId;
       debugLogger.debug("[Push-to-Talk] Starting recording sequence", { hotkeyId, outputMode });
       windowManager.showDictationPanel();
       routeState.downTime = Date.now();
@@ -508,9 +525,18 @@ function registerWindowsPushToTalk({
     const activationMode = windowManager.getActivationMode();
     if (activationMode === "push") {
       const routeState = getRouteState(hotkeyId);
+      const wasSuppressed = routeState.suppressed === true;
+      const hadActivePress = routeState.downTime > 0 || routeState.isRecording || wasSuppressed;
       const wasRecording = routeState.isRecording;
       const payload = routeState.payload ? { ...routeState.payload, releasedAt: Date.now() } : null;
       resetRouteState(hotkeyId);
+      if (!hadActivePress) return;
+      if (wasSuppressed) {
+        debugLogger.debug("[Push-to-Talk] Ignoring release from suppressed push route", {
+          hotkeyId,
+        });
+        return;
+      }
       if (wasRecording) {
         debugLogger.debug("[Push-to-Talk] Sending stop dictation command", {
           hotkeyId,

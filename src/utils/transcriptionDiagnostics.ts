@@ -50,6 +50,7 @@ export const sanitizeTranscriptionMetaForDiagnostics = (
   }
 
   if (meta.delivery && typeof meta.delivery === "object") {
+    const reasonCode = boundedMetadataString(meta.delivery.reasonCode, 96);
     output.delivery = {
       ...(boundedMetadataString(meta.delivery.status)
         ? { status: boundedMetadataString(meta.delivery.status) }
@@ -57,6 +58,7 @@ export const sanitizeTranscriptionMetaForDiagnostics = (
       ...(typeof meta.delivery.succeeded === "boolean"
         ? { succeeded: meta.delivery.succeeded }
         : {}),
+      ...(reasonCode && /^[A-Z][A-Z0-9_]{0,95}$/.test(reasonCode) ? { reasonCode } : {}),
     };
   }
 
@@ -73,6 +75,9 @@ export const sanitizeTranscriptionMetaForDiagnostics = (
           .map((key) => [key, boundedMetadataString(cleanup[key])])
           .filter(([, entry]) => Boolean(entry))
       ),
+      ...(cleanup.modelSource === "selected" || cleanup.modelSource === "managed"
+        ? { modelSource: cleanup.modelSource }
+        : {}),
       ...(cleanup.metrics && typeof cleanup.metrics === "object"
         ? { metrics: pickNumbersAndBooleans(cleanup.metrics) }
         : {}),

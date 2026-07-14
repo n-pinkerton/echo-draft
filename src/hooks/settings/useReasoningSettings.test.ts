@@ -29,25 +29,25 @@ describe("useReasoningSettings", () => {
     expect(localStorage.getItem("reasoningModel")).toBe("gpt-4.1");
   });
 
-  it("defaults cleanup reasoning to low and persists explicit changes", () => {
+  it("defaults cleanup reasoning to none and persists explicit changes", () => {
     const { result } = renderHook(() => useReasoningSettings());
-
-    expect(result.current.cleanupReasoningEffort).toBe("low");
-    expect(localStorage.getItem("cleanupReasoningEffort")).toBe("low");
-
-    act(() => result.current.setCleanupReasoningEffort("none"));
 
     expect(result.current.cleanupReasoningEffort).toBe("none");
     expect(localStorage.getItem("cleanupReasoningEffort")).toBe("none");
+
+    act(() => result.current.setCleanupReasoningEffort("low"));
+
+    expect(result.current.cleanupReasoningEffort).toBe("low");
+    expect(localStorage.getItem("cleanupReasoningEffort")).toBe("low");
   });
 
-  it("normalizes an unsupported cleanup reasoning value to low", () => {
+  it("normalizes an unsupported cleanup reasoning value to none", () => {
     localStorage.setItem("cleanupReasoningEffort", "extreme");
 
     const { result } = renderHook(() => useReasoningSettings());
 
-    expect(result.current.cleanupReasoningEffort).toBe("low");
-    expect(localStorage.getItem("cleanupReasoningEffort")).toBe("low");
+    expect(result.current.cleanupReasoningEffort).toBe("none");
+    expect(localStorage.getItem("cleanupReasoningEffort")).toBe("none");
   });
 
   it("keeps the previous custom endpoint when approval is cancelled", async () => {

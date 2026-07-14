@@ -102,4 +102,33 @@ describe("DictationQuickStart", () => {
       })
     ).toBeInTheDocument();
   });
+
+  it("states when fallback kept wording but repaired a dictionary spelling", () => {
+    render(
+      <DictationQuickStart
+        insertHotkey="F10"
+        clipboardHotkey="Control+Alt"
+        activationMode="tap"
+        cleanupEnabled={true}
+        cleanupModel="gpt-5.6-terra"
+        cleanupManagedByCloud={false}
+        latestCleanup={{
+          status: "fallback",
+          fallbackReason: "provider_error",
+          preferredSpellingApplied: true,
+        }}
+        preferBuiltInMic={true}
+        selectedMicDeviceId=""
+        onPreferBuiltInChange={vi.fn()}
+        onDeviceSelect={vi.fn()}
+        onOpenHotkeySettings={vi.fn()}
+        onOpenMicrophoneSettings={vi.fn()}
+        onOpenCleanupSettings={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByText("Last cleanup not applied · wording kept · dictionary spelling applied")
+    ).toBeInTheDocument();
+  });
 });

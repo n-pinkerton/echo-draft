@@ -377,6 +377,49 @@ describe("registerWindowsPushToTalk", () => {
     controller.dispose();
   });
 
+  it.each([
+    ["insert", "clipboard", true],
+    ["insert", "clipboard", false],
+    ["clipboard", "insert", true],
+    ["clipboard", "insert", false],
+  ])(
+    "lets only the accepted %s push route stop when %s overlaps (suppressed first: %s)",
+    async (activeRoute, suppressedRoute, releaseSuppressedFirst) => {
+      vi.useFakeTimers();
+      const { controller, windowManager, windowsKeyManager } = createPushHarness();
+      const keyFor = (route: string) => (route === "insert" ? "F10" : "F9");
+
+      windowsKeyManager.emit("key-down", keyFor(activeRoute), activeRoute);
+      windowsKeyManager.emit("key-down", keyFor(suppressedRoute), suppressedRoute);
+      await vi.advanceTimersByTimeAsync(151);
+
+      expect(windowManager.sendStartDictation).toHaveBeenCalledTimes(1);
+      expect(windowManager.sendStartDictation).toHaveBeenCalledWith(
+        expect.objectContaining({ outputMode: activeRoute })
+      );
+
+      const release = (route: string) =>
+        windowsKeyManager.emit("key-up", keyFor(route), route);
+      if (releaseSuppressedFirst) {
+        release(suppressedRoute);
+        expect(windowManager.sendStopDictation).not.toHaveBeenCalled();
+        release(activeRoute);
+      } else {
+        release(activeRoute);
+        release(suppressedRoute);
+      }
+
+      expect(windowManager.sendStopDictation).toHaveBeenCalledTimes(1);
+      expect(windowManager.sendStopDictation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: windowManager.sendStartDictation.mock.calls[0][0].sessionId,
+          outputMode: activeRoute,
+        })
+      );
+      controller.dispose();
+    }
+  );
+
   it("applies a bounded safety stop to a held push-to-talk route", async () => {
     vi.useFakeTimers();
     const { controller, windowManager, windowsKeyManager } = createPushHarness();

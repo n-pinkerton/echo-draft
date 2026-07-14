@@ -24,6 +24,7 @@ export interface CleanupOutcome {
   modelSource?: "selected" | "managed";
   provider?: string | null;
   retryCount?: number;
+  preferredSpellingApplied?: boolean;
   metrics?: Record<string, unknown>;
 }
 
@@ -39,6 +40,7 @@ export interface TranscriptionMeta {
   delivery?: {
     status: "inserted" | "clipboard" | "clipboard_fallback" | "failed" | string;
     succeeded: boolean;
+    reasonCode?: string;
     error?: string;
   };
   error?: string;

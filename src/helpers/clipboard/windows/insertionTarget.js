@@ -1,3 +1,9 @@
+/**
+ * Capture the owning application window for a queued insert. The product
+ * contract intentionally uses the current caret inside that authenticated app
+ * when delivery completes (so stacked dictations follow the user's cursor),
+ * while refusing to inject into a different or restarted process.
+ */
 async function captureInsertionTarget(manager) {
   if (manager.deps.platform !== "win32") {
     return {

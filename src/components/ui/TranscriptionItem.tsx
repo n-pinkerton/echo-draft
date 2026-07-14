@@ -3,6 +3,7 @@ import { Button } from "./button";
 import { Copy, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
 import { getReasoningModelLabel } from "../../models/ModelRegistry";
+import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 import { sanitizeOpaqueRequestId } from "../../utils/diagnosticSanitizers";
 import { cn } from "../lib/utils";
 
@@ -17,6 +18,37 @@ interface TranscriptionItemProps {
 }
 
 const TEXT_PREVIEW_LENGTH = 180;
+
+const DELIVERY_PRESENTATION: Record<
+  string,
+  { badge: string; detail: string; tone: "warning" | "destructive" }
+> = {
+  clipboard_fallback: {
+    badge: "Kept in clipboard",
+    detail: "Insert failed; text kept in clipboard",
+    tone: "warning",
+  },
+  inserted_clipboard_warning: {
+    badge: "Inserted · clipboard recovery",
+    detail: "Inserted; previous clipboard recovery is pending",
+    tone: "warning",
+  },
+  clipboard_protected: {
+    badge: "Insert paused · clipboard protected",
+    detail: "Insert paused to protect existing clipboard data",
+    tone: "warning",
+  },
+  clipboard_changed: {
+    badge: "Insert failed · newer clipboard kept",
+    detail: "Insert failed; newer clipboard contents were preserved",
+    tone: "warning",
+  },
+  failed: {
+    badge: "Delivery failed",
+    detail: "Automatic text delivery failed",
+    tone: "destructive",
+  },
+};
 
 const formatDuration = (value?: unknown) => {
   if (typeof value !== "number" || Number.isNaN(value)) {
@@ -97,6 +129,7 @@ export default function TranscriptionItem({
   const model = meta.model || "";
   const cleanup = meta.cleanup ?? null;
   const cleanupFallback = cleanup?.status === "fallback";
+  const preferredSpellingApplied = cleanupAppliedPreferredSpelling(cleanup);
   const cleanupRetryCount =
     typeof cleanup?.retryCount === "number" && cleanup.retryCount > 0 ? cleanup.retryCount : 0;
   const cleanupSelectedModel = cleanup?.model
@@ -105,7 +138,12 @@ export default function TranscriptionItem({
   const cleanupAppliedModel = cleanup?.appliedModel
     ? getReasoningModelLabel(String(cleanup.appliedModel))
     : null;
-  const cleanupModelLabel = cleanup?.modelSource === "managed" ? "Managed model" : "Selected";
+  const cleanupModelLabel =
+    cleanup?.modelSource === "managed"
+      ? "Managed model"
+      : cleanup?.modelSource === "selected"
+        ? "Selected"
+        : "Model";
   const cleanupRetryAccepted = Boolean(
     !cleanupFallback && cleanupRetryCount > 0 && cleanupAppliedModel
   );
@@ -121,7 +159,15 @@ export default function TranscriptionItem({
   const hasRawText = Boolean(rawTextFromDb && rawTextFromDb.trim());
   const delivery =
     meta.delivery && typeof meta.delivery === "object"
-      ? (meta.delivery as { status?: string; error?: string })
+      ? (meta.delivery as { status?: string; reasonCode?: string; error?: string })
+      : null;
+  const deliveryPresentation = delivery?.status
+    ? DELIVERY_PRESENTATION[delivery.status] || null
+    : null;
+  const deliveryReasonCode =
+    typeof delivery?.reasonCode === "string" &&
+    /^[A-Z][A-Z0-9_]{0,95}$/.test(delivery.reasonCode)
+      ? delivery.reasonCode
       : null;
   const outputModeLabel =
     outputMode === "clipboard" ? "Clipboard" : outputMode === "file" ? "File" : "Insert";
@@ -239,6 +285,12 @@ export default function TranscriptionItem({
   if (requestId) {
     extraDiagnosticsRows.push({ label: "Request ID", value: requestId });
   }
+  if (deliveryPresentation) {
+    extraDiagnosticsRows.push({ label: "Delivery", value: deliveryPresentation.detail });
+  }
+  if (deliveryReasonCode) {
+    extraDiagnosticsRows.push({ label: "Delivery reason", value: deliveryReasonCode });
+  }
 
   return (
     <div
@@ -278,16 +330,21 @@ export default function TranscriptionItem({
             ) : null}
             {cleanupFallback ? (
               <span className="inline-flex items-center rounded-sm bg-warning/10 px-1.5 py-px text-[10px] font-medium text-warning">
-                Original preserved
+                {preferredSpellingApplied
+                  ? "Wording kept · dictionary spelling"
+                  : "Original preserved"}
               </span>
             ) : null}
-            {delivery?.status === "clipboard_fallback" ? (
-              <span className="inline-flex items-center rounded-sm bg-warning/10 px-1.5 py-px text-[10px] font-medium text-warning">
-                Kept in clipboard
-              </span>
-            ) : delivery?.status === "failed" ? (
-              <span className="inline-flex items-center rounded-sm bg-destructive/10 px-1.5 py-px text-[10px] font-medium text-destructive">
-                Delivery failed
+            {deliveryPresentation ? (
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-sm px-1.5 py-px text-[10px] font-medium",
+                  deliveryPresentation.tone === "destructive"
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-warning/10 text-warning"
+                )}
+              >
+                {deliveryPresentation.badge}
               </span>
             ) : null}
           </div>
@@ -422,7 +479,11 @@ export default function TranscriptionItem({
                     )}
                   >
                     Cleanup:{" "}
-                    {cleanupFallback ? "original transcript preserved" : String(cleanup.status)}
+                    {cleanupFallback
+                      ? preferredSpellingApplied
+                        ? "recognizer wording preserved · verified dictionary spelling applied"
+                        : "original transcript preserved"
+                      : String(cleanup.status)}
                     {cleanupFallback ? ` · ${cleanupFallbackDetail}` : ""}
                     {cleanupSelectedModel ? ` · ${cleanupModelLabel}: ${cleanupSelectedModel}` : ""}
                     {cleanupRetryAccepted ? " · Safety retry: accepted" : ""}

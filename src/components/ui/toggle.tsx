@@ -1,6 +1,7 @@
 import React from "react";
 
 interface ToggleProps {
+  id?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
@@ -9,6 +10,7 @@ interface ToggleProps {
 }
 
 export const Toggle = ({
+  id,
   checked,
   onChange,
   disabled = false,
@@ -26,6 +28,7 @@ export const Toggle = ({
 
   return (
     <button
+      id={id}
       type="button"
       role="switch"
       aria-checked={checked}

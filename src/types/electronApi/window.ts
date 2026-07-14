@@ -12,6 +12,8 @@ export interface ElectronAPIWindow {
   ) => Promise<{
     success: boolean;
     errorCode?: string;
+    clipboardWriteCommitted?: boolean;
+    clipboardRetained?: boolean;
     inserted?: boolean;
     clipboardRestored?: boolean;
     warningCode?: string;
