@@ -16,11 +16,11 @@ const {
 function isClipboardFallbackTrayStatus(status) {
   return (
     status?.stage === "warning" &&
-    status?.stageLabel === "Delivered with warning" &&
+    status?.stageLabel === "Insert failed" &&
     typeof status?.message === "string" &&
     status.message.toLowerCase().includes("kept in clipboard") &&
     typeof status?.statusLabel === "string" &&
-    status.statusLabel.toLowerCase().includes("delivered with warning")
+    status.statusLabel.toLowerCase().includes("insert failed")
   );
 }
 
