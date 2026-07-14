@@ -22,4 +22,13 @@ describe("repairMisrecognizedSpokenQuoteBoundary", () => {
   ])("leaves an ambiguous or ordinary quote phrase unchanged: %s", (source) => {
     expect(repairMisrecognizedSpokenQuoteBoundary(source)).toBe(source);
   });
+
+  it.each([".", "?", "!", "\n", "\u2028", "\u2029"])(
+    "does not infer a quote boundary across %s",
+    (boundary) => {
+      const source = `Charlie said, quote, keep option A${boundary} Later, and, quote, first confirm the budget, second schedule the review, and third retain the caveat.`;
+
+      expect(repairMisrecognizedSpokenQuoteBoundary(source)).toBe(source);
+    }
+  );
 });

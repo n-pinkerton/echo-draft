@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.11] - 2026-07-15
+
+### Fixed
+
+- **Long-Dictation Cleanup Fidelity**: Accepts safe punctuation and time-formatting improvements without falsely treating them as omissions, while continuing to reject changed times, missing intent, and substantive rewrites.
+- **Spoken Quote Recovery**: Repairs the narrow recognizer artifact produced when an attributed spoken quotation is followed by a three-part list, without trusting the repair as source content or extending it across sentence boundaries.
+- **Contextual Quote Safety**: Allows quotation marks only around an exact, immediately following source sentence and pairs repeated quote introductions in order, rejecting partial, duplicated, swapped, or over-scoped quotations.
+- **Instruction-As-Data Protection**: Applies preservation checks inside quoted dictation as well as ordinary prose, preventing cleanup from adding or executing instructions that were not spoken.
+- **Dictionary Name Preservation**: Keeps independently verified dictionary spellings through cleanup and fallback, including person names used as recipients in modified proposal phrases, while retaining identifier and technical-term safeguards.
+
 ## [1.4.10] - 2026-07-14
 
 ### Added

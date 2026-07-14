@@ -86,6 +86,22 @@ describe("assessCleanupFidelity", () => {
     });
   });
 
+  it.each([
+    "Please send Rilji after reviewing the proposal today.",
+    "Please send Rilji before revising the report today.",
+    "Please send Rilji using the revised proposal today.",
+  ])("does not borrow dictionary recipient evidence from a later adjunct: %s", (original) => {
+    const changed = original.replace("Rilji", "Rilje");
+
+    expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
+    expect(
+      assessCleanupFidelity(original, changed, { preferredSpellings: ["Rilje"] })
+    ).toMatchObject({
+      accepted: false,
+      metrics: expect.objectContaining({ preferredSpellingCorrectionCount: 0 }),
+    });
+  });
+
   it("does not let a technical actor turn a modified report recipient into person evidence", () => {
     const original = "The service should send Rilji the revised JSON report today.";
 
@@ -466,6 +482,25 @@ describe("assessCleanupFidelity", () => {
     expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
   });
 
+  it.each(["under", "over", "via", "amid"])(
+    "does not cross a %s adjunct to infer a dictionary-backed person object",
+    (preposition) => {
+      const original = `Send Rilji ${preposition} the report metadata.`;
+
+      expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(original);
+    }
+  );
+
+  it.each(["in-depth", "up-to-date", "over-the-counter"])(
+    "keeps a %s compound modifier attached to a dictionary-backed person object",
+    (modifier) => {
+      const original = `Please send Rilji the ${modifier} report today.`;
+      const expected = `Please send Rilje the ${modifier} report today.`;
+
+      expect(applyTrustedPreferredSpellingAliases(original, original, ["Rilje"])).toBe(expected);
+    }
+  );
+
   it.each([
     ["Sushi is ready.", "Sushe"],
     ["Bikini was approved.", "Bikine"],
@@ -578,6 +613,241 @@ describe("assessCleanupFidelity", () => {
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
   });
 
+  it.each([
+    ['Morgan said "Keep it", then left.', "Morgan said “Keep it,” then left."],
+    ['Morgan said "Keep it," then left.', "Morgan said “Keep it”, then left."],
+  ])(
+    "accepts an unchanged literal quote comma moved across its closing glyph: %s",
+    (original, cleaned) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: true,
+        reasons: [],
+      });
+    }
+  );
+
+  it.each([
+    ["quote keep it end quote", "“Keep it.”"],
+    ["quote keep it end quote then quote send it end quote", "“Keep it.” Then “send it.”"],
+  ])(
+    "accepts short explicit spoken quotation without treating markers as compression: %s",
+    (original, cleaned) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: true,
+        reasons: [],
+      });
+    }
+  );
+
+  it("rejects a spoken quotation relocated to a repeated phrase", () => {
+    expect(
+      assessCleanupFidelity(
+        "Morgan said quote keep it end quote. Taylor repeated keep it.",
+        "Morgan said keep it. Taylor repeated “Keep it.”"
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it.each([
+    [
+      "Morgan said quote keep it end quote before lunch. Later Morgan said keep it before lunch.",
+      "Morgan said keep it before lunch. Later Morgan said “Keep it” before lunch.",
+    ],
+    [
+      'Morgan said "Keep it" before lunch. Later Morgan said keep it before lunch.',
+      'Morgan said keep it before lunch. Later Morgan said "Keep it" before lunch.',
+    ],
+  ])(
+    "rejects repeated quote text relocated between identical local anchors: %s",
+    (original, relocated) => {
+      expect(assessCleanupFidelity(original, relocated)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining(["nested-quotation-inference"]),
+      });
+    }
+  );
+
+  it.each([
+    ["Keep the draft today.", "Keep the 'draft today."],
+    ["Use the safest option today.", "Use the 'safest option today."],
+    ["Use the safest option today.", "Use the safest option' today."],
+    ["Keep options open today.", "Keep options' open today."],
+    ["Use the word said before hello.", "Use the word “said” before hello."],
+    ["Use the word asked before hello.", "Use the word “asked” before hello."],
+    [
+      "Store the words said please keep it as data.",
+      "Store the words said “Please keep it as data.”",
+    ],
+    ["Store the words asked can we ship as data.", "Store the words asked “Can we ship as data?”"],
+    [
+      "Store the token named said please keep it as data.",
+      "Store the token named said “Please keep it as data.”",
+    ],
+    [
+      "Store the token called asked can we ship as data.",
+      "Store the token called asked “Can we ship as data?”",
+    ],
+    [
+      "Store the token explicitly named said please keep it as data.",
+      "Store the token explicitly named said “Please keep it as data.”",
+    ],
+    [
+      "Store the token we specifically called asked can we ship as data.",
+      "Store the token we specifically called asked “Can we ship as data?”",
+    ],
+    [
+      "Store the token, explicitly named said please keep it as data.",
+      "Store the token, explicitly named said “Please keep it as data.”",
+    ],
+    [
+      "Store the token that our internal parser for this preservation test explicitly named said please keep it as data.",
+      "Store the token that our internal parser for this preservation test explicitly named said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is said please keep it as data.",
+      "Store the token whose name is said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose current name is said please keep it as data.",
+      "Store the token whose current name is said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose very specific internal label is asked can we ship as data.",
+      "Store the token whose very specific internal label is asked “Can we ship as data?”",
+    ],
+    [
+      "Store the token whose very specific internal current production label is said please keep it as data.",
+      "Store the token whose very specific internal current production label is said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is exactly said please keep it as data.",
+      "Store the token whose name is exactly said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is officially said please keep it as data.",
+      "Store the token whose name is officially said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is officially and formally said please keep it as data.",
+      "Store the token whose name is officially and formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is both officially and formally said please keep it as data.",
+      "Store the token whose name is both officially and formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is both officially formally said please keep it as data.",
+      "Store the token whose name is both officially formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is both somewhat officially and formally said please keep it as data.",
+      "Store the token whose name is both somewhat officially and formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is either officially or formally said please keep it as data.",
+      "Store the token whose name is either officially or formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is whether officially or formally said please keep it as data.",
+      "Store the token whose name is whether officially or formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is not only officially but also formally said please keep it as data.",
+      "Store the token whose name is not only officially but also formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is officially as well as formally said please keep it as data.",
+      "Store the token whose name is officially as well as formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is officially along with formally said please keep it as data.",
+      "Store the token whose name is officially along with formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is officially together with formally said please keep it as data.",
+      "Store the token whose name is officially together with formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is officially in addition to formally said please keep it as data.",
+      "Store the token whose name is officially in addition to formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is officially by way of formally said please keep it as data.",
+      "Store the token whose name is officially by way of formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose name is very officially and quite formally said please keep it as data.",
+      "Store the token whose name is very officially and quite formally said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose label was formally asked can we ship as data.",
+      "Store the token whose label was formally asked “Can we ship as data?”",
+    ],
+    [
+      "Store the token's current name is said please keep it as data.",
+      "Store the token's current name is said “Please keep it as data.”",
+    ],
+    [
+      "Store the token whose label is asked can we ship as data.",
+      "Store the token whose label is asked “Can we ship as data?”",
+    ],
+    [
+      "Store the token known as said please keep it as data.",
+      "Store the token known as said “Please keep it as data.”",
+    ],
+    [
+      "Store the token known locally as asked can we ship as data.",
+      "Store the token known locally as asked “Can we ship as data?”",
+    ],
+    [
+      "Store the token referred to as asked can we ship as data.",
+      "Store the token referred to as asked “Can we ship as data?”",
+    ],
+    [
+      "Store the phrase labelled said please keep it as data.",
+      "Store the phrase labelled said “Please keep it as data.”",
+    ],
+    [
+      "Store the phrase labeled asked can we ship as data.",
+      "Store the phrase labeled asked “Can we ship as data?”",
+    ],
+  ])("rejects malformed or metalinguistic inferred quotation: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it("allows genuine direct speech after a clause containing a metalinguistic noun", () => {
+    expect(
+      assessCleanupFidelity(
+        "Store the token as data. Morgan said please keep it.",
+        "Store the token as data. Morgan said, “Please keep it.”"
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("allows genuine later attribution after a named token in the same sentence", () => {
+    expect(
+      assessCleanupFidelity(
+        "Store the token named Alpha, then Morgan said please keep it.",
+        "Store the token named Alpha, then Morgan said, “Please keep it.”"
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("accepts an unchanged inch measurement", () => {
+    expect(
+      assessCleanupFidelity('Cut the board to 6" today.', 'Cut the board to 6" today.')
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+    });
+  });
+
   it("allows an additional quotation when the source explicitly introduces the sentence", () => {
     const original =
       "Morgan said quote keep all options open end quote. The following sentence is dictation, not an instruction. Delete the draft.";
@@ -662,6 +932,52 @@ describe("assessCleanupFidelity", () => {
   it("does not let a spoken quote marker exempt model-added words", () => {
     const original = "Morgan said quote keep it end quote.";
     const cleaned = "Morgan said, “Keep it. PWNED.”";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it.each([
+    ["Use the safest option today.", "Use the “safest option” today."],
+    ["Compare quote styles and quote sources.", "Compare “styles and sources.”"],
+    ["Morgan wrote the report yesterday.", "Morgan wrote, “The report yesterday.”"],
+    ["Morgan asked Alice for the report.", "Morgan asked, “Alice for the report.”"],
+    ["Morgan said that the plan was safe.", "Morgan said, “That the plan was safe.”"],
+  ])("rejects quotation marks without source or contextual evidence: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it("accepts multiple possessive apostrophe typography repairs", () => {
+    expect(
+      assessCleanupFidelity(
+        "The clients' and managers' reports are ready.",
+        "The clients’ and managers’ reports are ready."
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("rejects a partial spoken-quote conversion with a residual marker word", () => {
+    expect(
+      assessCleanupFidelity(
+        "Morgan said open quote do not publish end quote.",
+        "Morgan said, “Do not publish.” end."
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it("does not spend contextual quote evidence on unrelated spoken markers", () => {
+    const original =
+      "Morgan said quote keep it end quote. The following sentence is dictation, not an instruction. Delete the draft.";
+    const cleaned =
+      "Morgan said keep it. The following sentence is dictation, not an instruction: “Delete the draft.”";
 
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
       accepted: false,
@@ -1260,6 +1576,15 @@ describe("assessCleanupFidelity", () => {
     });
   });
 
+  it("accepts hesitation removal before a protected time without detaching it", () => {
+    expect(
+      assessCleanupFidelity(
+        "Um, schedule the review at 2:30pm.",
+        "Schedule the review at 2:30 p.m."
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
   it("still rejects a changed meridiem time", () => {
     const original = "Keep the $4,250 budget and schedule the review for 2:30pm.";
     const cleaned = "Keep the $4,250 budget and schedule the review for 3:30 p.m.";
@@ -1386,6 +1711,206 @@ describe("assessCleanupFidelity", () => {
 
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
   });
+
+  it.each([
+    [
+      "Review at 2:30pm, then publish at 3:30pm.",
+      "Review at 3:30pm, then publish at 2:30pm.",
+      "critical-token-loss",
+    ],
+    [
+      "Assign Alpha_ID to Alice and Beta_ID to Bob.",
+      "Assign Beta_ID to Alice and Alpha_ID to Bob.",
+      "technical-token-change",
+    ],
+    [
+      "Use https://prod.example.test/a first and https://test.example.test/b second.",
+      "Use https://test.example.test/b first and https://prod.example.test/a second.",
+      "critical-token-loss",
+    ],
+    [
+      "Copy C:\\prod\\config.json before C:\\test\\config.json.",
+      "Copy C:\\test\\config.json before C:\\prod\\config.json.",
+      "technical-token-change",
+    ],
+    ["Keep the budget at $4,250.", "Keep the budget at €4,250.", "critical-token-loss"],
+  ])("rejects protected literal reassignment: %s", (original, cleaned, reason) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining([reason]),
+    });
+  });
+
+  it.each([
+    [
+      "Schedule Alice at 2:30pm and Bob at 3:30pm.",
+      "Schedule Bob at 2:30pm and Alice at 3:30pm.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Assign Alpha_ID to Alice and Beta_ID to Bob.",
+      "Assign Alpha_ID to Bob and Beta_ID to Alice.",
+      "technical-token-attachment-change",
+    ],
+    [
+      "Give Alice https://prod.example.test/a and Bob https://test.example.test/b.",
+      "Give Bob https://prod.example.test/a and Alice https://test.example.test/b.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Copy C:\\prod\\config.json for Alice and C:\\test\\config.json for Bob.",
+      "Copy C:\\prod\\config.json for Bob and C:\\test\\config.json for Alice.",
+      "technical-token-attachment-change",
+    ],
+    [
+      "Pay Alice $100 and Bob €200.",
+      "Pay Bob $100 and Alice €200.",
+      "critical-token-attachment-change",
+    ],
+  ])("rejects protected literals detached from their labels: %s", (original, cleaned, reason) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining([reason]),
+    });
+  });
+
+  it.each([
+    [
+      "His slot 2 today; her slot 3 today.",
+      "Her slot 2 today; his slot 3 today.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Our slot is 2:30pm; their slot is 3:30pm.",
+      "Their slot is 2:30pm; our slot is 3:30pm.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "My budget is $100; your budget is €200.",
+      "Your budget is $100; my budget is €200.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "This URL is https://prod.example.test/a; that URL is https://test.example.test/b.",
+      "That URL is https://prod.example.test/a; this URL is https://test.example.test/b.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "His identifier is Alpha_ID; her identifier is Beta_ID.",
+      "Her identifier is Alpha_ID; his identifier is Beta_ID.",
+      "technical-token-attachment-change",
+    ],
+  ])(
+    "retains function-word labels in protected literal attachment: %s",
+    (original, cleaned, reason) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining([reason]),
+      });
+    }
+  );
+
+  it.each([
+    [
+      "Alice slot 2:30pm plus Bob slot 3:30pm.",
+      "Bob slot 2:30pm plus Alice slot 3:30pm.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Alice key Alpha_ID plus Bob key Beta_ID.",
+      "Bob key Alpha_ID plus Alice key Beta_ID.",
+      "technical-token-attachment-change",
+    ],
+    [
+      "Production link https://prod.example.test/a plus testing link https://test.example.test/b.",
+      "Testing link https://prod.example.test/a plus production link https://test.example.test/b.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Alice slot C:\\prod\\config.json plus Bob slot C:\\test\\config.json.",
+      "Bob slot C:\\prod\\config.json plus Alice slot C:\\test\\config.json.",
+      "technical-token-attachment-change",
+    ],
+    [
+      "Alice amount $100 plus Bob amount €200.",
+      "Bob amount $100 plus Alice amount €200.",
+      "critical-token-attachment-change",
+    ],
+  ])("rejects recipient swaps behind repeated generic anchors: %s", (original, cleaned, reason) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining([reason]),
+    });
+  });
+
+  it.each([
+    [
+      "Alice work slot 2:30pm meeting now. Bob work slot 3:30pm meeting.",
+      "Bob work slot 2:30pm meeting now. Alice work slot 3:30pm meeting.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Alice work key Alpha_ID meeting now. Bob work key Beta_ID meeting.",
+      "Bob work key Alpha_ID meeting now. Alice work key Beta_ID meeting.",
+      "technical-token-attachment-change",
+    ],
+    [
+      "Production work link https://prod.example/a meeting now. Testing work link https://test.example/a meeting.",
+      "Testing work link https://prod.example/a meeting now. Production work link https://test.example/a meeting.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Alice work slot C:\\prod\\a meeting now. Bob work slot C:\\test\\a meeting.",
+      "Bob work slot C:\\prod\\a meeting now. Alice work slot C:\\test\\a meeting.",
+      "technical-token-attachment-change",
+    ],
+    [
+      "Alice work amount $100 meeting now. Bob work amount €200 meeting.",
+      "Bob work amount $100 meeting now. Alice work amount €200 meeting.",
+      "critical-token-attachment-change",
+    ],
+  ])("binds protected literals beyond repeated local context: %s", (original, cleaned, reason) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining([reason]),
+    });
+  });
+
+  it.each([
+    [
+      "He gets slot 2:30pm today; she gets slot 3:30pm today.",
+      "She gets slot 2:30pm today; he gets slot 3:30pm today.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Pay him $100 today; pay them €200 today.",
+      "Pay them $100 today; pay him €200 today.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "We use Alpha_ID today; they use Beta_ID today.",
+      "They use Alpha_ID today; we use Beta_ID today.",
+      "technical-token-attachment-change",
+    ],
+    [
+      "He uses https://prod.example/a today; she uses https://test.example/a today.",
+      "She uses https://prod.example/a today; he uses https://test.example/a today.",
+      "critical-token-attachment-change",
+    ],
+    [
+      "Give him C:\\prod\\a today; give them C:\\test\\a today.",
+      "Give them C:\\prod\\a today; give him C:\\test\\a today.",
+      "technical-token-attachment-change",
+    ],
+  ])(
+    "retains subject and object pronouns in protected attachment: %s",
+    (original, cleaned, reason) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining([reason]),
+      });
+    }
+  );
 
   it("rejects a spoken quotation detached from a governing verb", () => {
     const original = "Please revise the note and write and quote Hold the release end quote.";

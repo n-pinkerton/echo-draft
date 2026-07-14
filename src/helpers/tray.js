@@ -9,6 +9,7 @@ const STATUS_ICON_COLORS = {
   idle: "#64748b",
   starting: "#38bdf8",
   listening: "#ef4444",
+  queued: "#0ea5e9",
   transcribing: "#f59e0b",
   cleaning: "#a855f7",
   inserting: "#22c55e",

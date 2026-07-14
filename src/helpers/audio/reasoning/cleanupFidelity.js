@@ -1,11 +1,7 @@
 import { countWords } from "../utils/wordCount";
 import { hasGovernedExplicitQuoteAttachment } from "./cleanupOutputRepairs";
 import {
-  countQuotationGlyphs,
-  countSpokenQuoteMarkers,
-  countUnverifiedContextualQuotationPairs,
-  countVerifiedContextualQuotationPairs,
-  getAppliedSpokenQuoteMarkerTexts,
+  countUnverifiedQuotationPairs,
   getSpokenQuoteAttachmentComparisonText,
 } from "./cleanupQuoteFidelity";
 
@@ -569,6 +565,95 @@ const PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS = new Set([
   "team",
   "work",
 ]);
+const PREFERRED_SPELLING_ADJUNCT_BOUNDARY_WORDS = new Set([
+  "aboard",
+  "about",
+  "above",
+  "across",
+  "after",
+  "against",
+  "along",
+  "although",
+  "amid",
+  "among",
+  "and",
+  "are",
+  "around",
+  "at",
+  "because",
+  "before",
+  "behind",
+  "below",
+  "beneath",
+  "beside",
+  "between",
+  "beyond",
+  "but",
+  "by",
+  "can",
+  "concerning",
+  "considering",
+  "could",
+  "despite",
+  "did",
+  "does",
+  "down",
+  "during",
+  "except",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "if",
+  "in",
+  "inside",
+  "into",
+  "is",
+  "like",
+  "may",
+  "might",
+  "must",
+  "near",
+  "of",
+  "off",
+  "on",
+  "once",
+  "onto",
+  "opposite",
+  "or",
+  "outside",
+  "over",
+  "past",
+  "per",
+  "regarding",
+  "round",
+  "should",
+  "since",
+  "then",
+  "through",
+  "throughout",
+  "to",
+  "toward",
+  "under",
+  "underneath",
+  "unless",
+  "unlike",
+  "until",
+  "up",
+  "upon",
+  "using",
+  "via",
+  "was",
+  "were",
+  "when",
+  "while",
+  "will",
+  "with",
+  "within",
+  "without",
+  "would",
+]);
 const PREFERRED_SPELLING_ALIAS_BLOCKED_CONTEXT_WORDS = new Set([
   "agent",
   "alias",
@@ -930,8 +1015,40 @@ const getPreferredSpellingPredicatePrefixWords = (clausePrefix) => {
 
 const getPreferredSpellingPredicateSuffixWords = (clauseSuffix) => {
   const raw = String(clauseSuffix || "");
-  const boundaryMatch = raw.match(/[,:—–]|\b(?:and|but|then)\b/iu);
-  return getWords(boundaryMatch ? raw.slice(0, boundaryMatch.index) : raw);
+  const isHyphenBound = (start, end) =>
+    /[-‐‑‒–—]/u.test(raw[start - 1] || "") || /[-‐‑‒–—]/u.test(raw[end] || "");
+  const punctuationBoundary = Array.from(raw.matchAll(/[,:—–]/gu)).find(
+    (match) =>
+      !/[—–]/u.test(match[0]) ||
+      !(
+        /[\p{L}\p{M}]/u.test(raw[(match.index || 0) - 1] || "") &&
+        /[\p{L}\p{M}]/u.test(raw[(match.index || 0) + 1] || "")
+      )
+  );
+  const punctuationIndex = punctuationBoundary?.index ?? -1;
+  const wordBoundary = Array.from(raw.matchAll(/[\p{L}\p{M}]+/gu)).find((match) => {
+    const start = match.index || 0;
+    const end = start + match[0].length;
+    return (
+      !isHyphenBound(start, end) &&
+      PREFERRED_SPELLING_ADJUNCT_BOUNDARY_WORDS.has(match[0].toLocaleLowerCase())
+    );
+  });
+  const boundaryIndexes = [punctuationIndex, wordBoundary?.index ?? -1].filter(
+    (index) => index >= 0
+  );
+  const boundaryIndex = boundaryIndexes.length > 0 ? Math.min(...boundaryIndexes) : raw.length;
+  const prefix = raw.slice(0, boundaryIndex);
+  const hyphenBoundBoundaryWords = new Set(
+    Array.from(prefix.matchAll(/[\p{L}\p{M}]+/gu))
+      .filter((match) => {
+        const start = match.index || 0;
+        return isHyphenBound(start, start + match[0].length);
+      })
+      .map((match) => match[0].toLocaleLowerCase())
+      .filter((word) => PREFERRED_SPELLING_ADJUNCT_BOUNDARY_WORDS.has(word))
+  );
+  return getWords(prefix).filter((word) => !hyphenBoundBoundaryWords.has(word));
 };
 
 const getPreferredSpellingCommaContinuation = (clauseSuffix) => {
@@ -1004,12 +1121,22 @@ const hasTrustedPreferredSpellingPersonDoubleObject = (suffixWords) => {
   while (["a", "an", "her", "his", "our", "the", "their", "your"].includes(suffixWords[cursor])) {
     cursor += 1;
   }
-  const objectOffset = suffixWords
-    .slice(cursor, cursor + 5)
-    .findIndex((word) => PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS.has(word));
+  const objectWindow = suffixWords.slice(cursor, cursor + 5);
+  const objectOffset = objectWindow.findIndex((word) =>
+    PREFERRED_SPELLING_ALIAS_PERSON_POSSESSIONS.has(word)
+  );
   if (objectOffset < 0) return false;
   const objectModifiers = suffixWords.slice(cursor, cursor + objectOffset);
-  if (objectModifiers.some(isPreferredSpellingTechnicalContextWord)) return false;
+  if (
+    objectModifiers.some(
+      (word) =>
+        isPreferredSpellingTechnicalContextWord(word) ||
+        PREFERRED_SPELLING_ADJUNCT_BOUNDARY_WORDS.has(word) ||
+        /ing$/u.test(word)
+    )
+  ) {
+    return false;
+  }
   cursor += objectOffset;
   const object = suffixWords[cursor];
 
@@ -2199,51 +2326,159 @@ const countMarkerAttachmentChanges = (original, cleaned, markers) => {
   return changed;
 };
 
-const getCriticalTokens = (value) => {
+const LITERAL_ATTACHMENT_LABEL_WORDS = new Set([
+  "he",
+  "her",
+  "hers",
+  "him",
+  "his",
+  "i",
+  "it",
+  "its",
+  "me",
+  "my",
+  "our",
+  "ours",
+  "she",
+  "that",
+  "their",
+  "theirs",
+  "them",
+  "these",
+  "this",
+  "those",
+  "they",
+  "us",
+  "we",
+  "your",
+  "yours",
+  "you",
+]);
+const LITERAL_ATTACHMENT_IGNORABLE_FILLERS = new Set(["er", "erm", "hm", "hmm", "uh", "um"]);
+
+const getLiteralAttachmentAnchor = (value, index, direction) => {
   const raw = String(value || "");
-  const matches = raw.match(
-    /(?:https?:\/\/|www\.)[^\s]+|[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b\d[\d,.:/%-]*(?:\s*[ap]\.?\s*m\.?(?=$|[^\p{L}\p{N}]))?/giu
+  const nearby =
+    direction < 0
+      ? raw.slice(Math.max(0, index - 120), index)
+      : raw.slice(index, Math.min(raw.length, index + 120));
+  const words = getWords(nearby).filter(
+    (word) =>
+      !LITERAL_ATTACHMENT_IGNORABLE_FILLERS.has(word) &&
+      (!CONTENT_STOP_WORDS.has(word) || LITERAL_ATTACHMENT_LABEL_WORDS.has(word))
   );
-  return Array.from(
-    new Set(
-      (matches || []).map((token) => {
-        const normalized = token
-          .toLowerCase()
-          .replace(/[),.;:!?]+$/g, "")
-          .replace(/,(?=\d)/g, "");
-        const time = normalized.match(/^(\d{1,2}:\d{2})\s*([ap])\.?\s*m\.?$/u);
-        return time ? `${time[1]}${time[2]}m` : normalized.replace(/[.]+$/g, "");
-      })
+  return direction < 0 ? words.slice(-2).join(" ") : words.slice(0, 2).join(" ");
+};
+
+const getLiteralAttachmentIdentity = (value, occurrence) => ({
+  // Bind each value to the complete normalized prefix, not a fixed local
+  // window. Repeating generic labels must not hide an earlier recipient or
+  // environment swap while protected values remain in the same order.
+  prefix: getWords(String(value || "").slice(0, occurrence.index))
+    .filter(
+      (word) =>
+        !LITERAL_ATTACHMENT_IGNORABLE_FILLERS.has(word) &&
+        (!CONTENT_STOP_WORDS.has(word) || LITERAL_ATTACHMENT_LABEL_WORDS.has(word))
     )
-  );
+    .join(" "),
+  right: getLiteralAttachmentAnchor(value, occurrence.index + occurrence.rawLength, 1),
+});
+
+const matchOrderedTokenOccurrences = (expectedOccurrences, actualOccurrences) => {
+  const missingOccurrences = [];
+  const matchedPairs = [];
+  let cursor = 0;
+  for (const expected of expectedOccurrences) {
+    const matchIndex = actualOccurrences.findIndex(
+      (actual, index) => index >= cursor && actual.token === expected.token
+    );
+    if (matchIndex < 0) {
+      missingOccurrences.push(expected);
+      continue;
+    }
+    matchedPairs.push({ actual: actualOccurrences[matchIndex], expected });
+    cursor = matchIndex + 1;
+  }
+  return { matchedPairs, missingOccurrences };
+};
+
+const countLiteralAttachmentChanges = (matchedPairs, expectedValue, actualValue) =>
+  matchedPairs.filter(({ actual, expected }) => {
+    const expectedIdentity = getLiteralAttachmentIdentity(expectedValue, expected);
+    const actualIdentity = getLiteralAttachmentIdentity(actualValue, actual);
+    return (
+      expectedIdentity.prefix !== actualIdentity.prefix ||
+      expectedIdentity.right !== actualIdentity.right
+    );
+  }).length;
+
+const normalizeCriticalToken = (token) => {
+  const normalized = String(token || "")
+    .toLowerCase()
+    .replace(/[),.;:!?]+$/g, "")
+    .replace(/\s+/g, "")
+    .replace(/,(?=\d)/g, "");
+  const time = normalized.match(/^(\d{1,2}:\d{2})([ap])\.?m\.?$/u);
+  return time ? `${time[1]}${time[2]}m` : normalized.replace(/[.]+$/g, "");
+};
+
+const getCriticalTokenOccurrences = (value) => {
+  const raw = String(value || "");
+  const pattern =
+    /(?:https?:\/\/|www\.)[^\s]+|[\w.+-]+@[\w.-]+\.[a-z]{2,}|(?:\b(?:au|ca|nz|us)\s*)?[$€£¥]\s*\d[\d,.:/%-]*|\b\d[\d,.:/%-]*(?:\s*[ap]\.?\s*m\.?(?=$|[^\p{L}\p{N}]))?/giu;
+  return Array.from(raw.matchAll(pattern), (match) => ({
+    index: match.index || 0,
+    rawLength: match[0].length,
+    token: normalizeCriticalToken(match[0]),
+  }));
 };
 
 const isCanonicalMeridiemTimeToken = (value) => /^\d{1,2}:\d{2}[ap]m$/iu.test(value || "");
 
-const tokenizeTechnicalText = (value) =>
-  (String(value || "").match(TECHNICAL_TOKEN_PATTERN) || []).map((token) =>
-    token.toLocaleLowerCase()
-  );
-
-const getProtectedTechnicalTokens = (value) => {
+const getTechnicalTokenOccurrences = (value) => {
   const raw = String(value || "");
-  const protectedTokens = new Set(
-    (raw.match(TECHNICAL_TOKEN_PATTERN) || [])
-      .filter(
-        (token) =>
-          /\d/.test(token) ||
-          /[._+:/\\]/.test(token) ||
-          (/^[A-Z][A-Z0-9]{1,}$/.test(token) && token.length >= 2)
+  return Array.from(raw.matchAll(new RegExp(TECHNICAL_TOKEN_PATTERN, "g")), (match) => ({
+    index: match.index || 0,
+    rawLength: match[0].length,
+    token: match[0].toLocaleLowerCase(),
+  }));
+};
+
+const getProtectedTechnicalTokenOccurrences = (value) => {
+  const raw = String(value || "");
+  const protectedOccurrences = Array.from(raw.matchAll(new RegExp(TECHNICAL_TOKEN_PATTERN, "g")))
+    .filter(({ 0: token }) =>
+      Boolean(
+        /\d/.test(token) ||
+        /[._+:/\\]/.test(token) ||
+        (/^[A-Z][A-Z0-9]{1,}$/.test(token) && token.length >= 2)
       )
-      .map((token) => token.toLocaleLowerCase())
-  );
+    )
+    .map((match) => ({
+      index: match.index || 0,
+      rawLength: match[0].length,
+      token: match[0].toLocaleLowerCase(),
+    }));
 
   for (const match of raw.matchAll(TECHNICAL_CONTEXT_PATTERN)) {
     const token = match[1]?.toLocaleLowerCase();
-    if (token && !CONTENT_STOP_WORDS.has(token)) protectedTokens.add(token);
+    if (token && !CONTENT_STOP_WORDS.has(token)) {
+      protectedOccurrences.push({
+        index: match.index || 0,
+        rawLength: match[1].length,
+        token,
+      });
+    }
   }
 
-  return protectedTokens;
+  return protectedOccurrences
+    .sort((left, right) => left.index - right.index)
+    .filter(
+      (occurrence, index, values) =>
+        index === 0 ||
+        occurrence.index !== values[index - 1].index ||
+        occurrence.token !== values[index - 1].token
+    );
 };
 
 const isWholeOutputQuoted = (value) => {
@@ -2253,12 +2488,6 @@ const isWholeOutputQuoted = (value) => {
       trimmed.length > open.length + close.length &&
       trimmed.startsWith(open) &&
       trimmed.endsWith(close)
-  );
-};
-
-const getAppliedSpokenQuoteMarkerWords = (original, cleaned) => {
-  return getAppliedSpokenQuoteMarkerTexts(original, cleaned).flatMap((marker) =>
-    getContentWordTokens(marker)
   );
 };
 
@@ -2501,7 +2730,8 @@ const isCompletionOrAnswerStyle = (rawText, normalizedText) =>
 export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   const original = typeof originalText === "string" ? originalText.trim() : "";
   const cleaned = typeof cleanedText === "string" ? cleanedText.trim() : "";
-  const originalWords = countWords(original);
+  const quoteAdjustedOriginal = getSpokenQuoteAttachmentComparisonText(original, cleaned);
+  const originalWords = countWords(quoteAdjustedOriginal);
   const cleanedWords = countWords(cleaned);
   const wordRatio =
     originalWords > 0 ? cleanedWords / originalWords : cleanedWords === 0 ? 1 : null;
@@ -2533,17 +2763,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     reasons.push("added-whole-output-quotation");
   }
 
-  const spokenQuoteMarkerCount = countSpokenQuoteMarkers(original);
-  const contextualQuoteGlyphAllowance =
-    countVerifiedContextualQuotationPairs(original, cleaned) * 2;
-  if (cleaned && countUnverifiedContextualQuotationPairs(original, cleaned) > 0) {
-    reasons.push("nested-quotation-inference");
-  }
-  if (
-    cleaned &&
-    spokenQuoteMarkerCount >= 2 &&
-    countQuotationGlyphs(cleaned) > spokenQuoteMarkerCount + contextualQuoteGlyphAllowance
-  ) {
+  if (cleaned && countUnverifiedQuotationPairs(original, cleaned) > 0) {
     reasons.push("nested-quotation-inference");
   }
 
@@ -2598,12 +2818,12 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   // Compare phrase order against an occurrence-bound equivalent of the source.
   // Otherwise an approved canonical spelling repair changes both adjacent
   // bigrams and can look like a clause reorder to the attachment guard.
-  const comparisonOriginalWords = preferredSpellingAlignment.comparisonOriginalWords;
   const comparisonOriginalText = preferredSpellingAlignment.comparisonOriginalText;
   const comparisonOriginalAttachmentText = getSpokenQuoteAttachmentComparisonText(
     comparisonOriginalText,
     cleaned
   );
+  const comparisonOriginalWords = getWords(comparisonOriginalAttachmentText);
   const appliedSpokenFormattingRanges = getAppliedSpokenFormattingRanges(
     original,
     cleaned,
@@ -2624,7 +2844,6 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     occurrenceSemanticContentDiff.missingWords,
     [
       ...getAppliedSpokenFormattingWords(appliedSpokenFormattingRanges),
-      ...getAppliedSpokenQuoteMarkerWords(original, cleaned),
       ...getAllowedStructuralRewriteWords(original, cleaned),
     ]
   );
@@ -2681,22 +2900,58 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   ) {
     reasons.push("substantive-rewrite-risk");
   }
-  const criticalTokens = getCriticalTokens(original);
-  const cleanedCriticalTokens = new Set(getCriticalTokens(cleaned));
-  const missingCriticalTokens = criticalTokens.filter((token) => !cleanedCriticalTokens.has(token));
+  const criticalTokenOccurrences = getCriticalTokenOccurrences(comparisonOriginalAttachmentText);
+  const cleanedCriticalTokenOccurrences = getCriticalTokenOccurrences(cleaned);
+  const criticalTokenMatch = matchOrderedTokenOccurrences(
+    criticalTokenOccurrences,
+    cleanedCriticalTokenOccurrences
+  );
+  const criticalTokens = criticalTokenOccurrences.map((occurrence) => occurrence.token);
+  const cleanedCriticalTokenList = cleanedCriticalTokenOccurrences.map(
+    (occurrence) => occurrence.token
+  );
+  const cleanedCriticalTokens = new Set(cleanedCriticalTokenList);
+  const missingCriticalTokens = criticalTokenMatch.missingOccurrences.map(
+    (occurrence) => occurrence.token
+  );
   if (missingCriticalTokens.length > 0) {
     reasons.push("critical-token-loss");
   }
-
-  const protectedTechnicalTokens = getProtectedTechnicalTokens(original);
-  const cleanedTechnicalTokens = new Set(tokenizeTechnicalText(cleaned));
-  const missingProtectedTechnicalTokens = [...protectedTechnicalTokens].filter(
-    (token) =>
-      !cleanedTechnicalTokens.has(token) &&
-      !(isCanonicalMeridiemTimeToken(token) && cleanedCriticalTokens.has(token))
+  const changedCriticalTokenAttachmentCount = countLiteralAttachmentChanges(
+    criticalTokenMatch.matchedPairs,
+    comparisonOriginalAttachmentText,
+    cleaned
   );
+  if (changedCriticalTokenAttachmentCount > 0) {
+    reasons.push("critical-token-attachment-change");
+  }
+
+  const protectedTechnicalTokenOccurrences = getProtectedTechnicalTokenOccurrences(
+    comparisonOriginalAttachmentText
+  );
+  const cleanedTechnicalTokenOccurrences = getTechnicalTokenOccurrences(cleaned);
+  const protectedTechnicalTokenMatch = matchOrderedTokenOccurrences(
+    protectedTechnicalTokenOccurrences,
+    cleanedTechnicalTokenOccurrences
+  );
+  const protectedTechnicalTokens = protectedTechnicalTokenOccurrences.map(
+    (occurrence) => occurrence.token
+  );
+  const missingProtectedTechnicalTokens = protectedTechnicalTokenMatch.missingOccurrences
+    .map((occurrence) => occurrence.token)
+    .filter((token) => !(isCanonicalMeridiemTimeToken(token) && cleanedCriticalTokens.has(token)));
   if (missingProtectedTechnicalTokens.length > 0) {
     reasons.push("technical-token-change");
+  }
+  const changedTechnicalTokenAttachmentCount = countLiteralAttachmentChanges(
+    protectedTechnicalTokenMatch.matchedPairs.filter(
+      ({ expected }) => !isCanonicalMeridiemTimeToken(expected.token)
+    ),
+    comparisonOriginalAttachmentText,
+    cleaned
+  );
+  if (changedTechnicalTokenAttachmentCount > 0) {
+    reasons.push("technical-token-attachment-change");
   }
 
   const changedNegations = NEGATION_MARKERS.filter(
@@ -2896,8 +3151,10 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
       orderedBigramRetention,
       criticalTokenCount: criticalTokens.length,
       missingCriticalTokenCount: missingCriticalTokens.length,
-      protectedTechnicalTokenCount: protectedTechnicalTokens.size,
+      protectedTechnicalTokenCount: protectedTechnicalTokens.length,
       missingProtectedTechnicalTokenCount: missingProtectedTechnicalTokens.length,
+      changedCriticalTokenAttachmentCount,
+      changedTechnicalTokenAttachmentCount,
       changedStanceMarkerCount: stanceChanges.length,
       changedModalMarkerCount: changedModalMarkers.length,
       changedNegationAttachmentCount,

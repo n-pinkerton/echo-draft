@@ -301,6 +301,31 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText.mock.calls[0][0]).toContain("end quote, first");
   });
 
+  it("accepts a short explicit spoken quotation in one cleanup call", async () => {
+    const original = "quote keep it end quote";
+    const cleaned = "“Keep it.”";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => cleaned),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: cleaned,
+      cleanup: { status: "applied", retryCount: 0 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
   it("does not rewrite an ambiguous second opening quote without list evidence", async () => {
     const original =
       "Charlie said, quote, keep the first option, and, quote, then choose the second option.";
@@ -352,6 +377,39 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(1);
     expect(reasoningService.processText.mock.calls[0][0]).toBe(original);
   });
+
+  it.each([".", "?", "!", "\n", "\u2028", "\u2029"])(
+    "does not prepare a quote hint across a %s boundary",
+    async (boundary) => {
+      const original = `Charlie said, quote, keep A${boundary} Later, and, quote, first choose B, second choose C, and third choose D.`;
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(async (text: string) => text),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+
+      await expect(
+        svc.processTranscriptionWithOutcome(original, "openai", null)
+      ).resolves.toMatchObject({
+        text: original,
+        cleanup: { status: "unchanged", retryCount: 0 },
+      });
+      expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+      expect(reasoningService.processText).toHaveBeenCalledWith(
+        original,
+        "gpt-5.6-luna",
+        null,
+        expect.any(Object)
+      );
+    }
+  );
 
   it("falls back when instruction-as-data output is duplicated inside a quote", async () => {
     const original =
@@ -1109,6 +1167,73 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
+  it.each(["under", "over", "via", "amid"])(
+    "does not cross a %s adjunct when applying a dictionary spelling on provider fallback",
+    async (preposition) => {
+      const original = `Send Rilji ${preposition} the report metadata.`;
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(async () => {
+          throw new Error("Provider unavailable");
+        }),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+      localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
+
+      await expect(
+        svc.processTranscriptionWithOutcome(original, "openai", null)
+      ).resolves.toMatchObject({
+        text: original,
+        cleanup: {
+          status: "fallback",
+          fallbackReason: "provider_error",
+          preferredSpellingApplied: false,
+        },
+      });
+    }
+  );
+
+  it.each(["in-depth", "up-to-date", "over-the-counter"])(
+    "keeps a %s object modifier attached while applying dictionary spelling on provider fallback",
+    async (modifier) => {
+      const original = `Please send Rilji the ${modifier} report today.`;
+      const expected = `Please send Rilje the ${modifier} report today.`;
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(async () => {
+          throw new Error("Provider unavailable");
+        }),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+      localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
+
+      await expect(
+        svc.processTranscriptionWithOutcome(original, "openai", null)
+      ).resolves.toMatchObject({
+        text: expected,
+        cleanup: {
+          status: "fallback",
+          fallbackReason: "provider_error",
+          preferredSpellingApplied: true,
+        },
+      });
+    }
+  );
+
   it("keeps a verified dictionary spelling when fidelity cleanup falls back", async () => {
     const original =
       "Please ask Rilji to keep reference 42, and set the variable Rilji to true before Friday.";
@@ -1208,6 +1333,48 @@ describe("ReasoningCleanupService", () => {
       },
     });
   });
+
+  it.each([
+    "Please send Rilji after reviewing the proposal today.",
+    "Please send Rilji before revising the report today.",
+    "Please send Rilji using the revised proposal today.",
+  ])(
+    "keeps an adjunct-adjacent dictionary token byte-identical on provider failure: %s",
+    async (original) => {
+      const reasoningService = {
+        isAvailable: vi.fn(async () => true),
+        processText: vi.fn(async () => {
+          throw new Error("Provider unavailable");
+        }),
+      };
+      const svc = new ReasoningCleanupService({
+        logger: { logReasoning: vi.fn() },
+        reasoningService,
+      });
+
+      localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+      localStorage.setItem("reasoningProvider", "openai");
+      localStorage.setItem("useReasoningModel", "true");
+      localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
+
+      await expect(
+        svc.processTranscriptionWithOutcome(original, "openai", null)
+      ).resolves.toMatchObject({
+        text: original,
+        cleanup: {
+          preferredSpellingApplied: false,
+          status: "fallback",
+          fallbackReason: "provider_error",
+        },
+      });
+      expect(reasoningService.processText).toHaveBeenCalledWith(
+        original,
+        "gpt-5.6-luna",
+        null,
+        expect.any(Object)
+      );
+    }
+  );
 
   it.each([
     ["accepted no-op", (text: string) => text, null],

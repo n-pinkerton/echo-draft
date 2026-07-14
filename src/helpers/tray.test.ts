@@ -77,6 +77,16 @@ describe("TrayManager recovery copy", () => {
     expect(trayManager.getStatusLabel(false)).toBe("Status: Cleaning 0:07 · Clipboard · 2 waiting");
   });
 
+  it("uses a distinct active tray state while a dictation is queued", () => {
+    const trayManager = new TrayManager();
+
+    trayManager.updateDictationStatus({ stage: "queued", stageLabel: "Queued" });
+    expect(trayManager.getStatusIconKey()).toBe("queued");
+
+    trayManager.updateDictationStatus({ stage: "idle", stageLabel: "Ready" });
+    expect(trayManager.getStatusIconKey()).toBe("idle");
+  });
+
   it("keeps clipboard dictation available while earlier jobs process", () => {
     const trayManager = new TrayManager();
     const sendStartDictation = vi.fn();
