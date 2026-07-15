@@ -53,4 +53,18 @@ describe("getCleanupResultNote", () => {
     expect(note).toContain("verified dictionary spelling correction");
     expect(note).not.toContain("original text was kept");
   });
+
+  it("describes recovered retry drift without claiming the retry was accepted", () => {
+    const note = getCleanupResultNote({
+      status: "unchanged",
+      retryCount: 1,
+      retryDriftRecovered: true,
+      appliedModel: null,
+      metrics: { retryDriftRecovered: true },
+    });
+
+    expect(note).toContain("changed one word and was discarded");
+    expect(note).toContain("trusted source wording was kept");
+    expect(note).not.toContain("accepted");
+  });
 });

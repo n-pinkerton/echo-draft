@@ -5,6 +5,7 @@ type CleanupResultSummary = {
   status?: string;
   fallbackReason?: string | null;
   retryCount?: number;
+  retryDriftRecovered?: boolean;
   appliedModel?: string | null;
   preferredSpellingApplied?: boolean;
   metrics?: Record<string, unknown>;
@@ -30,6 +31,12 @@ export function getCleanupResultNote(cleanup: CleanupResultSummary): string {
       return "The cleanup request failed, so the original text was kept.";
     }
     return "Cleanup could not complete, so the original text was kept.";
+  }
+
+  if (cleanup?.retryDriftRecovered === true || cleanup?.metrics?.retryDriftRecovered === true) {
+    return cleanupAppliedPreferredSpelling(cleanup)
+      ? "The safety retry changed one word and was discarded; the recognizer wording was kept with a verified dictionary spelling correction."
+      : "The safety retry changed one word and was discarded, so the trusted source wording was kept.";
   }
 
   if ((cleanup?.retryCount || 0) > 0 && cleanup?.appliedModel) {

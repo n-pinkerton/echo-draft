@@ -263,6 +263,40 @@ describe("TranscriptionItem", () => {
     expect(cleanupStatus).not.toHaveTextContent("applied");
   });
 
+  it("describes recovered retry drift without claiming the retry was accepted", () => {
+    render(
+      <TranscriptionItem
+        item={
+          makeItem("Keep every original word.", {
+            cleanup: {
+              requested: true,
+              attempted: true,
+              applied: false,
+              status: "unchanged",
+              retryCount: 1,
+              retryDriftRecovered: true,
+              model: "gpt-5.6-luna",
+              appliedModel: null,
+              metrics: { retryDriftRecovered: true },
+            },
+          }) as any
+        }
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    const cleanupStatus = screen.getByText(/Cleanup: original wording preserved/);
+    expect(cleanupStatus).toHaveTextContent("Safety retry changed one word and was discarded");
+    expect(cleanupStatus).not.toHaveTextContent("Safety retry: accepted");
+    expect(cleanupStatus).not.toHaveTextContent("Retry model:");
+  });
+
   it("labels a rejected safety retry without implying cleanup was applied", () => {
     render(
       <TranscriptionItem

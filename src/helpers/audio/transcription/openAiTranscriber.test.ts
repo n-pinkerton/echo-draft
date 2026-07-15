@@ -377,6 +377,47 @@ describe("OpenAiTranscriber", () => {
     );
   });
 
+  it("keeps the ordinary source label when a one-word safety-retry drift is discarded", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+
+    const cleanup = {
+      requested: true,
+      attempted: true,
+      applied: false,
+      status: "unchanged",
+      fallbackReason: null,
+      model: "gpt-5.6-luna",
+      appliedModel: null,
+      retryCount: 1,
+      retryDriftRecovered: true,
+      metrics: { retryDriftRecovered: true },
+    };
+    const reasoningCleanupService = {
+      processTranscriptionWithOutcome: vi.fn(async () => ({ text: "hello", cleanup })),
+    };
+    const transcriber = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+      shouldApplyReasoningCleanup: () => true,
+      getCleanupEnabledOverride: () => null,
+      reasoningCleanupService,
+    });
+    globalThis.fetch = vi.fn(async () => makeJsonResponse("hello")) as any;
+
+    const result = await transcriber.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any,
+      {}
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      text: "hello",
+      rawText: "hello",
+      source: "openai",
+      cleanup,
+    });
+  });
+
   it("aborts an in-flight cleanup request and returns cancellation", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "whisper-1");

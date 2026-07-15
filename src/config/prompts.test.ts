@@ -110,6 +110,18 @@ describe("prompts untrusted transcription wrapper", () => {
     expect(prompt).toContain("Do not join a declarative clause directly to an imperative");
     expect(prompt).toContain("Never wrap the entire output in quotation marks");
     expect(prompt).toContain("Do not infer a nested quotation");
+    expect(prompt).toContain('A standalone "quote", "open quote", "start quote", or "begin quote"');
+    expect(prompt).toContain(
+      "place the closing mark only when the intended endpoint is reasonably clear"
+    );
+    expect(prompt).toContain("never import a subject from the surrounding request");
+    expect(prompt).toContain("Preserve an elliptical subject rather than guessing it");
+    expect(prompt).toContain("receives text only, not audio or prosody");
+    expect(prompt).toContain("Produce an edited transcript, never a summary");
+    expect(prompt).toContain("Brevity and repetition reduction are not goals");
+    expect(prompt).toContain("Preserve a restatement when it adds framing, emphasis, nuance");
+    expect(prompt).toContain("Never infer or insert an omitted person, pronoun, actor, or owner");
+    expect(prompt).toContain("No person, pronoun, actor, or owner was inferred");
     expect(prompt).toContain("exact token boundaries and spelling");
     expect(prompt).toContain("<trusted_preferred_spellings>");
     expect(prompt).toContain('"Kubernetes"');
@@ -205,12 +217,32 @@ describe("prompts untrusted transcription wrapper", () => {
     );
   });
 
+  it("adds a token-locked spoken-quotation retry without dictionary rewrites", () => {
+    const prompt = getSystemPrompt(
+      "Echo",
+      ["Kubernetes"],
+      "en",
+      "gpt-5.6-luna",
+      "strict-quote-preservation"
+    );
+
+    expect(prompt).toContain("Token-Locked Spoken-Quotation Pass");
+    expect(prompt).toContain("except for an explicit standalone spoken quote-boundary marker");
+    expect(prompt).toContain("Do not add a missing subject, pronoun, actor, owner, article");
+    expect(prompt).toContain("# Final Spoken-Quotation Retry Precedence");
+    expect(prompt).not.toContain("<trusted_preferred_spellings>");
+    expect(prompt).not.toContain('"Kubernetes"');
+  });
+
   it("adds a preservation-first contract for normal dictation cleanup", () => {
     const prompt = getSystemPrompt("Echo", [], "en", "gpt-5.6-luna", "preservation-first");
 
     expect(prompt).toContain("# Preservation-First Dictation Pass");
     expect(prompt).toContain("Keep the original sentence sequence, clause sequence");
     expect(prompt).toContain("Do not merge separate clauses");
+    expect(prompt).toContain("Brevity and repetition reduction are not goals");
+    expect(prompt).toContain("Never collapse several clauses or sentences");
+    expect(prompt).toContain("adds no meaning or nuance");
     expect(prompt).not.toContain("A previous cleanup attempt failed");
   });
 

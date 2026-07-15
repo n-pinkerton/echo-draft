@@ -1,9 +1,6 @@
 import { countWords } from "../utils/wordCount";
 import { hasGovernedExplicitQuoteAttachment } from "./cleanupOutputRepairs";
-import {
-  countUnverifiedQuotationPairs,
-  getSpokenQuoteAttachmentComparisonText,
-} from "./cleanupQuoteFidelity";
+import { assessQuotationFidelity } from "./cleanupQuoteFidelity";
 
 const ASSISTANT_ACTION_OPENERS = [
   /^(?:certainly|absolutely|sure|of course)[,!.:\s]/i,
@@ -122,7 +119,7 @@ const STANCE_PHRASES = [
   "a little",
 ];
 const CLEAR_SELF_CORRECTION = /\b(?:no[,]?\s+sorry|sorry[,]?\s+i mean|correction|make that)\b/i;
-const SPOKEN_QUOTE_MARKER = /\b(?:open|start|begin|close|end)?\s*quote(?:s|d)?\b/i;
+const SPOKEN_QUOTE_MARKER = /\b(?:(?:open|start|begin|close|end)\s+)?quote\b/i;
 const WHOLE_OUTPUT_QUOTE_PAIRS = [
   ['"', '"'],
   ["“", "”"],
@@ -421,6 +418,15 @@ const getFirstSequenceMismatch = (originalItems, cleanedItems) => {
   return originalItems.length === cleanedItems.length ? null : comparedItemCount;
 };
 
+const getPositionalSequenceMismatchCount = (originalItems, cleanedItems) => {
+  const comparedItemCount = Math.min(originalItems.length, cleanedItems.length);
+  let mismatchCount = Math.abs(originalItems.length - cleanedItems.length);
+  for (let index = 0; index < comparedItemCount; index += 1) {
+    if (originalItems[index] !== cleanedItems[index]) mismatchCount += 1;
+  }
+  return mismatchCount;
+};
+
 const getWords = (value) => normalizeForComparison(value).split(/\s+/).filter(Boolean);
 
 /**
@@ -439,6 +445,11 @@ export function assessStrictCleanupLexicalFidelity(originalText, cleanedText, op
     originalSignificantTokens,
     cleanedSignificantTokens
   );
+  const lexicalMismatchCount = getPositionalSequenceMismatchCount(originalTokens, cleanedTokens);
+  const significantMismatchCount = getPositionalSequenceMismatchCount(
+    originalSignificantTokens,
+    cleanedSignificantTokens
+  );
   const reasons = [];
   if (firstMismatchIndex !== null) reasons.push("strict-lexical-sequence-change");
   if (firstSignificantMismatchIndex !== null) reasons.push("strict-significant-token-change");
@@ -450,9 +461,11 @@ export function assessStrictCleanupLexicalFidelity(originalText, cleanedText, op
       strictLexicalOriginalTokenCount: originalTokens.length,
       strictLexicalCleanedTokenCount: cleanedTokens.length,
       strictLexicalFirstMismatchIndex: firstMismatchIndex,
+      strictLexicalMismatchCount: lexicalMismatchCount,
       strictSignificantOriginalTokenCount: originalSignificantTokens.length,
       strictSignificantCleanedTokenCount: cleanedSignificantTokens.length,
       strictSignificantFirstMismatchIndex: firstSignificantMismatchIndex,
+      strictSignificantMismatchCount: significantMismatchCount,
     },
   };
 }
@@ -2730,7 +2743,8 @@ const isCompletionOrAnswerStyle = (rawText, normalizedText) =>
 export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   const original = typeof originalText === "string" ? originalText.trim() : "";
   const cleaned = typeof cleanedText === "string" ? cleanedText.trim() : "";
-  const quoteAdjustedOriginal = getSpokenQuoteAttachmentComparisonText(original, cleaned);
+  const quotationFidelity = assessQuotationFidelity(original, cleaned);
+  const quoteAdjustedOriginal = quotationFidelity.comparisonOriginalText;
   const originalWords = countWords(quoteAdjustedOriginal);
   const cleanedWords = countWords(cleaned);
   const wordRatio =
@@ -2763,7 +2777,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     reasons.push("added-whole-output-quotation");
   }
 
-  if (cleaned && countUnverifiedQuotationPairs(original, cleaned) > 0) {
+  if (cleaned && quotationFidelity.unverifiedPairCount > 0) {
     reasons.push("nested-quotation-inference");
   }
 
@@ -2819,10 +2833,10 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   // Otherwise an approved canonical spelling repair changes both adjacent
   // bigrams and can look like a clause reorder to the attachment guard.
   const comparisonOriginalText = preferredSpellingAlignment.comparisonOriginalText;
-  const comparisonOriginalAttachmentText = getSpokenQuoteAttachmentComparisonText(
-    comparisonOriginalText,
-    cleaned
-  );
+  const comparisonOriginalAttachmentText =
+    comparisonOriginalText === original
+      ? quotationFidelity.comparisonOriginalText
+      : assessQuotationFidelity(comparisonOriginalText, cleaned).comparisonOriginalText;
   const comparisonOriginalWords = getWords(comparisonOriginalAttachmentText);
   const appliedSpokenFormattingRanges = getAppliedSpokenFormattingRanges(
     original,

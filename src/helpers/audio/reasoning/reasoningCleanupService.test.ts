@@ -133,7 +133,7 @@ describe("ReasoningCleanupService", () => {
     ["The price is final.", "The prize is final."],
     ["Use three samples.", "Use there samples."],
   ])(
-    "strictly retries and preserves the exact source after a one-edit lexical substitution: %s",
+    "recovers the exact source without a warning after one strict-retry substitution: %s",
     async (original, changed) => {
       const reasoningService = {
         isAvailable: vi.fn(async () => true),
@@ -156,9 +156,17 @@ describe("ReasoningCleanupService", () => {
       ).resolves.toMatchObject({
         text: original,
         cleanup: {
-          status: "fallback",
-          fallbackReason: "fidelity_rejected",
+          applied: false,
+          appliedModel: null,
+          status: "unchanged",
+          fallbackReason: null,
           retryCount: 1,
+          retryDriftRecovered: true,
+          metrics: {
+            retryDriftRecovered: true,
+            generatedStrictLexicalMismatchCount: 1,
+            generatedStrictSignificantMismatchCount: 1,
+          },
         },
       });
       expect(reasoningService.processText).toHaveBeenCalledTimes(2);
@@ -168,7 +176,7 @@ describe("ReasoningCleanupService", () => {
     }
   );
 
-  it("retries and falls back when a dictionary target would rename a different person", async () => {
+  it("recovers the source when a strict retry would rename a different person", async () => {
     const original = "Please ask Mary to review the release note today.";
     const changed = "Please ask Mara to review the release note today.";
     const reasoningService = {
@@ -193,9 +201,13 @@ describe("ReasoningCleanupService", () => {
     ).resolves.toMatchObject({
       text: original,
       cleanup: {
-        status: "fallback",
-        fallbackReason: "fidelity_rejected",
+        applied: false,
+        appliedModel: null,
+        status: "unchanged",
+        fallbackReason: null,
         retryCount: 1,
+        retryDriftRecovered: true,
+        metrics: { retryDriftRecovered: true },
       },
     });
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
@@ -304,6 +316,200 @@ describe("ReasoningCleanupService", () => {
   it("accepts a short explicit spoken quotation in one cleanup call", async () => {
     const original = "quote keep it end quote";
     const cleaned = "“Keep it.”";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => cleaned),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: cleaned,
+      cleanup: { status: "applied", retryCount: 0 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a model-bounded quotation after an unclosed spoken marker", async () => {
+    const original =
+      "Do you think it would be okay to say something like, quote, hello team, apologies for the omission.";
+    const cleaned =
+      "Do you think it would be okay to say something like, “Hello team, apologies for the omission.”";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => cleaned),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: cleaned,
+      cleanup: { status: "applied", retryCount: 0 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a token-locked quotation retry when the first pass inserts an actor", async () => {
+    const original =
+      "Please write, quote, in private regression testing, had a second pass before sending it.";
+    const unsafe =
+      "Please write, “In private regression testing, I had a second pass before sending it.”";
+    const preserved =
+      "Please write, “In private regression testing, had a second pass before sending it.”";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn().mockResolvedValueOnce(unsafe).mockResolvedValueOnce(preserved),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: preserved,
+      cleanup: { status: "applied", retryCount: 1 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+    expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
+      cleanupPromptMode: "strict-quote-preservation",
+    });
+  });
+
+  it("accepts a punctuation-free spoken quote command in one cleanup call", async () => {
+    const original = "Please say quote hello team.";
+    const cleaned = "Please say “Hello team.”";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => cleaned),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: cleaned,
+      cleanup: { status: "applied", retryCount: 0 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a strict quote retry that relocates repeated unclosed wording", async () => {
+    const original =
+      "Morgan said, quote, keep it before lunch. Later Morgan said keep it before lunch.";
+    const relocated = "Morgan said keep it before lunch. Later Morgan said “Keep it” before lunch.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async (..._args: any[]) => relocated),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: { status: "fallback", fallbackReason: "fidelity_rejected", retryCount: 1 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+    expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
+      cleanupPromptMode: "strict-quote-preservation",
+    });
+  });
+
+  it("never treats plural quotes as a spoken marker during retry", async () => {
+    const original = "Quotes improve readability.";
+    const unsafe = "“Improve readability.”";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async (..._args: any[]) => unsafe),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: { status: "fallback", fallbackReason: "fidelity_rejected", retryCount: 1 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+    expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
+      cleanupPromptMode: "strict-preservation",
+    });
+  });
+
+  it("rejects a quoted rewrite of a literal say-quote phrase", async () => {
+    const original = "The literal phrase is say quote before hello.";
+    const unsafe = "The literal phrase is say “Before hello.”";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async (..._args: any[]) => unsafe),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: { status: "fallback", fallbackReason: "fidelity_rejected", retryCount: 1 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+    expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
+      cleanupPromptMode: "strict-preservation",
+    });
+  });
+
+  it("preserves a verified whole-output quotation from an unclosed spoken opener", async () => {
+    const original = "Quote hello team, apologies for the omission.";
+    const cleaned = "“Hello team, apologies for the omission.”";
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
       processText: vi.fn(async () => cleaned),
@@ -1456,7 +1662,7 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
-  it("rejects a strict retry that changes a sequenced action into an attached gerund", async () => {
+  it("recovers a strict retry that changes a sequenced action into an attached gerund", async () => {
     const original =
       "Pause and assess efficiency, delegation, and sprint size, and then use a risk-based approach until the final gate. Keep reference 42, the fallback owner, and the Friday deadline in the review.";
     const rescued =
@@ -1482,9 +1688,13 @@ describe("ReasoningCleanupService", () => {
     expect(result).toMatchObject({
       text: original,
       cleanup: {
-        status: "fallback",
-        fallbackReason: "fidelity_rejected",
+        applied: false,
+        appliedModel: null,
+        status: "unchanged",
+        fallbackReason: null,
         retryCount: 1,
+        retryDriftRecovered: true,
+        metrics: { retryDriftRecovered: true },
       },
     });
   });

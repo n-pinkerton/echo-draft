@@ -340,4 +340,47 @@ describe("CloudTranscriber", () => {
     expect(result.source).toBe(ECHO_DRAFT_BYOK_REASONED_SOURCE);
     expect(result.text).toBe("clean");
   });
+
+  it("does not label discarded one-word BYOK retry drift as applied reasoning", async () => {
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("cloudReasoningMode", "byok");
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+
+    (window as any).electronAPI.cloudTranscribe.mockResolvedValue({
+      success: true,
+      text: "raw",
+      limitReached: false,
+      wordsUsed: 1,
+      wordsRemaining: 1,
+    });
+
+    const processWithReasoningModelResult = vi.fn(async () => ({
+      text: "raw",
+      retryCount: 1,
+      appliedModel: null,
+      retryDriftRecovered: true,
+      assessment: { metrics: { retryDriftRecovered: true } },
+    }));
+    const transcriber = new CloudTranscriber({
+      logger: createLogger(),
+      withSessionRefresh: async (fn: any) => await fn(),
+      reasoningCleanupService: { processWithReasoningModelResult },
+      getCleanupEnabledOverride: () => null,
+    });
+
+    const result = await transcriber.processWithEchoDraftCloud({
+      arrayBuffer: vi.fn(async () => new ArrayBuffer(4)),
+    } as any);
+
+    expect(processWithReasoningModelResult).toHaveBeenCalledOnce();
+    expect(result.source).toBe(ECHO_DRAFT_CLOUD_SOURCE);
+    expect(result.text).toBe("raw");
+    expect(result.cleanup).toMatchObject({
+      applied: false,
+      status: "unchanged",
+      appliedModel: null,
+      retryCount: 1,
+      retryDriftRecovered: true,
+    });
+  });
 });

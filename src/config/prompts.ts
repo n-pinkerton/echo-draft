@@ -35,7 +35,11 @@ type CleanupPromptProfile = {
   modelGuidance: readonly string[];
 };
 
-export type CleanupPromptMode = "standard" | "preservation-first" | "strict-preservation";
+export type CleanupPromptMode =
+  | "standard"
+  | "preservation-first"
+  | "strict-preservation"
+  | "strict-quote-preservation";
 export type CleanupPromptModelId = "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.6-sol";
 
 export const DEFAULT_CLEANUP_MODEL_ID = SHARED_DEFAULT_CLEANUP_MODEL_ID as CleanupPromptModelId;

@@ -190,17 +190,25 @@ export class CloudTranscriber {
               throw new Error("BYOK reasoning returned an empty cleanup response.");
             }
             processedText = result.text;
+            const retryDriftRecovered = result.retryDriftRecovered === true;
+            const unchanged = processedText === rawText;
+            const preferredSpellingApplied =
+              typeof result.assessment?.metrics?.preferredSpellingCorrectionCount === "number" &&
+              result.assessment.metrics.preferredSpellingCorrectionCount > 0 &&
+              !unchanged;
             cleanup = {
               requested: true,
               attempted: true,
-              applied: true,
-              status: processedText === rawText ? "unchanged" : "applied",
+              applied: retryDriftRecovered ? !unchanged : true,
+              status: unchanged ? "unchanged" : "applied",
               fallbackReason: null,
               model: reasoningModel,
-              appliedModel: result.appliedModel || reasoningModel,
+              appliedModel: retryDriftRecovered ? null : result.appliedModel || reasoningModel,
               modelSource: "selected",
               provider: localStorage.getItem("reasoningProvider") || "auto",
               retryCount: result.retryCount,
+              retryDriftRecovered,
+              preferredSpellingApplied,
               metrics: result.assessment?.metrics || {},
             };
           } else {
@@ -215,7 +223,7 @@ export class CloudTranscriber {
               retryCount: 0,
             };
           }
-          if (cleanup?.applied) {
+          if (cleanup?.applied && cleanup?.retryDriftRecovered !== true) {
             source = ECHO_DRAFT_BYOK_REASONED_SOURCE;
           }
         }

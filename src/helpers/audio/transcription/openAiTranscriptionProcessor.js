@@ -1241,7 +1241,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       }
       timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
       throwIfTranscriptionCancelled(externalSignal);
-      if (cleanup?.applied) {
+      if (cleanup?.applied && cleanup?.retryDriftRecovered !== true) {
         source = `${source}-reasoned`;
       }
     }
@@ -1303,9 +1303,11 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
                   success: true,
                   text: cleanupResult.text,
                   rawText,
-                  source: cleanupResult.cleanup?.applied
-                    ? "local-fallback-reasoned"
-                    : "local-fallback",
+                  source:
+                    cleanupResult.cleanup?.applied &&
+                    cleanupResult.cleanup?.retryDriftRecovered !== true
+                      ? "local-fallback-reasoned"
+                      : "local-fallback",
                   timings,
                   cleanup: cleanupResult.cleanup,
                 };

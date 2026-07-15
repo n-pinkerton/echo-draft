@@ -142,6 +142,9 @@ export default function TranscriptionItem({
   const preferredSpellingApplied = cleanupAppliedPreferredSpelling(cleanup);
   const cleanupRetryCount =
     typeof cleanup?.retryCount === "number" && cleanup.retryCount > 0 ? cleanup.retryCount : 0;
+  const cleanupRetryDriftRecovered = Boolean(
+    cleanup?.retryDriftRecovered === true || cleanup?.metrics?.retryDriftRecovered === true
+  );
   const cleanupSelectedModel = cleanup?.model
     ? getReasoningModelLabel(String(cleanup.model))
     : null;
@@ -155,7 +158,7 @@ export default function TranscriptionItem({
         ? "Selected"
         : "Model";
   const cleanupRetryAccepted = Boolean(
-    !cleanupFallback && cleanupRetryCount > 0 && cleanupAppliedModel
+    !cleanupFallback && !cleanupRetryDriftRecovered && cleanupRetryCount > 0 && cleanupAppliedModel
   );
   const cleanupFallbackDetail =
     cleanup?.fallbackReason === "fidelity_rejected"
@@ -175,8 +178,7 @@ export default function TranscriptionItem({
     ? DELIVERY_PRESENTATION[delivery.status] || null
     : null;
   const deliveryReasonCode =
-    typeof delivery?.reasonCode === "string" &&
-    /^[A-Z][A-Z0-9_]{0,95}$/.test(delivery.reasonCode)
+    typeof delivery?.reasonCode === "string" && /^[A-Z][A-Z0-9_]{0,95}$/.test(delivery.reasonCode)
       ? delivery.reasonCode
       : null;
   const outputModeLabel =
@@ -489,13 +491,20 @@ export default function TranscriptionItem({
                     )}
                   >
                     Cleanup:{" "}
-                    {cleanupFallback
+                    {cleanupRetryDriftRecovered
                       ? preferredSpellingApplied
                         ? "recognizer wording preserved · verified dictionary spelling applied"
-                        : "original transcript preserved"
-                      : String(cleanup.status)}
+                        : "original wording preserved"
+                      : cleanupFallback
+                        ? preferredSpellingApplied
+                          ? "recognizer wording preserved · verified dictionary spelling applied"
+                          : "original transcript preserved"
+                        : String(cleanup.status)}
                     {cleanupFallback ? ` · ${cleanupFallbackDetail}` : ""}
                     {cleanupSelectedModel ? ` · ${cleanupModelLabel}: ${cleanupSelectedModel}` : ""}
+                    {cleanupRetryDriftRecovered
+                      ? " · Safety retry changed one word and was discarded"
+                      : ""}
                     {cleanupRetryAccepted ? " · Safety retry: accepted" : ""}
                     {cleanupRetryAccepted ? ` · Retry model: ${cleanupAppliedModel}` : ""}
                     {cleanupFallback && cleanupRetryCount > 0 ? " · Safety retry: not applied" : ""}

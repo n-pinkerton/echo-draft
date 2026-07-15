@@ -1,3 +1,5 @@
+import { assessQuotationFidelity } from "./cleanupQuoteFidelity";
+
 const REQUEST_REASON_FRAGMENT =
   /^(?<request>(?:can|could|would|will)\s+you\b[^?]*?)\?\s+because\b/isu;
 const CLEANED_REQUEST_AND_REASON_SENTENCES =
@@ -42,6 +44,13 @@ export function repairWholeOutputQuotationWrapper(originalText, cleanedText) {
 
   if (!wrapper) return cleaned;
   if (hasWholeSpanQuoteGlyphs(original) || WHOLE_SPAN_SPOKEN_QUOTE_MARKERS.test(original)) {
+    return cleaned;
+  }
+  const quotationFidelity = assessQuotationFidelity(original, cleaned);
+  if (
+    quotationFidelity.unverifiedPairCount === 0 &&
+    quotationFidelity.appliedSpokenPairs.length > 0
+  ) {
     return cleaned;
   }
 

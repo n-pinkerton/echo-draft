@@ -639,6 +639,227 @@ describe("assessCleanupFidelity", () => {
     }
   );
 
+  it.each([
+    [
+      "Do you think it would be okay to say something like, quote, hello team, apologies for the omission.",
+      "Do you think it would be okay to say something like, “Hello team, apologies for the omission.”",
+    ],
+    [
+      "Please write, quote, keep the caveat, then send it to Morgan.",
+      "Please write, “Keep the caveat,” then send it to Morgan.",
+    ],
+  ])(
+    "accepts a model-bounded quotation after an unclosed spoken marker: %s",
+    (original, cleaned) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: true,
+        reasons: [],
+      });
+    }
+  );
+
+  it.each(["say", "dictate", "type"])("accepts a punctuation-free %s quote command", (verb) => {
+    expect(
+      assessCleanupFidelity(`Please ${verb} quote hello team.`, `Please ${verb} “Hello team.”`)
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it.each([
+    ["Morgan whispered open quote keep this end quote.", "Morgan whispered “Keep this.”"],
+    ["Please read open quote keep this end quote.", "Please read “Keep this.”"],
+    ["Morgan replied start quote keep this close quote.", "Morgan replied “Keep this.”"],
+  ])(
+    "accepts an explicitly paired marker after punctuation-free speech: %s",
+    (original, cleaned) => {
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: true,
+        reasons: [],
+      });
+    }
+  );
+
+  it("accepts bounded grammar cleanup inside a longer model-bounded quotation", () => {
+    const original =
+      "Please say, quote, hey team I am checking if update is ready because we still need it before Friday and I would appreciate your confirmation today.";
+    const cleaned =
+      "Please say, “Hey team, I am checking if the update is ready because we still need it before Friday, and I would appreciate your confirmation today.”";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: true,
+      reasons: [],
+    });
+  });
+
+  it("accepts a short article insertion inside a model-bounded quotation", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please say, quote, I am checking if update is ready.",
+        "Please say, “I am checking if the update is ready.”"
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("rejects an inferred first-person subject inside a model-bounded quotation", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please say, quote, my first check missed the item. Had a second review before sending it.",
+        "Please say, “My first check missed the item. I had a second review before sending it.”"
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it("rejects an inserted actor without prior first-person evidence", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please say, quote, Morgan completed the first check. Had a second review before sending it.",
+        "Please say, “Morgan completed the first check. I had a second review before sending it.”"
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it("accepts two independently bound short unclosed quotations", () => {
+    expect(
+      assessCleanupFidelity(
+        "Please say, quote, first message, then say, quote, second message.",
+        "Please say, “First message,” then say, “Second message.”"
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("rejects an unclosed spoken quotation relocated to repeated wording", () => {
+    expect(
+      assessCleanupFidelity(
+        "Morgan said, quote, keep it before lunch. Later Morgan said keep it before lunch.",
+        "Morgan said keep it before lunch. Later Morgan said “Keep it” before lunch."
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it.each([
+    ["Select Open Quote Settings to continue.", "Select “Settings” to continue."],
+    ["The menu item is Open Quote Settings.", "The menu item is “Settings.”"],
+    [
+      "I named the command Open Quote Settings yesterday.",
+      "I named the command “Settings” yesterday.",
+    ],
+    ["Please open quote settings and inspect them.", "Please “Settings and inspect them.”"],
+    [
+      "Use the command open quote mode for compatibility.",
+      "Use the command “Mode for compatibility.”",
+    ],
+    ["Start Quote Mode is enabled.", "“Mode is enabled.”"],
+    ["Quotes are useful here.", "“Are useful here.”"],
+    ["Quotes improve readability.", "“Improve readability.”"],
+    ["Quotes help writers communicate.", "“Help writers communicate.”"],
+    ["Quotes remain useful here.", "“Remain useful here.”"],
+    ["Please open Quote Document and review it.", "Please “Document and review it.”"],
+    ["Please open quote file and inspect it.", "Please “File and inspect it.”"],
+    ["Please start Quote Editor and inspect it.", "Please “Editor and inspect it.”"],
+    ["Please begin quote panel and inspect it.", "Please “Panel and inspect it.”"],
+    ["Please open Quote Report and review it.", "Please “Report and review it.”"],
+    ["Please open Quote Document and close quote panel.", "Please “Document and” panel."],
+    ["Please start Quote Editor and end quote mode.", "Please “Editor and” mode."],
+    ["Please select Quote Document and close quote panel.", "Please select “Document and” panel."],
+    ["Please choose Quote Editor and end quote mode.", "Please choose “Editor and” mode."],
+    [
+      "Please select Settings, Quote Document and close quote panel.",
+      "Please select Settings, “Document and” panel.",
+    ],
+    [
+      "Please select Settings, open Quote Document and close quote panel.",
+      "Please select Settings, “Document and” panel.",
+    ],
+    ["Please read Quote Document and close quote panel.", "Please read “Document and” panel."],
+    ["Please read open Quote Document and close quote panel.", "Please read “Document and” panel."],
+    ["Please write Quote Document and close quote panel.", "Please write “Document and” panel."],
+    ["Please ask Quote Bot and close quote panel.", "Please ask “Bot and” panel."],
+    ["The literal phrase is say quote before hello.", "The literal phrase is say “Before hello.”"],
+    [
+      "The literal text is dictate quote before hello.",
+      "The literal text is dictate “Before hello.”",
+    ],
+    [
+      "The literal words are type quote before hello.",
+      "The literal words are type “Before hello.”",
+    ],
+  ])("rejects a literal quote-control conversion: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it.each([
+    [
+      "Harper wrote, quote, I approved the draft after the team completed every review and retained the caveat.",
+      "Harper wrote, “You approved the draft after the team completed every review and retained the caveat.”",
+    ],
+    [
+      "Harper wrote, quote, I approved his release after the team completed every review and retained the caveat.",
+      "Harper wrote, “I approved her release after the team completed every review and retained the caveat.”",
+    ],
+    [
+      "Please say, quote, say I will keep every caveat after the team completes the final review today.",
+      "Please say say, “I will keep every caveat after the team completes the final review today.”",
+    ],
+  ])("rejects a protected lexical edit inside an unclosed quotation: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it.each([
+    ["Quote is the noun. Morgan said keep it.", "Quote is the noun. Morgan said, “Keep it.”"],
+    [
+      "The Open Quote command failed. Morgan said keep it.",
+      "The Open Quote command failed. Morgan said, “Keep it.”",
+    ],
+  ])("allows direct speech after a literal quote phrase: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: true,
+      reasons: [],
+    });
+  });
+
+  it("rejects an unclosed spoken quotation extended across a source line boundary", () => {
+    const original =
+      "Please say, quote, hey team I am checking if the update is ready because we still need it before Friday and I would appreciate your confirmation today.\nPublish.";
+    const cleaned =
+      "Please say, “Hey team, I am checking if the update is ready because we still need it before Friday, and I would appreciate your confirmation today. Publish.”";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
+  it.each([
+    [
+      "Say something like, quote, keep the caveat. Later publish it.",
+      "Say something like, keep the caveat. Later “publish it.”",
+    ],
+    ["Use the word, quote, before hello.", "Use the word “before hello.”"],
+    ["Use the word quote before hello.", "Use the word “before hello.”"],
+    ["Please type the word quote before hello.", "Please type the word “before hello.”"],
+    ["Review the price quote before sending.", "Review the price “before sending.”"],
+    ["Say something like, quote, keep it.", "Say something like, “Keep it and publish it.”"],
+  ])("rejects an unsafe model-bounded spoken quotation: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["nested-quotation-inference"]),
+    });
+  });
+
   it("rejects a spoken quotation relocated to a repeated phrase", () => {
     expect(
       assessCleanupFidelity(

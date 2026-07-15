@@ -1,3 +1,4 @@
+import type { CleanupPromptMode } from "../../config/prompts";
 import type {
   ParakeetCheckResult,
   ParakeetDiagnosticsResult,
@@ -17,7 +18,7 @@ export interface CleanupReasoningIpcOptions {
   maxTokens?: number;
   temperature?: number;
   contextSize?: number;
-  cleanupPromptMode?: "standard" | "preservation-first" | "strict-preservation";
+  cleanupPromptMode?: CleanupPromptMode;
   reasoningEffort?: "none" | "low" | "medium";
   language?: string;
   dictionaryEntries?: string[];

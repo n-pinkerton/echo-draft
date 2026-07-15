@@ -105,6 +105,25 @@ describe("repairWholeOutputQuotationWrapper", () => {
     expect(repairWholeOutputQuotationWrapper(original, cleaned)).toBe(cleaned);
   });
 
+  it("preserves a verified whole-output quotation from an unclosed spoken opener", () => {
+    const original = "Quote hello team, apologies for the omission.";
+    const cleaned = "“Hello team, apologies for the omission.”";
+
+    expect(repairWholeOutputQuotationWrapper(original, cleaned)).toBe(cleaned);
+  });
+
+  it.each([
+    ["Open Quote Settings is available.", "“Settings is available.”"],
+    ["Quotes are useful here.", "“Are useful here.”"],
+    ["Quotes improve readability.", "“Improve readability.”"],
+    ["Quotes help writers communicate.", "“Help writers communicate.”"],
+    ["Please open Quote Document and review it.", "“Document and review it.”"],
+  ])("still removes a whole-output wrapper from literal quote wording: %s", (original, cleaned) => {
+    expect(repairWholeOutputQuotationWrapper(original, cleaned)).toBe(
+      cleaned.slice(1, cleaned.length - 1)
+    );
+  });
+
   it("does not alter an apostrophe or single-quoted text", () => {
     const cleaned = "'Twas important to keep Jordan's exact wording.";
     expect(

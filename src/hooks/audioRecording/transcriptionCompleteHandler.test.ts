@@ -581,28 +581,28 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.playCompletionCue).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "WINDOWS_CLIPBOARD_RESTORE_PENDING",
-    "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
-  ])("does not touch a protected insert clipboard when truncation recovery fails: %s", async (code) => {
-    const safePasteWithResult = vi.fn(async () => ({ success: false, errorCode: code }));
-    const writeClipboard = vi.fn(async () => ({ success: false }));
-    const harness = createDeliveryHarness({
-      outputMode: "insert",
-      safePasteWithResult,
-      writeClipboard,
-    });
+  it.each(["WINDOWS_CLIPBOARD_RESTORE_PENDING", "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED"])(
+    "does not touch a protected insert clipboard when truncation recovery fails: %s",
+    async (code) => {
+      const safePasteWithResult = vi.fn(async () => ({ success: false, errorCode: code }));
+      const writeClipboard = vi.fn(async () => ({ success: false }));
+      const harness = createDeliveryHarness({
+        outputMode: "insert",
+        safePasteWithResult,
+        writeClipboard,
+      });
 
-    await harness.run({ suspectedIncomplete: true });
+      await harness.run({ suspectedIncomplete: true });
 
-    expect(safePasteWithResult).not.toHaveBeenCalled();
-    expect(writeClipboard).not.toHaveBeenCalled();
-    expect(harness.saveTranscription).toHaveBeenCalledOnce();
-    expect((harness.saveTranscription as any).mock.calls[0][0].meta.delivery).toMatchObject({
-      status: "transcription_incomplete",
-      succeeded: false,
-    });
-  });
+      expect(safePasteWithResult).not.toHaveBeenCalled();
+      expect(writeClipboard).not.toHaveBeenCalled();
+      expect(harness.saveTranscription).toHaveBeenCalledOnce();
+      expect((harness.saveTranscription as any).mock.calls[0][0].meta.delivery).toMatchObject({
+        status: "transcription_incomplete",
+        succeeded: false,
+      });
+    }
+  );
 
   it("records successful insertion with a clipboard-restoration warning without copying again", async () => {
     const safePasteWithResult = vi.fn(async () => ({
@@ -892,6 +892,30 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.playWarningCue).toHaveBeenCalledOnce();
     expect(harness.playCompletionCue).not.toHaveBeenCalled();
     expect(harness.playErrorCue).not.toHaveBeenCalled();
+  });
+
+  it("does not show a cleanup-failure warning when one-word retry drift was discarded", async () => {
+    const harness = createDeliveryHarness({ outputMode: "clipboard" });
+
+    await harness.run({
+      cleanup: {
+        requested: true,
+        attempted: true,
+        applied: false,
+        status: "unchanged",
+        fallbackReason: null,
+        retryCount: 1,
+        retryDriftRecovered: true,
+        metrics: { retryDriftRecovered: true },
+      },
+    });
+
+    expect(harness.updateStage).toHaveBeenLastCalledWith("done", expect.anything());
+    expect(harness.playCompletionCue).toHaveBeenCalledOnce();
+    expect(harness.playWarningCue).not.toHaveBeenCalled();
+    expect(harness.toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Original transcript preserved" })
+    );
   });
 
   it("does not claim a dictionary spelling when the authoritative cleanup flag is false", async () => {

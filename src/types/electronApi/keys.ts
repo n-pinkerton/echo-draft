@@ -1,3 +1,4 @@
+import type { CleanupPromptMode } from "../../config/prompts";
 import type { LocalTranscriptionProvider } from "../electron";
 
 export interface ElectronAPIKeys {
@@ -46,7 +47,7 @@ export interface ElectronAPIKeys {
         variant: "responses" | "chat-completions" | "gemini-generate";
         model: string;
         userPrompt: string;
-        cleanupPromptMode?: "standard" | "preservation-first" | "strict-preservation";
+        cleanupPromptMode?: CleanupPromptMode;
         language?: string;
         maxOutputTokens: number;
         temperature?: number;

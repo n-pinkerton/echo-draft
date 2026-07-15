@@ -24,6 +24,7 @@ export interface CleanupOutcome {
   modelSource?: "selected" | "managed";
   provider?: string | null;
   retryCount?: number;
+  retryDriftRecovered?: boolean;
   preferredSpellingApplied?: boolean;
   metrics?: Record<string, unknown>;
 }

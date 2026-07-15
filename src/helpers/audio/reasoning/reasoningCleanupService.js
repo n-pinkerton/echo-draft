@@ -12,6 +12,7 @@ import {
 } from "./cleanupFidelity";
 import { repairMisrecognizedSpokenQuoteBoundary } from "./cleanupInputRepairs";
 import { repairCleanupOutput } from "./cleanupOutputRepairs";
+import { assessQuotationFidelity, countUnclosedSpokenQuoteOpeners } from "./cleanupQuoteFidelity";
 import { getCustomDictionaryArray } from "../transcription/customDictionary";
 import {
   createTranscriptionCancelledError,
@@ -156,7 +157,7 @@ export class ReasoningCleanupService {
    * @param {string} model
    * @param {string|null} agentName
    * @param {{signal?: AbortSignal}} runtime
-   * @returns {Promise<{text: string, assessment: any, retryCount: number, appliedModel: string}>}
+   * @returns {Promise<{text: string, assessment: any, retryCount: number, appliedModel: string|null, retryDriftRecovered?: boolean}>}
    */
   async processWithReasoningModelResult(text, model, _agentName, runtime = {}) {
     this.logger?.logReasoning?.("CALLING_REASONING_SERVICE", {
@@ -253,6 +254,9 @@ export class ReasoningCleanupService {
         retryModel,
         reasoningEffort
       );
+      const useSpokenQuoteRetry =
+        firstAssessment.reasons.includes("nested-quotation-inference") &&
+        countUnclosedSpokenQuoteOpeners(preparedText) > 0;
       retryAttempted = true;
       attemptedRetryModel = retryModel;
       throwIfTranscriptionCancelled(signal);
@@ -260,15 +264,27 @@ export class ReasoningCleanupService {
         preparedText,
         sanitizeProcessedText(
           await this.reasoningService.processText(preparedText, retryModel, null, {
-            cleanupPromptMode: "strict-preservation",
+            cleanupPromptMode: useSpokenQuoteRetry
+              ? "strict-quote-preservation"
+              : "strict-preservation",
             reasoningEffort: retryReasoningEffort,
             ...(signal ? { signal } : {}),
           })
         )
       );
       throwIfTranscriptionCancelled(signal);
+      const generatedRetryQuoteAssessment = useSpokenQuoteRetry
+        ? assessQuotationFidelity(preparedText, generatedRetryResult)
+        : null;
+      const generatedRetryAppliedSpokenQuotation = Boolean(
+        generatedRetryQuoteAssessment?.unverifiedPairCount === 0 &&
+        generatedRetryQuoteAssessment.appliedSpokenPairs.length > 0
+      );
+      const generatedRetryLexicalBaseline = generatedRetryAppliedSpokenQuotation
+        ? generatedRetryQuoteAssessment.comparisonOriginalText
+        : preparedText;
       const generatedRetryLexicalAssessment = assessStrictCleanupLexicalFidelity(
-        preparedText,
+        generatedRetryLexicalBaseline,
         generatedRetryResult,
         {
           language:
@@ -277,26 +293,60 @@ export class ReasoningCleanupService {
               : "auto",
         }
       );
+      const generatedRetryMetrics = generatedRetryLexicalAssessment.metrics;
+      const recoverableSingleTokenRetryDrift =
+        !useSpokenQuoteRetry &&
+        !generatedRetryLexicalAssessment.accepted &&
+        generatedRetryMetrics.strictLexicalOriginalTokenCount ===
+          generatedRetryMetrics.strictLexicalCleanedTokenCount &&
+        generatedRetryMetrics.strictLexicalMismatchCount === 1 &&
+        generatedRetryMetrics.strictSignificantOriginalTokenCount ===
+          generatedRetryMetrics.strictSignificantCleanedTokenCount &&
+        generatedRetryMetrics.strictSignificantMismatchCount === 1;
+      // Luna occasionally violates the token lock with one same-position word
+      // substitution. That candidate has no trustworthy lexical edit, but the
+      // prepared source itself remains safe. Recover that exact bounded shape
+      // to an unchanged result instead of raising a noisy cleanup-failure
+      // warning. Insertions, deletions, reordering, quote drift, and wider
+      // changes still go through the ordinary rejection path.
       const retryResult = generatedRetryLexicalAssessment.accepted
-        ? applyStrictCleanupTokensToOriginalPunctuation(preparedText, generatedRetryResult, {
-            language:
-              typeof localStorage !== "undefined"
-                ? localStorage.getItem("preferredLanguage") || "auto"
-                : "auto",
-          })
-        : generatedRetryResult;
+        ? generatedRetryAppliedSpokenQuotation
+          ? generatedRetryResult
+          : applyStrictCleanupTokensToOriginalPunctuation(preparedText, generatedRetryResult, {
+              language:
+                typeof localStorage !== "undefined"
+                  ? localStorage.getItem("preferredLanguage") || "auto"
+                  : "auto",
+            })
+        : recoverableSingleTokenRetryDrift
+          ? preparedText
+          : generatedRetryResult;
       const retrySemanticAssessment = includePreferredSpellingMetrics(
         assessCleanupFidelity(trustedBaselineText, retryResult, fidelityOptions)
       );
       // The strict retry is allowed to repair mechanics only. Enforce that
       // contract after sanitization and deterministic repairs so neither the
       // model nor a post-processor can silently add, remove, or reorder words.
-      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(preparedText, retryResult, {
-        language:
-          typeof localStorage !== "undefined"
-            ? localStorage.getItem("preferredLanguage") || "auto"
-            : "auto",
-      });
+      const retryQuoteAssessment = useSpokenQuoteRetry
+        ? assessQuotationFidelity(preparedText, retryResult)
+        : null;
+      const retryAppliedSpokenQuotation = Boolean(
+        retryQuoteAssessment?.unverifiedPairCount === 0 &&
+        retryQuoteAssessment.appliedSpokenPairs.length > 0
+      );
+      const retryLexicalBaseline = retryAppliedSpokenQuotation
+        ? retryQuoteAssessment.comparisonOriginalText
+        : preparedText;
+      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(
+        retryLexicalBaseline,
+        retryResult,
+        {
+          language:
+            typeof localStorage !== "undefined"
+              ? localStorage.getItem("preferredLanguage") || "auto"
+              : "auto",
+        }
+      );
       // A token-locked retry cannot repair a source-inherent trailing workflow
       // fragment without violating its lexical contract. Once exact lexical
       // preservation is proven, keep the source-formatted result instead of
@@ -310,6 +360,15 @@ export class ReasoningCleanupService {
         metrics: {
           ...retrySemanticAssessment.metrics,
           ...retryLexicalAssessment.metrics,
+          ...(recoverableSingleTokenRetryDrift
+            ? {
+                retryDriftRecovered: true,
+                generatedStrictLexicalMismatchCount:
+                  generatedRetryMetrics.strictLexicalMismatchCount,
+                generatedStrictSignificantMismatchCount:
+                  generatedRetryMetrics.strictSignificantMismatchCount,
+              }
+            : {}),
         },
       };
       const processingTimeMs = Date.now() - startTime;
@@ -331,6 +390,7 @@ export class ReasoningCleanupService {
         retryModel,
         retryReasoningEffort,
         sourceSeparatorsRestored: retryResult !== generatedRetryResult,
+        retryDriftRecovered: recoverableSingleTokenRetryDrift,
         processingTimeMs,
         resultLength: retryResult.length,
         retryCount: 1,
@@ -341,7 +401,8 @@ export class ReasoningCleanupService {
         text: retryResult,
         assessment: retryAssessment,
         retryCount: 1,
-        appliedModel: retryModel,
+        appliedModel: recoverableSingleTokenRetryDrift ? null : retryModel,
+        ...(recoverableSingleTokenRetryDrift ? { retryDriftRecovered: true } : {}),
       };
     } catch (error) {
       if (isTranscriptionCancelled(error, signal)) {
@@ -482,16 +543,23 @@ export class ReasoningCleanupService {
       });
 
       const unchanged = result.text === normalizedText;
+      const retryDriftRecovered = result.retryDriftRecovered === true;
+      const preferredSpellingApplied =
+        typeof result.assessment.metrics.preferredSpellingCorrectionCount === "number" &&
+        result.assessment.metrics.preferredSpellingCorrectionCount > 0 &&
+        !unchanged;
       return {
         text: result.text,
         cleanup: {
           ...baseOutcome,
           attempted: true,
-          applied: true,
+          applied: retryDriftRecovered ? !unchanged : true,
           status: unchanged ? "unchanged" : "applied",
           fallbackReason: null,
           retryCount: result.retryCount,
-          appliedModel: result.appliedModel || reasoningModel,
+          appliedModel: retryDriftRecovered ? null : result.appliedModel || reasoningModel,
+          retryDriftRecovered,
+          preferredSpellingApplied,
           metrics: result.assessment.metrics,
         },
       };
