@@ -124,6 +124,20 @@ Unsigned Windows builds also disable EchoDraft's in-app automatic updater. This 
    - `logs/echodraft-debug-YYYY-MM-DD.jsonl`
    - `logs/audio/` (last 10 recorded audio clips, rolling retention)
 
+### Relaunching from an agent or automation shell
+
+Do not launch the installed executable directly with `Start-Process -FilePath $installedExe` from a Codex or other long-lived automation shell. Electron can inherit that shell’s standard output and error handles, causing normal EchoDraft diagnostics to appear among the agent’s console output after the command has finished.
+
+Launch it through the Windows shell instead so Explorer owns the new process and its console streams are detached:
+
+```powershell
+$installedExe = Join-Path $env:LOCALAPPDATA 'Programs\echodraft\EchoDraft.exe'
+$quotedExe = '"' + $installedExe + '"'
+Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList $quotedExe
+```
+
+If replacing a running installation, first wait for current dictation activity to finish and stop only the processes whose resolved executable path exactly matches `$installedExe`.
+
 ## Debugging “truncated” transcriptions (runbook)
 
 If a transcription looks “cut off”, there are two different failure modes:
