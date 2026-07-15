@@ -275,6 +275,10 @@ describe("contextual quotation pairing", () => {
     ["Please read open Quote Document and close quote panel.", "Please read “Document and” panel."],
     ["Please write Quote Document and close quote panel.", "Please write “Document and” panel."],
     ["Please ask Quote Bot and close quote panel.", "Please ask “Bot and” panel."],
+    [
+      "Click Open Quote Settings, then click Close Quote Settings.",
+      "Click “Settings, then click” Settings.",
+    ],
     ["The literal phrase is say quote before hello.", "The literal phrase is say “Before hello.”"],
     [
       "The literal text is dictate quote before hello.",

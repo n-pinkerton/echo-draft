@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.12] - 2026-07-15
+
+### Fixed
+
+- **Intermittent Cleanup Warning**: When the strict preservation retry changes exactly one lexical token, EchoDraft now discards that untrusted change, keeps the verified source text, and completes normally instead of reporting a generic cleanup failure.
+- **Faithful Transcript Cleanup**: Strengthens the cleanup contract against summarization, lost repetition, missing nuance, invented actors, and instruction execution while retaining punctuation, spelling, grammar, and clarity improvements.
+- **Contextual Spoken Quotes**: Lets the cleanup model add quotation marks only when supported by genuine spoken-quote context, including bounded unclosed quotations, while rejecting UI commands, literal quote terminology, relocated wording, and changed attribution.
+- **Quote Fidelity Performance**: Uses linear closing-marker lookup and a fail-closed marker bound so malformed transcripts containing thousands of quote markers cannot stall cleanup validation.
+
 ## [1.4.11] - 2026-07-15
 
 ### Fixed
