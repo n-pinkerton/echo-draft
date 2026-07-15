@@ -8,6 +8,84 @@ import {
 } from "./cleanupFidelity.js";
 
 describe("assessCleanupFidelity", () => {
+  it("accepts one model-proposed context-resolved homophone correction", () => {
+    const original = "Right a handoff prompt for another agent to execute your plan autonomously.";
+    const cleaned = "Write a handoff prompt for another agent to execute your plan autonomously.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: true,
+      reasons: [],
+      metrics: expect.objectContaining({ contextualHomophoneCorrectionCount: 1 }),
+    });
+  });
+
+  it("does not treat multiple homophone substitutions as a bounded local repair", () => {
+    expect(
+      assessCleanupFidelity(
+        "Right two handoff prompts for the review.",
+        "Write to handoff prompts for the review."
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ contextualHomophoneCorrectionCount: 0 }),
+    });
+  });
+
+  it.each([
+    ["I want peace.", "I want piece."],
+    ["Preserve the word right.", "Preserve the word write."],
+    ["Right a wrong from yesterday.", "Write a wrong from yesterday."],
+    ["Right a wrong prompt from yesterday.", "Write a wrong prompt from yesterday."],
+    ["Right after the prompt is approved.", "Write after the prompt is approved."],
+    ["Right now, write a handoff prompt.", "Write now, write a handoff prompt."],
+    ["Right the report before sending it.", "Write the report before sending it."],
+    ["Right a misleading report today.", "Write a misleading report today."],
+    ["Right a faulty handoff prompt today.", "Write a faulty handoff prompt today."],
+    ["Right an inaccurate summary today.", "Write an inaccurate summary today."],
+    ["Right. A handoff prompt is needed.", "Write. A handoff prompt is needed."],
+    ["Right, a handoff prompt is needed.", "Write, a handoff prompt is needed."],
+    [
+      "Right \u2014 a handoff prompt is the next deliverable.",
+      "Write \u2014 a handoff prompt is the next deliverable.",
+    ],
+  ])("rejects an ambiguous or non-writing homophone edit: %s", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ contextualHomophoneCorrectionCount: 0 }),
+    });
+  });
+
+  it("continues to reject an ordinary lexical rewrite", () => {
+    expect(
+      assessCleanupFidelity(
+        "Right a handoff prompt for another agent.",
+        "Draft a handoff prompt for another agent."
+      )
+    ).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ contextualHomophoneCorrectionCount: 0 }),
+    });
+  });
+
+  it.each([
+    ["Keep the Right model identifier unchanged.", "Keep the Write model identifier unchanged."],
+    ['Keep "right" exactly as dictated.', 'Keep "write" exactly as dictated.'],
+    ["Use https://right.site/path today.", "Use https://write.site/path today."],
+    ["Email right@example.com today.", "Email write@example.com today."],
+    ["Keep right.model unchanged.", "Keep write.model unchanged."],
+    ["Keep right-model unchanged.", "Keep write-model unchanged."],
+    ["Copy C:\\right\\draft.txt today.", "Copy C:\\write\\draft.txt today."],
+  ])("does not authorize a homophone edit in protected literal context", (original, cleaned) => {
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+      metrics: expect.objectContaining({ contextualHomophoneCorrectionCount: 0 }),
+    });
+  });
+
   it("applies only counted trusted aliases toward a saved canonical spelling", () => {
     expect(
       applyTrustedPreferredSpellingAliases(

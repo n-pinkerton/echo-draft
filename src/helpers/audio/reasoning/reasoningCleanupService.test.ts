@@ -108,6 +108,60 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a model-proposed context-resolved homophone correction", async () => {
+    const original = "Right a handoff prompt for another agent to execute your plan autonomously.";
+    const cleaned = "Write a handoff prompt for another agent to execute your plan autonomously.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => cleaned),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: cleaned,
+      cleanup: {
+        status: "applied",
+        retryCount: 0,
+        metrics: expect.objectContaining({ contextualHomophoneCorrectionCount: 1 }),
+      },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back when a homophone edit changes a URL token", async () => {
+    const original = "Use https://right.site/path in the handoff prompt.";
+    const changed = "Use https://write.site/path in the handoff prompt.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => changed),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: { status: "unchanged", retryCount: 1 },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
+  });
+
   it("does not let a user dictionary entry authorize a common-word substitution", async () => {
     const original = "Please keep the form attached to the request today.";
     const changed = "Please keep the farm attached to the request today.";

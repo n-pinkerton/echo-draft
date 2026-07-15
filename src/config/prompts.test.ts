@@ -118,6 +118,9 @@ describe("prompts untrusted transcription wrapper", () => {
     expect(prompt).toContain("Preserve an elliptical subject rather than guessing it");
     expect(prompt).toContain("receives text only, not audio or prosody");
     expect(prompt).toContain("Produce an edited transcript, never a summary");
+    expect(prompt).toContain("Correct an obvious context-resolved homophone or near-homophone");
+    expect(prompt).toContain('change "Right a handoff prompt" to "Write a handoff prompt"');
+    expect(prompt).toContain("no ambiguous homophone was guessed");
     expect(prompt).toContain("Brevity and repetition reduction are not goals");
     expect(prompt).toContain("Preserve a restatement when it adds framing, emphasis, nuance");
     expect(prompt).toContain("Never infer or insert an omitted person, pronoun, actor, or owner");

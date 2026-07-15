@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.14] - 2026-07-15
+
+### Fixed
+
+- **Contextual Homophone Cleanup**: Corrects obvious grammar-resolved recognition errors such as “Right a handoff prompt” to “Write a handoff prompt,” while preserving ambiguous, quoted, technical, and explicitly protected wording.
+
 ## [1.4.13] - 2026-07-15
 
 ### Fixed

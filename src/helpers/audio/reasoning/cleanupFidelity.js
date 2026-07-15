@@ -118,6 +118,20 @@ const STANCE_PHRASES = [
   "kind of",
   "a little",
 ];
+
+// The cleanup model, not this guard, decides whether local grammar resolves a
+// recognition error. This bounded list merely prevents a model-proposed,
+// one-for-one homophone correction from being mistaken for a substantive
+// rewrite. Keeping the allowance lexical and occurrence-aligned preserves the
+// existing checks for compression, reordering, technical tokens, qualifiers,
+// negation, and prompt execution.
+const CONTEXTUAL_HOMOPHONE_GROUPS = [["right", "write"]];
+const CONTEXTUAL_HOMOPHONE_GROUP_BY_WORD = new Map(
+  CONTEXTUAL_HOMOPHONE_GROUPS.flatMap((group, groupIndex) =>
+    group.map((word) => [word, groupIndex])
+  )
+);
+const SAFE_CONTEXTUAL_HOMOPHONE_COMMAND = ["a", "handoff", "prompt"];
 const CLEAR_SELF_CORRECTION = /\b(?:no[,]?\s+sorry|sorry[,]?\s+i mean|correction|make that)\b/i;
 const SPOKEN_QUOTE_MARKER = /\b(?:(?:open|start|begin|close|end)\s+)?quote\b/i;
 const WHOLE_OUTPUT_QUOTE_PAIRS = [
@@ -1838,6 +1852,90 @@ const getSemanticContentDiff = (originalWords, cleanedWords) => {
   };
 };
 
+const getContextualHomophoneCorrections = (originalText, cleanedText) => {
+  const originalMatches = getRawLexicalTokenMatches(originalText);
+  const cleanedMatches = getRawLexicalTokenMatches(cleanedText);
+  const originalWords = originalMatches.map((match) => normalizeStrictLexicalToken(match[0]));
+  const cleanedWords = cleanedMatches.map((match) => normalizeStrictLexicalToken(match[0]));
+  if (originalWords.length !== cleanedWords.length) return [];
+
+  const corrections = [];
+  for (let index = 0; index < originalWords.length; index += 1) {
+    const original = originalWords[index];
+    const cleaned = cleanedWords[index];
+    if (original === cleaned) continue;
+    const originalGroup = CONTEXTUAL_HOMOPHONE_GROUP_BY_WORD.get(original);
+    if (
+      originalGroup === undefined ||
+      originalGroup !== CONTEXTUAL_HOMOPHONE_GROUP_BY_WORD.get(cleaned)
+    ) {
+      return [];
+    }
+    const sourceMatch = originalMatches[index];
+    const sourceStart = sourceMatch.index || 0;
+    const sourceEnd = sourceStart + sourceMatch[0].length;
+    const raw = String(originalText || "");
+    const clauseBounds = getPreferredSpellingAliasClauseBounds(raw, sourceStart, sourceEnd);
+    const clausePrefixWords = getWords(raw.slice(clauseBounds.start, sourceStart));
+    const commandObjectWords = originalWords.slice(index + 1, index + 4);
+    const finalCommandMatch = originalMatches[index + 3];
+    const contiguousCommandText = finalCommandMatch
+      ? raw.slice(sourceStart, (finalCommandMatch.index || 0) + finalCommandMatch[0].length)
+      : "";
+    const normalizedClausePrefix = normalizeForComparison(
+      raw.slice(clauseBounds.start, sourceStart)
+    );
+    const normalizedClauseSuffix = normalizeForComparison(raw.slice(sourceEnd, clauseBounds.end));
+    const overlapsSourceSpan = (occurrence) =>
+      occurrence.index < sourceEnd && occurrence.index + occurrence.rawLength > sourceStart;
+    const protectedLiteralOccurrence = [
+      ...getCriticalTokenOccurrences(raw),
+      ...getProtectedTechnicalTokenOccurrences(raw),
+    ].some(overlapsSourceSpan);
+    const isResolvedWritingCommand =
+      original === "right" &&
+      cleaned === "write" &&
+      (clausePrefixWords.length === 0 ||
+        (clausePrefixWords.length === 1 && clausePrefixWords[0] === "please")) &&
+      /^right[ \t]+a[ \t]+handoff[ \t]+prompt$/iu.test(contiguousCommandText) &&
+      commandObjectWords.length === SAFE_CONTEXTUAL_HOMOPHONE_COMMAND.length &&
+      commandObjectWords.every(
+        (word, objectIndex) => word === SAFE_CONTEXTUAL_HOMOPHONE_COMMAND[objectIndex]
+      );
+    if (
+      !isResolvedWritingCommand ||
+      protectedLiteralOccurrence ||
+      isInsidePreferredSpellingDelimitedSpan(raw, sourceStart, sourceEnd, clauseBounds.start) ||
+      PREFERRED_SPELLING_ALIAS_PRESERVATION_PREFIX.test(normalizedClausePrefix) ||
+      PREFERRED_SPELLING_ALIAS_PRESERVATION_SUFFIX.test(normalizedClauseSuffix) ||
+      PREFERRED_SPELLING_ALIAS_NEGATED_PASSIVE_EDIT_SUFFIX.test(normalizedClauseSuffix)
+    ) {
+      return [];
+    }
+    corrections.push({ index, original, cleaned });
+  }
+
+  // Multiple simultaneous substitutions are more likely to represent a broad
+  // rewrite or uncertain inference and should continue through the strict
+  // preservation fallback.
+  return corrections.length === 1 ? corrections : [];
+};
+
+const alignContextualHomophoneCorrection = (originalText, cleanedText, corrections) => {
+  if (corrections.length !== 1) return originalText;
+  const originalMatches = getRawLexicalTokenMatches(originalText);
+  const cleanedMatches = getRawLexicalTokenMatches(cleanedText);
+  const { index } = corrections[0];
+  const originalMatch = originalMatches[index];
+  const cleanedMatch = cleanedMatches[index];
+  if (!originalMatch || !cleanedMatch) return originalText;
+
+  const start = originalMatch.index || 0;
+  return `${originalText.slice(0, start)}${cleanedMatch[0]}${originalText.slice(
+    start + originalMatch[0].length
+  )}`;
+};
+
 const getAllowedSpokenFormattingRanges = (value) => {
   const raw = String(value || "");
   const matches = [
@@ -2833,10 +2931,19 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   // Otherwise an approved canonical spelling repair changes both adjacent
   // bigrams and can look like a clause reorder to the attachment guard.
   const comparisonOriginalText = preferredSpellingAlignment.comparisonOriginalText;
-  const comparisonOriginalAttachmentText =
+  const unalignedComparisonOriginalAttachmentText =
     comparisonOriginalText === original
       ? quotationFidelity.comparisonOriginalText
       : assessQuotationFidelity(comparisonOriginalText, cleaned).comparisonOriginalText;
+  const contextualHomophoneCorrections = getContextualHomophoneCorrections(
+    unalignedComparisonOriginalAttachmentText,
+    cleaned
+  );
+  const comparisonOriginalAttachmentText = alignContextualHomophoneCorrection(
+    unalignedComparisonOriginalAttachmentText,
+    cleaned,
+    contextualHomophoneCorrections
+  );
   const comparisonOriginalWords = getWords(comparisonOriginalAttachmentText);
   const appliedSpokenFormattingRanges = getAppliedSpokenFormattingRanges(
     original,
@@ -2859,11 +2966,16 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     [
       ...getAppliedSpokenFormattingWords(appliedSpokenFormattingRanges),
       ...getAllowedStructuralRewriteWords(original, cleaned),
+      ...contextualHomophoneCorrections.map(({ original: word }) => word),
     ]
+  );
+  const substantiveAddedWords = removeAllowedMissingWords(
+    occurrenceSemanticContentDiff.addedWords,
+    contextualHomophoneCorrections.map(({ cleaned: word }) => word)
   );
   const semanticContentDiff = {
     missingCount: substantiveMissingWords.length,
-    addedCount: occurrenceSemanticContentDiff.addedCount,
+    addedCount: substantiveAddedWords.length,
   };
   const semanticallyRetainedContentWords =
     originalContentWords.size - uniqueSemanticContentDiff.missingCount;
@@ -3162,6 +3274,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
       semanticMissingContentWordCount: semanticContentDiff.missingCount,
       semanticAddedContentWordCount: semanticContentDiff.addedCount,
       preferredSpellingCorrectionCount: preferredSpellingAlignment.corrections.length,
+      contextualHomophoneCorrectionCount: contextualHomophoneCorrections.length,
       orderedBigramRetention,
       criticalTokenCount: criticalTokens.length,
       missingCriticalTokenCount: missingCriticalTokens.length,
