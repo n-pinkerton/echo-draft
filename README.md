@@ -50,7 +50,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - 🧵 **Stacked Dictation**: Start another recording while earlier audio is processing; jobs are delivered in recording order
 - 🧭 **Tray-First Interface**: Use the system tray icon for dictation status, last-copy actions, settings, and app access
 - 🔄 **OpenAI Responses API**: Using the latest Responses API for improved performance
-- 🛡️ **Preservation-First Cleanup**: Suspicious compression, changed polarity, missing literals, or assistant-style execution triggers a literal retry and safely falls back to the original text
+- 🛡️ **Preservation-First Cleanup**: Suspicious compression, changed polarity, missing literals, or assistant-style execution triggers a model-guided repair using the rejected draft and safety reasons, then safely falls back to the original text if needed
 - 🌐 **Globe Key Toggle (macOS)**: Optional Fn/Globe key listener for a hardware-level dictation trigger
 - ⌨️ **Compound Hotkeys**: Support for multi-key combinations like `Cmd+Shift+K`
 - 🎙️ **Push-to-Talk (Windows)**: Native low-level keyboard hook for true push-to-talk with compound hotkey support
@@ -351,13 +351,13 @@ EchoDraft uses a fixed, model-specific cleanup policy built in the trusted main 
 - Keeps questions, requests, caveats, examples, names, numbers, qualifiers, uncertainty, and polarity
 - Preserves model identifiers and file, folder, path, directory, and agent-related tokens instead of guessing a cleaner spelling
 - Adds quotation marks to explicit speech, not around an entire request merely because it reads like a message
-- Gives rejected OpenAI BYOK output one token-locked retry on the selected model and effort; the generated word sequence is checked before source-safe mechanics are accepted
+- Gives rejected OpenAI BYOK output one model-guided repair on the selected model and effort, using the original transcript, rejected draft, and safety reasons while rechecking the result for fidelity
 - Retries suspicious output conservatively and keeps the original wording if preservation cannot be verified; an independently verified dictionary-backed person-name spelling may still be retained
 
 **🤖 AI Provider Options**:
 
 - **OpenAI cleanup**: GPT-5.6 Terra, GPT-5.6 Luna, and GPT-5.6 Sol
-- **OpenAI GPT-5 reasoning**: Choose None (recommended default for Luna), Low (more reasoning), or Medium (most thorough) under _Settings → AI Text Enhancement_. In the current real-audio Luna comparison, None matched Low on usable output quality and was materially faster. A rejected first pass can trigger one strict retry using the same selected model and effort.
+- **OpenAI GPT-5 reasoning**: Choose None (recommended default for Luna), Low (more reasoning), or Medium (most thorough) under _Settings → AI Text Enhancement_. In the current real-audio Luna comparison, None matched Low on usable output quality and was materially faster. A rejected first pass can trigger one model-guided fidelity repair using the same selected model and effort.
 - **Anthropic**: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5
 - **Google**: Gemini 2.5 Pro/Flash/Flash-Lite
 - **Groq**: Ultra-fast Llama and Mixtral inference

@@ -249,6 +249,19 @@ describe("prompts untrusted transcription wrapper", () => {
     expect(prompt).not.toContain("A previous cleanup attempt failed");
   });
 
+  it("gives fidelity retries an autonomous repair contract", () => {
+    const prompt = getSystemPrompt("Echo", ["Benje"], "en", "gpt-5.6-luna", "fidelity-repair");
+
+    expect(prompt).toContain("Autonomous Fidelity Repair");
+    expect(prompt).toContain("originalTranscript");
+    expect(prompt).toContain("rejectedCleanup");
+    expect(prompt).toContain("rejectionReasons");
+    expect(prompt).toContain("Use your language judgment");
+    expect(prompt).not.toContain("Token-Locked Mechanical Pass");
+    expect(prompt).toContain("trusted_preferred_spellings");
+    expect(prompt).toContain("Benje");
+  });
+
   it("legacy custom prompt text is never included in the model-facing policy", () => {
     localStorage.setItem(
       "customUnifiedPrompt",

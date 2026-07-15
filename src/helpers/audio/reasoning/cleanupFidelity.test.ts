@@ -672,6 +672,36 @@ describe("assessCleanupFidelity", () => {
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
   });
 
+  it.each([
+    [
+      "invents an ordinary word",
+      "Sorry, I mean send the confidential release note Friday.",
+    ],
+    [
+      "substitutes an ordinary word",
+      "Sorry, I mean send the release summary Friday.",
+    ],
+    ["drops several corrected words", "Sorry, I mean send Friday."],
+  ])("rejects cleanup that %s after a self-correction marker", (_scenario, cleaned) => {
+    const original = "Sorry, I mean send the release note Friday.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it("does not treat an imperative make-that phrase as a self-correction marker", () => {
+    const original =
+      "Archive the draft. Please make that report confidential before sending the release note Friday.";
+    const cleaned = "Report confidential before sending the release note Friday.";
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
   it("rejects inferred nested attribution inside explicit quote boundaries", () => {
     const original =
       "send it Tuesday no sorry Thursday and quote Sam said hold the release until legal confirms end quote";

@@ -6,19 +6,24 @@ import {
 import {
   assessCleanupFidelity,
   assessStrictCleanupLexicalFidelity,
-  applyStrictCleanupTokensToOriginalPunctuation,
   applyTrustedPreferredSpellingAliases,
   CleanupFidelityError,
 } from "./cleanupFidelity";
-import { repairMisrecognizedSpokenQuoteBoundary } from "./cleanupInputRepairs";
-import { repairCleanupOutput } from "./cleanupOutputRepairs";
-import { assessQuotationFidelity, countUnclosedSpokenQuoteOpeners } from "./cleanupQuoteFidelity";
 import { getCustomDictionaryArray } from "../transcription/customDictionary";
 import {
   createTranscriptionCancelledError,
   isTranscriptionCancelled,
   throwIfTranscriptionCancelled,
 } from "../pipeline/cancellation";
+
+const buildFidelityRepairPacket = (originalTranscript, rejectedCleanup, rejectionReasons) =>
+  JSON.stringify({
+    originalTranscript,
+    rejectedCleanup,
+    rejectionReasons: Array.isArray(rejectionReasons)
+      ? rejectionReasons.filter((reason) => typeof reason === "string")
+      : [],
+  });
 
 /**
  * Shared cleanup/orchestration around `ReasoningService` for transcript post-processing.
@@ -185,7 +190,7 @@ export class ReasoningCleanupService {
     const trustedBaselineText = preferredSourceAssessment.accepted
       ? preferredSourceCandidate
       : text;
-    const preparedText = repairMisrecognizedSpokenQuoteBoundary(trustedBaselineText);
+    const modelInputText = trustedBaselineText;
     const preferredSpellingCorrectionCount = preferredSourceAssessment.accepted
       ? preferredSourceAssessment.metrics.preferredSpellingCorrectionCount || 0
       : 0;
@@ -205,16 +210,13 @@ export class ReasoningCleanupService {
       throwIfTranscriptionCancelled(signal);
       const preferredSpellings = fidelityOptions.preferredSpellings;
       const firstResult = applyTrustedPreferredSpellingAliases(
-        preparedText,
-        repairCleanupOutput(
-          preparedText,
-          sanitizeProcessedText(
-            await this.reasoningService.processText(preparedText, model, null, {
-              cleanupPromptMode: "preservation-first",
-              reasoningEffort,
-              ...(signal ? { signal } : {}),
-            })
-          )
+        modelInputText,
+        sanitizeProcessedText(
+          await this.reasoningService.processText(modelInputText, model, null, {
+            cleanupPromptMode: "preservation-first",
+            reasoningEffort,
+            ...(signal ? { signal } : {}),
+          })
         ),
         preferredSpellings
       );
@@ -254,38 +256,35 @@ export class ReasoningCleanupService {
         retryModel,
         reasoningEffort
       );
-      const useSpokenQuoteRetry =
-        firstAssessment.reasons.includes("nested-quotation-inference") &&
-        countUnclosedSpokenQuoteOpeners(preparedText) > 0;
       retryAttempted = true;
       attemptedRetryModel = retryModel;
       throwIfTranscriptionCancelled(signal);
-      const generatedRetryResult = repairCleanupOutput(
-        preparedText,
+      const retryPacket = buildFidelityRepairPacket(
+        trustedBaselineText,
+        firstResult,
+        firstAssessment.reasons
+      );
+      const retryResult = applyTrustedPreferredSpellingAliases(
+        trustedBaselineText,
         sanitizeProcessedText(
-          await this.reasoningService.processText(preparedText, retryModel, null, {
-            cleanupPromptMode: useSpokenQuoteRetry
-              ? "strict-quote-preservation"
-              : "strict-preservation",
+          await this.reasoningService.processText(retryPacket, retryModel, null, {
+            cleanupPromptMode: "fidelity-repair",
             reasoningEffort: retryReasoningEffort,
             ...(signal ? { signal } : {}),
           })
-        )
+        ),
+        preferredSpellings
       );
       throwIfTranscriptionCancelled(signal);
-      const generatedRetryQuoteAssessment = useSpokenQuoteRetry
-        ? assessQuotationFidelity(preparedText, generatedRetryResult)
-        : null;
-      const generatedRetryAppliedSpokenQuotation = Boolean(
-        generatedRetryQuoteAssessment?.unverifiedPairCount === 0 &&
-        generatedRetryQuoteAssessment.appliedSpokenPairs.length > 0
+      const rawRetryAssessment = includePreferredSpellingMetrics(
+        assessCleanupFidelity(trustedBaselineText, retryResult, fidelityOptions)
       );
-      const generatedRetryLexicalBaseline = generatedRetryAppliedSpokenQuotation
-        ? generatedRetryQuoteAssessment.comparisonOriginalText
-        : preparedText;
-      const generatedRetryLexicalAssessment = assessStrictCleanupLexicalFidelity(
-        generatedRetryLexicalBaseline,
-        generatedRetryResult,
+      const reverseRetryAssessment = includePreferredSpellingMetrics(
+        assessCleanupFidelity(retryResult, trustedBaselineText, fidelityOptions)
+      );
+      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(
+        trustedBaselineText,
+        retryResult,
         {
           language:
             typeof localStorage !== "undefined"
@@ -293,28 +292,18 @@ export class ReasoningCleanupService {
               : "auto",
         }
       );
-      const generatedRetrySemanticAssessment = includePreferredSpellingMetrics(
-        assessCleanupFidelity(trustedBaselineText, generatedRetryResult, fidelityOptions)
-      );
-      const generatedRetryReverseSemanticAssessment = includePreferredSpellingMetrics(
-        assessCleanupFidelity(generatedRetryResult, trustedBaselineText, fidelityOptions)
-      );
-      const generatedRetryMetrics = generatedRetryLexicalAssessment.metrics;
+      const retryMetrics = retryLexicalAssessment.metrics;
       const recoverableSingleTokenSubstitution =
-        !useSpokenQuoteRetry &&
-        !generatedRetryLexicalAssessment.accepted &&
-        generatedRetryMetrics.strictLexicalOriginalTokenCount ===
-          generatedRetryMetrics.strictLexicalCleanedTokenCount &&
-        generatedRetryMetrics.strictLexicalMismatchCount === 1 &&
-        generatedRetryMetrics.strictSignificantOriginalTokenCount ===
-          generatedRetryMetrics.strictSignificantCleanedTokenCount &&
-        generatedRetryMetrics.strictSignificantMismatchCount === 1;
-      const singleTokenCountDriftType = generatedRetryMetrics.strictLexicalSingleEditType;
+        !rawRetryAssessment.accepted &&
+        !retryLexicalAssessment.accepted &&
+        retryMetrics.strictLexicalOriginalTokenCount ===
+          retryMetrics.strictLexicalCleanedTokenCount &&
+        retryMetrics.strictLexicalMismatchCount === 1 &&
+        retryMetrics.strictSignificantOriginalTokenCount ===
+          retryMetrics.strictSignificantCleanedTokenCount &&
+        retryMetrics.strictSignificantMismatchCount === 1;
+      const singleTokenCountDriftType = retryMetrics.strictLexicalSingleEditType;
       const hardSemanticMetricNames = [
-        "missingContentWordCount",
-        "addedContentWordCount",
-        "semanticMissingContentWordCount",
-        "semanticAddedContentWordCount",
         "missingCriticalTokenCount",
         "missingProtectedTechnicalTokenCount",
         "changedCriticalTokenAttachmentCount",
@@ -327,17 +316,21 @@ export class ReasoningCleanupService {
         "changedModalAttachmentCount",
       ];
       const hasNoHardSemanticDrift = [
-        generatedRetrySemanticAssessment,
-        generatedRetryReverseSemanticAssessment,
+        rawRetryAssessment,
+        reverseRetryAssessment,
       ].every(
         (assessment) =>
           assessment.accepted &&
           hardSemanticMetricNames.every((name) => assessment.metrics[name] === 0)
       );
+      const hasNoCriticalReverseDrift = [
+        "missingCriticalTokenCount",
+        "missingProtectedTechnicalTokenCount",
+      ].every((name) => reverseRetryAssessment.metrics[name] === 0);
       const recoverableSingleTokenCountDrift =
-        !useSpokenQuoteRetry &&
+        !rawRetryAssessment.accepted &&
         (singleTokenCountDriftType === "insertion" || singleTokenCountDriftType === "deletion") &&
-        generatedRetryMetrics.strictSignificantSingleEditType === singleTokenCountDriftType &&
+        retryMetrics.strictSignificantSingleEditType === singleTokenCountDriftType &&
         hasNoHardSemanticDrift;
       const retryDriftEditType = recoverableSingleTokenSubstitution
         ? "substitution"
@@ -345,113 +338,86 @@ export class ReasoningCleanupService {
           ? singleTokenCountDriftType
           : null;
       const recoverableSingleTokenRetryDrift = retryDriftEditType !== null;
-      // Luna occasionally violates the token lock with one lexical edit. The
-      // candidate itself is never trusted: for an exactly proven substitution,
-      // insertion, or deletion, recover the prepared source byte-for-byte. Quote
-      // drift, reordering, and wider changes remain on the rejection path.
-      const retryResult = generatedRetryLexicalAssessment.accepted
-        ? generatedRetryAppliedSpokenQuotation
-          ? generatedRetryResult
-          : applyStrictCleanupTokensToOriginalPunctuation(preparedText, generatedRetryResult, {
-              language:
-                typeof localStorage !== "undefined"
-                  ? localStorage.getItem("preferredLanguage") || "auto"
-                  : "auto",
-            })
-        : recoverableSingleTokenRetryDrift
-          ? preparedText
-          : generatedRetryResult;
-      const retrySemanticAssessment = includePreferredSpellingMetrics(
-        assessCleanupFidelity(trustedBaselineText, retryResult, fidelityOptions)
-      );
-      // The strict retry is allowed to repair mechanics only. Enforce that
-      // contract after sanitization and deterministic repairs so neither the
-      // model nor a post-processor can silently add, remove, or reorder words.
-      const retryQuoteAssessment = useSpokenQuoteRetry
-        ? assessQuotationFidelity(preparedText, retryResult)
-        : null;
-      const retryAppliedSpokenQuotation = Boolean(
-        retryQuoteAssessment?.unverifiedPairCount === 0 &&
-        retryQuoteAssessment.appliedSpokenPairs.length > 0
-      );
-      const retryLexicalBaseline = retryAppliedSpokenQuotation
-        ? retryQuoteAssessment.comparisonOriginalText
-        : preparedText;
-      const retryLexicalAssessment = assessStrictCleanupLexicalFidelity(
-        retryLexicalBaseline,
-        retryResult,
-        {
-          language:
-            typeof localStorage !== "undefined"
-              ? localStorage.getItem("preferredLanguage") || "auto"
-              : "auto",
-        }
-      );
-      // A token-locked retry cannot repair a source-inherent trailing workflow
-      // fragment without violating its lexical contract. Once exact lexical
-      // preservation is proven, keep the source-formatted result instead of
-      // reporting cleanup failure for the original recognizer's defect.
-      const retrySemanticReasons = retrySemanticAssessment.reasons.filter(
-        (reason) => reason !== "incomplete-workflow-progression" || !retryLexicalAssessment.accepted
+      const unsafeSingleSignificantDeletion =
+        rawRetryAssessment.accepted &&
+        retryMetrics.strictLexicalSingleEditType === "deletion" &&
+        (rawRetryAssessment.metrics.missingContentWordCount > 0 ||
+          rawRetryAssessment.metrics.semanticMissingContentWordCount > 0);
+      const sourceInherentRetryReasons = rawRetryAssessment.reasons.filter(
+        (reason) => reason !== "incomplete-workflow-progression" || retryResult !== trustedBaselineText
       );
       const retryAssessment = {
-        accepted: retrySemanticReasons.length === 0 && retryLexicalAssessment.accepted,
-        reasons: Array.from(new Set([...retrySemanticReasons, ...retryLexicalAssessment.reasons])),
-        initialFidelityReasons: firstAssessment.reasons,
-        retryFidelityReasons: recoverableSingleTokenRetryDrift
-          ? generatedRetryLexicalAssessment.reasons
-          : Array.from(
-              new Set([...retrySemanticReasons, ...generatedRetryLexicalAssessment.reasons])
-            ),
-        metrics: {
-          ...retrySemanticAssessment.metrics,
-          ...retryLexicalAssessment.metrics,
-          ...(recoverableSingleTokenRetryDrift
-            ? {
-                retryDriftRecovered: true,
-                retryDriftEditType,
-                generatedStrictLexicalMismatchCount:
-                  generatedRetryMetrics.strictLexicalMismatchCount,
-                generatedStrictSignificantMismatchCount:
-                  generatedRetryMetrics.strictSignificantMismatchCount,
-              }
-            : {}),
-        },
+        ...rawRetryAssessment,
+        accepted:
+          sourceInherentRetryReasons.length === 0 &&
+          hasNoCriticalReverseDrift &&
+          !unsafeSingleSignificantDeletion,
+        reasons: Array.from(
+          new Set([
+            ...sourceInherentRetryReasons,
+            ...(hasNoCriticalReverseDrift && !unsafeSingleSignificantDeletion
+              ? []
+              : ["bidirectional-fidelity-risk"]),
+          ])
+        ),
       };
+      const effectiveRetryResult = recoverableSingleTokenRetryDrift
+        ? trustedBaselineText
+        : retryResult;
+      const effectiveRetryAssessment = recoverableSingleTokenRetryDrift
+        ? {
+            ...includePreferredSpellingMetrics(
+              assessCleanupFidelity(trustedBaselineText, trustedBaselineText, fidelityOptions)
+            ),
+            initialFidelityReasons: firstAssessment.reasons,
+            retryFidelityReasons: retryAssessment.reasons,
+            metrics: {
+              ...retryAssessment.metrics,
+              retryDriftRecovered: true,
+              retryDriftEditType,
+              generatedStrictLexicalMismatchCount: retryMetrics.strictLexicalMismatchCount,
+              generatedStrictSignificantMismatchCount:
+                retryMetrics.strictSignificantMismatchCount,
+            },
+          }
+        : {
+            ...retryAssessment,
+            initialFidelityReasons: firstAssessment.reasons,
+            retryFidelityReasons: retryAssessment.reasons,
+          };
       const processingTimeMs = Date.now() - startTime;
 
-      if (!retryAssessment.accepted) {
+      if (!effectiveRetryAssessment.accepted) {
         this.logger?.logReasoning?.("REASONING_FIDELITY_REJECTED", {
           model,
           retryModel,
           processingTimeMs,
-          reasons: retryAssessment.reasons,
-          metrics: retryAssessment.metrics,
+          reasons: effectiveRetryAssessment.reasons,
+          metrics: effectiveRetryAssessment.metrics,
           retryCount: 1,
         });
-        throw new CleanupFidelityError(retryAssessment);
+        throw new CleanupFidelityError(effectiveRetryAssessment);
       }
 
       this.logger?.logReasoning?.("REASONING_SERVICE_COMPLETE", {
         model,
         retryModel,
         retryReasoningEffort,
-        sourceSeparatorsRestored: retryResult !== generatedRetryResult,
         retryDriftRecovered: recoverableSingleTokenRetryDrift,
         retryDriftEditType,
         processingTimeMs,
-        resultLength: retryResult.length,
+        resultLength: effectiveRetryResult.length,
         retryCount: 1,
         success: true,
       });
 
       return {
-        text: retryResult,
-        assessment: retryAssessment,
+        text: effectiveRetryResult,
+        assessment: effectiveRetryAssessment,
         retryCount: 1,
         appliedModel: recoverableSingleTokenRetryDrift ? null : retryModel,
         initialFidelityReasons: firstAssessment.reasons,
-        retryFidelityReasons: retryAssessment.retryFidelityReasons,
+        retryFidelityReasons: effectiveRetryAssessment.retryFidelityReasons,
         ...(retryDriftEditType ? { retryDriftEditType } : {}),
         ...(recoverableSingleTokenRetryDrift ? { retryDriftRecovered: true } : {}),
       };
@@ -480,7 +446,7 @@ export class ReasoningCleanupService {
   }
 
   validateCleanupCandidate(originalText, candidateText) {
-    const text = repairCleanupOutput(originalText, sanitizeProcessedText(candidateText));
+    const text = sanitizeProcessedText(candidateText);
     const assessment = assessCleanupFidelity(originalText, text);
     if (!assessment.accepted) {
       throw new CleanupFidelityError(assessment);

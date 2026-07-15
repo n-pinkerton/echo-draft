@@ -1,4 +1,40 @@
-import { getMisrecognizedSpokenQuoteBoundary } from "./cleanupInputRepairs";
+const ATTRIBUTED_MISRECOGNIZED_END_QUOTE =
+  /(?<attribution>\b(?:asked|said|says|wrote)\s*,?\s*)(?<opening>quote)(?<afterOpening>\s*,?\s*)(?<body>[^.!?\r\n\u2028\u2029]{3,500}?),\s*(?<closing>and\s*,\s*quote)\s*,(?=\s*first\b[^.!?\r\n\u2028\u2029]{1,300}[,;]\s*(?:and\s+)?second\b[^.!?\r\n\u2028\u2029]{1,300}[,;]\s*(?:and\s+)?third\b)/iu;
+
+const countPlainQuoteMarkers = (value) => String(value || "").match(/\bquote\b/giu)?.length || 0;
+
+/**
+ * Identify a narrow STT quote-marker shape for fidelity comparison only. The
+ * source is never rewritten; the cleanup model decides how to punctuate it.
+ */
+function getMisrecognizedSpokenQuoteBoundary(value) {
+  const source = String(value || "");
+  if (countPlainQuoteMarkers(source) !== 2) return null;
+  const match = source.match(ATTRIBUTED_MISRECOGNIZED_END_QUOTE);
+  if (!match?.groups || typeof match.index !== "number") return null;
+
+  const openingStart = match.index + match.groups.attribution.length;
+  const openingEnd = openingStart + match.groups.opening.length;
+  const bodyStart = openingEnd + match.groups.afterOpening.length;
+  const bodyEnd = bodyStart + match.groups.body.length;
+  const closingOffset = match[0]
+    .toLocaleLowerCase()
+    .lastIndexOf(match.groups.closing.toLocaleLowerCase());
+  const closingStart = match.index + closingOffset;
+
+  return {
+    body: match.groups.body,
+    bodyEnd,
+    bodyStart,
+    closingEnd: closingStart + match.groups.closing.length,
+    closingStart,
+    closingText: match.groups.closing,
+    match,
+    openingEnd,
+    openingStart,
+    openingText: match.groups.opening,
+  };
+}
 
 // Only singular "quote" is a spoken boundary marker. Plural "quotes" is an
 // ordinary noun and must never authorize deleting source text.

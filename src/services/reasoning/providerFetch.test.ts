@@ -23,7 +23,7 @@ describe("secure cleanup provider transport", () => {
         truncation: "disabled",
       }),
       {
-        cleanupPromptMode: "preservation-first",
+        cleanupPromptMode: "fidelity-repair",
         language: "en-NZ",
         dictionaryEntries: ["Rilje"],
       }
@@ -32,7 +32,7 @@ describe("secure cleanup provider transport", () => {
     expect(operation).toMatchObject({
       kind: "cleanup",
       model: "gpt-5.6-terra",
-      cleanupPromptMode: "preservation-first",
+      cleanupPromptMode: "fidelity-repair",
       language: "en-NZ",
       dictionaryEntries: ["Rilje"],
     });

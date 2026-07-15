@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.16] - 2026-07-16
+
+### Changed
+
+- **Model-Led Cleanup Repair**: Replaces rule-based grammar and quotation rewrites with a second autonomous cleanup pass that receives the original transcript, rejected draft, and fidelity reason codes.
+- **Fidelity Guardrails**: Keeps deterministic code focused on validation, trusted dictionary spellings, and output sanitation; rejected repair attempts still preserve the source text rather than delivering unsafe model output.
+
 ## [1.4.15] - 2026-07-16
 
 ### Fixed

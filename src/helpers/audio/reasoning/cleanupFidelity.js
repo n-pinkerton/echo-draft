@@ -1,5 +1,8 @@
 import { countWords } from "../utils/wordCount";
-import { hasGovernedExplicitQuoteAttachment } from "./cleanupOutputRepairs";
+import {
+  hasDanglingExplicitQuoteConjunction,
+  hasGovernedExplicitQuoteAttachment,
+} from "./cleanupOutputValidation";
 import { assessQuotationFidelity } from "./cleanupQuoteFidelity";
 
 const ASSISTANT_ACTION_OPENERS = [
@@ -132,7 +135,7 @@ const CONTEXTUAL_HOMOPHONE_GROUP_BY_WORD = new Map(
   )
 );
 const SAFE_CONTEXTUAL_HOMOPHONE_COMMAND = ["a", "handoff", "prompt"];
-const CLEAR_SELF_CORRECTION = /\b(?:no[,]?\s+sorry|sorry[,]?\s+i mean|correction|make that)\b/i;
+const CLEAR_SELF_CORRECTION = /\b(?:no[,]?\s+sorry|sorry[,]?\s+i mean|correction)\b/i;
 const SPOKEN_QUOTE_MARKER = /\b(?:(?:open|start|begin|close|end)\s+)?quote\b/i;
 const WHOLE_OUTPUT_QUOTE_PAIRS = [
   ['"', '"'],
@@ -2923,9 +2926,13 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     reasons.push("quote-attachment-risk");
   }
 
+  if (cleaned && hasDanglingExplicitQuoteConjunction(original, cleaned)) {
+    reasons.push("dangling-explicit-quote-conjunction");
+  }
+
   // Short and medium dictations have little redundancy: losing even a single
   // clause can still leave deceptively high lexical overlap. Route suspicious
-  // compression through the strict-preservation retry instead of accepting a
+  // compression through the model-guided fidelity repair instead of accepting a
   // polished summary. Longer dictations receive a little more room for genuine
   // filler and immediate-repetition removal.
   if (originalWords >= 20 && wordRatio !== null && wordRatio < (originalWords < 80 ? 0.82 : 0.75)) {
@@ -2993,13 +3000,14 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     comparisonOriginalWords,
     normalizedCleanedWords
   );
+  const allowedMissingWords = [
+    ...getAppliedSpokenFormattingWords(appliedSpokenFormattingRanges),
+    ...getAllowedStructuralRewriteWords(original, cleaned),
+    ...contextualHomophoneCorrections.map(({ original: word }) => word),
+  ];
   const substantiveMissingWords = removeAllowedMissingWords(
     occurrenceSemanticContentDiff.missingWords,
-    [
-      ...getAppliedSpokenFormattingWords(appliedSpokenFormattingRanges),
-      ...getAllowedStructuralRewriteWords(original, cleaned),
-      ...contextualHomophoneCorrections.map(({ original: word }) => word),
-    ]
+    allowedMissingWords
   );
   const substantiveAddedWords = removeAllowedMissingWords(
     occurrenceSemanticContentDiff.addedWords,
@@ -3051,9 +3059,29 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     semanticContentDiff.missingCount === 0 &&
     semanticContentDiff.addedCount <= 2 &&
     (completedWorkflowRepair || repairedRequestReason);
+  const selfCorrectionMatch = comparisonOriginalAttachmentText.match(CLEAR_SELF_CORRECTION);
+  const selfCorrectionTail =
+    selfCorrectionMatch && typeof selfCorrectionMatch.index === "number"
+      ? comparisonOriginalAttachmentText.slice(
+          selfCorrectionMatch.index + selfCorrectionMatch[0].length
+        )
+      : "";
+  const substantiveSelfCorrectionTailMissingWords = selfCorrectionTail
+    ? removeAllowedMissingWords(
+        getSemanticContentDiff(getWords(selfCorrectionTail), normalizedCleanedWords).missingWords,
+        allowedMissingWords
+      )
+    : [];
+  // A correction marker authorizes dropping the abandoned false start, not a
+  // blanket rewrite. The corrected tail remains authoritative and the cleanup
+  // still may not introduce new semantic words.
+  const approvedSelfCorrection =
+    Boolean(selfCorrectionTail) &&
+    semanticContentDiff.addedCount === 0 &&
+    substantiveSelfCorrectionTailMissingWords.length === 0;
   if (
     (semanticContentDiff.missingCount > 0 || semanticContentDiff.addedCount > 0) &&
-    !CLEAR_SELF_CORRECTION.test(original) &&
+    !approvedSelfCorrection &&
     !approvedStructuralAddition
   ) {
     reasons.push("substantive-rewrite-risk");
@@ -3275,7 +3303,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   if (
     originalWords >= 12 &&
     originalWords < 40 &&
-    !CLEAR_SELF_CORRECTION.test(original) &&
+    !approvedSelfCorrection &&
     !SPOKEN_QUOTE_MARKER.test(original) &&
     orderedBigramRetention < 0.9
   ) {
@@ -3285,7 +3313,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     originalWords >= 40 &&
     (contentCoverage < 0.9 ||
       orderedBigramRetention < 0.8 ||
-      (!CLEAR_SELF_CORRECTION.test(original) &&
+      (!approvedSelfCorrection &&
         originalWords >= 60 &&
         (semanticContentDiff.missingCount > 3 || semanticContentDiff.addedCount > 1)))
   ) {

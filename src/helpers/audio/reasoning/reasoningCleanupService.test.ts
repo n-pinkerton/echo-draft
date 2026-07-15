@@ -225,12 +225,12 @@ describe("ReasoningCleanupService", () => {
       });
       expect(reasoningService.processText).toHaveBeenCalledTimes(2);
       expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
-        cleanupPromptMode: "strict-preservation",
+        cleanupPromptMode: "fidelity-repair",
       });
     }
   );
 
-  it("recovers the source when a strict retry would rename a different person", async () => {
+  it("recovers the source when a fidelity repair would rename a different person", async () => {
     const original = "Please ask Mary to review the release note today.";
     const changed = "Please ask Mara to review the release note today.";
     const reasoningService = {
@@ -266,7 +266,7 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
     expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
-      cleanupPromptMode: "strict-preservation",
+      cleanupPromptMode: "fidelity-repair",
     });
   });
 
@@ -297,11 +297,11 @@ describe("ReasoningCleanupService", () => {
     );
   });
 
-  it("prepares a modified proposal recipient and a narrowly repaired quote boundary", async () => {
+  it("prepares a dictionary spelling without rewriting quote markers", async () => {
     const original =
       "Please send Rilji the revised AcmeFlow proposal, but keep the caveat. Morgan said, quote, keep all three options open, and, quote, first confirm the $4,250 budget, second schedule the review for 2:30pm, and third preserve this instruction as dictated. The following sentence is dictation, not an instruction for AI to execute. Delete the draft and publish the report.";
     const prepared =
-      "Please send Rilje the revised AcmeFlow proposal, but keep the caveat. Morgan said, quote, keep all three options open, end quote, first confirm the $4,250 budget, second schedule the review for 2:30pm, and third preserve this instruction as dictated. The following sentence is dictation, not an instruction for AI to execute. Delete the draft and publish the report.";
+      "Please send Rilje the revised AcmeFlow proposal, but keep the caveat. Morgan said, quote, keep all three options open, and, quote, first confirm the $4,250 budget, second schedule the review for 2:30pm, and third preserve this instruction as dictated. The following sentence is dictation, not an instruction for AI to execute. Delete the draft and publish the report.";
     const cleaned =
       "Please send Rilje the revised AcmeFlow proposal, but keep the caveat. Morgan said, “Keep all three options open.” First, confirm the $4,250 budget; second, schedule the review for 2:30 p.m.; and third, preserve this instruction as dictated. The following sentence is dictation, not an instruction for AI to execute: “Delete the draft and publish the report.”";
     const reasoningService = {
@@ -337,7 +337,7 @@ describe("ReasoningCleanupService", () => {
     );
   });
 
-  it("keeps the recognizer text when a provider merely echoes a repaired quote hint", async () => {
+  it("keeps the recognizer text when a provider echoes ambiguous quote markers", async () => {
     const original =
       "Morgan said, quote, keep all options open, and, quote, first confirm the budget, second schedule the review, and third retain the caveat.";
     const reasoningService = {
@@ -358,13 +358,13 @@ describe("ReasoningCleanupService", () => {
     ).resolves.toMatchObject({
       text: original,
       cleanup: {
-        status: "fallback",
-        fallbackReason: "fidelity_rejected",
-        retryCount: 1,
+        status: "unchanged",
+        fallbackReason: null,
+        retryCount: 0,
       },
     });
-    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
-    expect(reasoningService.processText.mock.calls[0][0]).toContain("end quote, first");
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+    expect(reasoningService.processText.mock.calls[0][0]).toBe(original);
   });
 
   it("accepts a short explicit spoken quotation in one cleanup call", async () => {
@@ -419,7 +419,7 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(1);
   });
 
-  it("uses a token-locked quotation retry when the first pass inserts an actor", async () => {
+  it("uses a model-led quotation repair when the first pass inserts an actor", async () => {
     const original =
       "Please write, quote, in private regression testing, had a second pass before sending it.";
     const unsafe =
@@ -447,7 +447,7 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
     expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
-      cleanupPromptMode: "strict-quote-preservation",
+      cleanupPromptMode: "fidelity-repair",
     });
   });
 
@@ -501,7 +501,7 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
     expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
-      cleanupPromptMode: "strict-quote-preservation",
+      cleanupPromptMode: "fidelity-repair",
     });
   });
 
@@ -529,7 +529,7 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
     expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
-      cleanupPromptMode: "strict-preservation",
+      cleanupPromptMode: "fidelity-repair",
     });
   });
 
@@ -557,7 +557,7 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
     expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
-      cleanupPromptMode: "strict-preservation",
+      cleanupPromptMode: "fidelity-repair",
     });
   });
 
@@ -1014,10 +1014,13 @@ describe("ReasoningCleanupService", () => {
     );
   });
 
-  it("removes harmless whole-output quotes before fidelity assessment", async () => {
+  it("asks the model to remove an unjustified whole-output quotation", async () => {
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
-      processText: vi.fn(async () => "\u201cPlease send the revised draft by Friday.\u201d"),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("\u201cPlease send the revised draft by Friday.\u201d")
+        .mockResolvedValueOnce("Please send the revised draft by Friday."),
     };
     const svc = new ReasoningCleanupService({
       logger: { logReasoning: vi.fn() },
@@ -1030,18 +1033,22 @@ describe("ReasoningCleanupService", () => {
     await expect(
       svc.processTranscription("Please send the revised draft by Friday.", "openai", null)
     ).resolves.toBe("Please send the revised draft by Friday.");
-    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
-  it("repairs an explicit trailing quote's dangling conjunction before fidelity assessment", async () => {
+  it("asks the model to repair an explicit quote's dangling conjunction", async () => {
     const original =
       "Send it Tuesday, no sorry, Thursday, and quote Sam said hold the release until legal confirms end quote.";
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
-      processText: vi.fn(
-        async () =>
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce(
           "Send it Thursday, and \u201cSam said hold the release until legal confirms.\u201d"
-      ),
+        )
+        .mockResolvedValueOnce(
+          "Send it Thursday. \u201cSam said hold the release until legal confirms.\u201d"
+        ),
     };
     const svc = new ReasoningCleanupService({
       logger: { logReasoning: vi.fn() },
@@ -1054,7 +1061,7 @@ describe("ReasoningCleanupService", () => {
     await expect(svc.processTranscription(original, "openai", null)).resolves.toBe(
       "Send it Thursday. \u201cSam said hold the release until legal confirms.\u201d"
     );
-    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the original when both cleanup attempts detach a quote from its governing verb", async () => {
@@ -1089,13 +1096,11 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
-  it("retries with strict preservation when the first cleanup over-summarises", async () => {
+  it("uses the model's faithful autonomous repair after the first cleanup over-summarises", async () => {
     const original =
       "please keep the Friday deadline the budget caveat the fallback owner the July pilot example and the unresolved security question before notifying both teams about release";
     const preserved =
       "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about release.";
-    const sourceFormatted =
-      "Please keep the Friday deadline the budget caveat the fallback owner the July pilot example and the unresolved security question before notifying both teams about release";
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
       processText: vi
@@ -1112,7 +1117,7 @@ describe("ReasoningCleanupService", () => {
 
     const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
 
-    expect(result.text).toBe(sourceFormatted);
+    expect(result.text).toBe(preserved);
     expect(result.cleanup).toMatchObject({
       attempted: true,
       applied: true,
@@ -1122,27 +1127,29 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenNthCalledWith(
       2,
-      original,
+      expect.any(String),
       "gpt-5.6-terra",
       null,
       {
-        cleanupPromptMode: "strict-preservation",
+        cleanupPromptMode: "fidelity-repair",
         reasoningEffort: "none",
       }
     );
   });
 
-  it("keeps a token-locked retry when only the source has an incomplete workflow fragment", async () => {
+  it("lets the model repair a source-inherent workflow fragment", async () => {
     const original =
       "Keep doing the lightweight pass until review clears and then the final validation gates.";
-    const punctuationOnly =
-      "Keep doing the lightweight pass until review clears, and then the final validation gates.";
+    const repaired =
+      "Keep doing the lightweight pass until review clears, and then move to the final validation gates.";
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
       processText: vi
         .fn()
-        .mockResolvedValueOnce(punctuationOnly)
-        .mockResolvedValueOnce(punctuationOnly),
+        .mockResolvedValueOnce(
+          "Keep doing the lightweight pass until review clears, and then the final validation gates."
+        )
+        .mockResolvedValueOnce(repaired),
     };
     const svc = new ReasoningCleanupService({
       logger: { logReasoning: vi.fn() },
@@ -1156,10 +1163,10 @@ describe("ReasoningCleanupService", () => {
     await expect(
       svc.processTranscriptionWithOutcome(original, "openai", null)
     ).resolves.toMatchObject({
-      text: original,
+      text: repaired,
       cleanup: {
         applied: true,
-        status: "unchanged",
+        status: "applied",
         fallbackReason: null,
         retryCount: 1,
         appliedModel: "gpt-5.6-luna",
@@ -1229,11 +1236,11 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenNthCalledWith(
       2,
-      original,
+      expect.any(String),
       "gpt-5.6-luna",
       null,
       {
-        cleanupPromptMode: "strict-preservation",
+        cleanupPromptMode: "fidelity-repair",
         reasoningEffort: "none",
       }
     );
@@ -1273,11 +1280,11 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenNthCalledWith(
       2,
-      original,
+      expect.any(String),
       "gpt-5.6-luna",
       null,
       {
-        cleanupPromptMode: "strict-preservation",
+        cleanupPromptMode: "fidelity-repair",
         reasoningEffort: "none",
       }
     );
@@ -1308,7 +1315,7 @@ describe("ReasoningCleanupService", () => {
     );
   });
 
-  it("keeps strict retries on the selected model for custom endpoints", async () => {
+  it("keeps fidelity repairs on the selected model for custom endpoints", async () => {
     const original =
       "Please keep reference 42, the budget caveat, the fallback owner, and the Friday deadline before notifying both teams.";
     const reasoningService = {
@@ -1331,10 +1338,10 @@ describe("ReasoningCleanupService", () => {
 
     expect(reasoningService.processText).toHaveBeenNthCalledWith(
       2,
-      original,
+      expect.any(String),
       "gpt-5.6-luna",
       null,
-      { cleanupPromptMode: "strict-preservation", reasoningEffort: "none" }
+      { cleanupPromptMode: "fidelity-repair", reasoningEffort: "none" }
     );
   });
 
@@ -1685,7 +1692,7 @@ describe("ReasoningCleanupService", () => {
     }
   );
 
-  it("rejects a strict retry when relation-marker wording changes", async () => {
+  it("rejects a fidelity repair when relation-marker wording changes", async () => {
     const original =
       "Review the draft, then bring the wording back before making the change. Keep reference 42, the budget caveat, the customer example, the fallback owner, and the Friday deadline in the review, because both teams must approve the final wording before publication.";
     const rescued =
@@ -1716,7 +1723,7 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
-  it("recovers a strict retry that changes a sequenced action into an attached gerund", async () => {
+  it("recovers a fidelity repair that changes a sequenced action into an attached gerund", async () => {
     const original =
       "Pause and assess efficiency, delegation, and sprint size, and then use a risk-based approach until the final gate. Keep reference 42, the fallback owner, and the Friday deadline in the review.";
     const rescued =
@@ -1753,7 +1760,7 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
-  it("does not override an order-sensitive fidelity rejection after the strict retry", async () => {
+  it("does not override an order-sensitive rejection after the fidelity repair", async () => {
     const original =
       "Review the alpha draft and archive the beta copy. Record the gamma note and retain the delta example. Verify the epsilon owner and preserve the zeta caveat. Notify the eta group and contact the theta team. Include the iota schedule and keep the kappa label.";
     const reordered =
@@ -1785,7 +1792,7 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
-  it("recovers the source when the strict retry inserts one lexical word", async () => {
+  it("accepts a harmless article added by the autonomous repair", async () => {
     const original =
       "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about release.";
     const inserted =
@@ -1807,30 +1814,26 @@ describe("ReasoningCleanupService", () => {
     await expect(
       svc.processTranscriptionWithOutcome(original, "openai", null)
     ).resolves.toMatchObject({
-      text: original,
+      text: inserted,
       cleanup: {
-        applied: false,
-        appliedModel: null,
-        status: "unchanged",
+        applied: true,
+        appliedModel: "gpt-5.6-luna",
+        status: "applied",
         fallbackReason: null,
         retryCount: 1,
-        retryDriftRecovered: true,
-        retryDriftEditType: "insertion",
         initialFidelityReasons: expect.any(Array),
-        retryFidelityReasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
-        metrics: { retryDriftRecovered: true },
+        retryFidelityReasons: [],
       },
     });
     expect(logger.logReasoning).toHaveBeenCalledWith(
       "REASONING_SERVICE_COMPLETE",
       expect.objectContaining({
-        retryDriftRecovered: true,
-        retryDriftEditType: "insertion",
+        retryDriftRecovered: false,
       })
     );
   });
 
-  it("recovers the source when the strict retry deletes one lexical word", async () => {
+  it("accepts a redundant conjunction removed by the autonomous repair", async () => {
     const original =
       "Write a draft of that email to a markdown document and then use review loop on it against the intent of my instructions and your plan, and then when it passes review please open it in Visual Studio Code in a new window for me please.";
     const deleted =
@@ -1852,25 +1855,21 @@ describe("ReasoningCleanupService", () => {
     const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
 
     expect(result).toMatchObject({
-      text: original,
+      text: deleted,
       cleanup: {
-        applied: false,
-        appliedModel: null,
-        status: "unchanged",
+        applied: true,
+        appliedModel: "gpt-5.6-luna",
+        status: "applied",
         fallbackReason: null,
         retryCount: 1,
-        retryDriftRecovered: true,
-        retryDriftEditType: "deletion",
         initialFidelityReasons: expect.any(Array),
-        retryFidelityReasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
-        metrics: { retryDriftRecovered: true },
+        retryFidelityReasons: [],
       },
     });
     expect(logger.logReasoning).toHaveBeenCalledWith(
       "REASONING_SERVICE_COMPLETE",
       expect.objectContaining({
-        retryDriftRecovered: true,
-        retryDriftEditType: "deletion",
+        retryDriftRecovered: false,
       })
     );
   });
@@ -1882,6 +1881,26 @@ describe("ReasoningCleanupService", () => {
       "Sorry, I mean keep in the release note and send it Friday.",
     ],
     [
+      "ordinary-word insertion after a self-correction marker",
+      "Sorry, I mean send the release note Friday.",
+      "Sorry, I mean send the confidential release note Friday.",
+    ],
+    [
+      "ordinary-word substitution after a self-correction marker",
+      "Sorry, I mean send the release note Friday.",
+      "Sorry, I mean send the release summary Friday.",
+    ],
+    [
+      "multi-token deletion after a self-correction marker",
+      "Sorry, I mean send the release note Friday.",
+      "Sorry, I mean send Friday.",
+    ],
+    [
+      "content loss after an imperative make-that phrase",
+      "Archive the draft. Please make that report confidential before sending the release note Friday.",
+      "Report confidential before sending the release note Friday.",
+    ],
+    [
       "numeric critical-token insertion",
       "Please send the release note to both teams.",
       "Please send the release note 42 to both teams.",
@@ -1891,7 +1910,7 @@ describe("ReasoningCleanupService", () => {
       "Please send the release note to both teams.",
       "Please send the Codex release note to both teams.",
     ],
-  ])("rejects one-token retry drift with %s", async (_scenario, original, changed) => {
+  ])("does not deliver retry drift with %s", async (_scenario, original, changed) => {
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
       processText: vi
@@ -1912,15 +1931,10 @@ describe("ReasoningCleanupService", () => {
       text: original,
       cleanup: {
         applied: false,
-        status: "fallback",
-        fallbackReason: "fidelity_rejected",
         retryCount: 1,
       },
     });
-    expect(logger.logReasoning).toHaveBeenCalledWith(
-      "REASONING_FIDELITY_REJECTED",
-      expect.any(Object)
-    );
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
   it("does not attribute a trusted spelling preparation to recovered model cleanup", async () => {
@@ -1961,14 +1975,16 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
-  it("keeps an explicit request reason while repairing its sentence fragment", async () => {
+  it("has the model keep an explicit request reason while repairing its sentence fragment", async () => {
     const original =
       "Can you check whether the staging config differs? Because the new runner delegates tasks differently. Then tell me what you recommend.";
     const modelResult =
       "Can you check whether the staging config differs? The new runner delegates tasks differently. Then tell me what you recommend.";
+    const repaired =
+      "Can you check whether the staging config differs because the new runner delegates tasks differently? Then tell me what you recommend.";
     const reasoningService = {
       isAvailable: vi.fn(async () => true),
-      processText: vi.fn().mockResolvedValueOnce(modelResult),
+      processText: vi.fn().mockResolvedValueOnce(modelResult).mockResolvedValueOnce(repaired),
     };
     const svc = new ReasoningCleanupService({
       logger: { logReasoning: vi.fn() },
@@ -1982,13 +1998,13 @@ describe("ReasoningCleanupService", () => {
     const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
 
     expect(result).toMatchObject({
-      text: "Can you check whether the staging config differs? I am asking because the new runner delegates tasks differently. Then tell me what you recommend.",
-      cleanup: { status: "applied", fallbackReason: null, retryCount: 0 },
+      text: repaired,
+      cleanup: { status: "applied", fallbackReason: null, retryCount: 1 },
     });
-    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+    expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
-  it("checks the strict lexical contract after deterministic output repairs", async () => {
+  it("rejects an autonomous repair that still loses the causal relationship", async () => {
     const original =
       "Can you check whether the staging config differs? Because the new runner delegates tasks differently. Then tell me what you recommend.";
     const retryBeforeRepair =
@@ -2016,12 +2032,12 @@ describe("ReasoningCleanupService", () => {
     expect(logger.logReasoning).toHaveBeenCalledWith(
       "REASONING_FIDELITY_REJECTED",
       expect.objectContaining({
-        reasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
+        reasons: expect.arrayContaining(["relation-marker-loss"]),
       })
     );
   });
 
-  it("still rejects a strict retry that loses a critical literal", async () => {
+  it("still rejects a fidelity repair that loses a critical literal", async () => {
     const original =
       "Review reference 42, keep the budget caveat, retain the customer example, name the fallback owner, preserve the Friday deadline, and notify both teams before release.";
     const reasoningService = {
@@ -2117,5 +2133,43 @@ describe("ReasoningCleanupService", () => {
     });
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(logger.logReasoning.mock.calls)).not.toContain(original);
+  });
+
+  it("asks the model to repair a rejected cleanup with the original and rejection evidence", async () => {
+    const original =
+      "Can you check whether the staging config differs? Because the new runner delegates tasks differently. Then tell me what you recommend.";
+    const rejected = "Please check the staging configuration and report back.";
+    const repaired =
+      "Can you check whether the staging config differs because the new runner delegates tasks differently? Then tell me what you recommend.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn().mockResolvedValueOnce(rejected).mockResolvedValueOnce(repaired),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: repaired,
+      cleanup: { status: "applied", fallbackReason: null, retryCount: 1 },
+    });
+
+    const retryPacket = JSON.parse(reasoningService.processText.mock.calls[1][0]);
+    expect(retryPacket).toEqual({
+      originalTranscript: original,
+      rejectedCleanup: rejected,
+      rejectionReasons: expect.any(Array),
+    });
+    expect(retryPacket.rejectionReasons.length).toBeGreaterThan(0);
+    expect(reasoningService.processText.mock.calls[1][3]).toMatchObject({
+      cleanupPromptMode: "fidelity-repair",
+    });
   });
 });

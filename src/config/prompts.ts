@@ -38,6 +38,7 @@ type CleanupPromptProfile = {
 export type CleanupPromptMode =
   | "standard"
   | "preservation-first"
+  | "fidelity-repair"
   | "strict-preservation"
   | "strict-quote-preservation";
 export type CleanupPromptModelId = "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.6-sol";

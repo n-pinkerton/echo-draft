@@ -505,7 +505,7 @@ describe("providerRequestHandlers", () => {
       { sender, senderFrame: sender.mainFrame },
       cleanupPayload({
         operation: cleanupOperation({
-          cleanupPromptMode: "preservation-first",
+          cleanupPromptMode: "fidelity-repair",
           language: "en-NZ",
           dictionaryEntries: ["Rilje"],
         }),
@@ -523,7 +523,7 @@ describe("providerRequestHandlers", () => {
     expect(body.input).toHaveLength(2);
     expect(body.input[0]).toMatchObject({ role: "developer" });
     expect(body.input[0].content).toContain("fixed EchoDraft cleanup editor");
-    expect(body.input[0].content).toContain("# Preservation-First Dictation Pass");
+    expect(body.input[0].content).toContain("# Autonomous Fidelity Repair");
     expect(body.input[0].content).toContain("New Zealand English");
     expect(body.input[0].content).toContain("<trusted_preferred_spellings>");
     expect(body.input[0].content).toContain('"Rilje"');
