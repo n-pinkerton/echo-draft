@@ -1785,7 +1785,7 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(2);
   });
 
-  it("falls back when the strict retry inserts one otherwise harmless function word", async () => {
+  it("recovers the source when the strict retry inserts one lexical word", async () => {
     const original =
       "Please keep the Friday deadline, the budget caveat, the fallback owner, the July pilot example, and the unresolved security question before notifying both teams about release.";
     const inserted =
@@ -1810,6 +1810,108 @@ describe("ReasoningCleanupService", () => {
       text: original,
       cleanup: {
         applied: false,
+        appliedModel: null,
+        status: "unchanged",
+        fallbackReason: null,
+        retryCount: 1,
+        retryDriftRecovered: true,
+        retryDriftEditType: "insertion",
+        initialFidelityReasons: expect.any(Array),
+        retryFidelityReasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
+        metrics: { retryDriftRecovered: true },
+      },
+    });
+    expect(logger.logReasoning).toHaveBeenCalledWith(
+      "REASONING_SERVICE_COMPLETE",
+      expect.objectContaining({
+        retryDriftRecovered: true,
+        retryDriftEditType: "insertion",
+      })
+    );
+  });
+
+  it("recovers the source when the strict retry deletes one lexical word", async () => {
+    const original =
+      "Write a draft of that email to a markdown document and then use review loop on it against the intent of my instructions and your plan, and then when it passes review please open it in Visual Studio Code in a new window for me please.";
+    const deleted =
+      "Write a draft of that email to a markdown document and then use review loop on it against the intent of my instructions and your plan, then when it passes review please open it in Visual Studio Code in a new window for me please.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("Keep the important details.")
+        .mockResolvedValueOnce(deleted),
+    };
+    const logger = { logReasoning: vi.fn() };
+    const svc = new ReasoningCleanupService({ logger, reasoningService });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
+
+    expect(result).toMatchObject({
+      text: original,
+      cleanup: {
+        applied: false,
+        appliedModel: null,
+        status: "unchanged",
+        fallbackReason: null,
+        retryCount: 1,
+        retryDriftRecovered: true,
+        retryDriftEditType: "deletion",
+        initialFidelityReasons: expect.any(Array),
+        retryFidelityReasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
+        metrics: { retryDriftRecovered: true },
+      },
+    });
+    expect(logger.logReasoning).toHaveBeenCalledWith(
+      "REASONING_SERVICE_COMPLETE",
+      expect.objectContaining({
+        retryDriftRecovered: true,
+        retryDriftEditType: "deletion",
+      })
+    );
+  });
+
+  it.each([
+    [
+      "substantive deletion after a self-correction marker",
+      "Sorry, I mean keep alpha in the release note and send it Friday.",
+      "Sorry, I mean keep in the release note and send it Friday.",
+    ],
+    [
+      "numeric critical-token insertion",
+      "Please send the release note to both teams.",
+      "Please send the release note 42 to both teams.",
+    ],
+    [
+      "protected technical-token insertion",
+      "Please send the release note to both teams.",
+      "Please send the Codex release note to both teams.",
+    ],
+  ])("rejects one-token retry drift with %s", async (_scenario, original, changed) => {
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("Keep the important details.")
+        .mockResolvedValueOnce(changed),
+    };
+    const logger = { logReasoning: vi.fn() };
+    const svc = new ReasoningCleanupService({ logger, reasoningService });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: {
+        applied: false,
         status: "fallback",
         fallbackReason: "fidelity_rejected",
         retryCount: 1,
@@ -1817,11 +1919,46 @@ describe("ReasoningCleanupService", () => {
     });
     expect(logger.logReasoning).toHaveBeenCalledWith(
       "REASONING_FIDELITY_REJECTED",
-      expect.objectContaining({
-        reasons: expect.arrayContaining(["strict-lexical-sequence-change"]),
-        metrics: expect.objectContaining({ strictLexicalFirstMismatchIndex: expect.any(Number) }),
-      })
+      expect.any(Object)
     );
+  });
+
+  it("does not attribute a trusted spelling preparation to recovered model cleanup", async () => {
+    const original = "Please ask Benji to review the release note today.";
+    const prepared = "Please ask Benje to review the release note today.";
+    const changed = "Please ask Benje to review the release note tomorrow.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("Keep the important details.")
+        .mockResolvedValueOnce(changed),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+    localStorage.setItem("customDictionary", JSON.stringify(["Benje"]));
+
+    const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
+
+    expect(result).toMatchObject({
+      text: prepared,
+      cleanup: {
+        applied: false,
+        appliedModel: null,
+        status: "unchanged",
+        fallbackReason: null,
+        retryCount: 1,
+        retryDriftRecovered: true,
+        retryDriftEditType: "substitution",
+        preferredSpellingApplied: true,
+      },
+    });
   });
 
   it("keeps an explicit request reason while repairing its sentence fragment", async () => {

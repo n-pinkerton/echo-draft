@@ -441,6 +441,31 @@ const getPositionalSequenceMismatchCount = (originalItems, cleanedItems) => {
   return mismatchCount;
 };
 
+const hasExactlyOneInsertedItem = (shorterItems, longerItems) => {
+  if (longerItems.length !== shorterItems.length + 1) return false;
+
+  let shorterIndex = 0;
+  let longerIndex = 0;
+  let skipped = false;
+  while (shorterIndex < shorterItems.length && longerIndex < longerItems.length) {
+    if (shorterItems[shorterIndex] === longerItems[longerIndex]) {
+      shorterIndex += 1;
+      longerIndex += 1;
+      continue;
+    }
+    if (skipped) return false;
+    skipped = true;
+    longerIndex += 1;
+  }
+  return true;
+};
+
+const getSingleSequenceEditType = (originalItems, cleanedItems) => {
+  if (hasExactlyOneInsertedItem(originalItems, cleanedItems)) return "insertion";
+  if (hasExactlyOneInsertedItem(cleanedItems, originalItems)) return "deletion";
+  return null;
+};
+
 const getWords = (value) => normalizeForComparison(value).split(/\s+/).filter(Boolean);
 
 /**
@@ -464,6 +489,11 @@ export function assessStrictCleanupLexicalFidelity(originalText, cleanedText, op
     originalSignificantTokens,
     cleanedSignificantTokens
   );
+  const lexicalSingleEditType = getSingleSequenceEditType(originalTokens, cleanedTokens);
+  const significantSingleEditType = getSingleSequenceEditType(
+    originalSignificantTokens,
+    cleanedSignificantTokens
+  );
   const reasons = [];
   if (firstMismatchIndex !== null) reasons.push("strict-lexical-sequence-change");
   if (firstSignificantMismatchIndex !== null) reasons.push("strict-significant-token-change");
@@ -476,10 +506,12 @@ export function assessStrictCleanupLexicalFidelity(originalText, cleanedText, op
       strictLexicalCleanedTokenCount: cleanedTokens.length,
       strictLexicalFirstMismatchIndex: firstMismatchIndex,
       strictLexicalMismatchCount: lexicalMismatchCount,
+      strictLexicalSingleEditType: lexicalSingleEditType,
       strictSignificantOriginalTokenCount: originalSignificantTokens.length,
       strictSignificantCleanedTokenCount: cleanedSignificantTokens.length,
       strictSignificantFirstMismatchIndex: firstSignificantMismatchIndex,
       strictSignificantMismatchCount: significantMismatchCount,
+      strictSignificantSingleEditType: significantSingleEditType,
     },
   };
 }

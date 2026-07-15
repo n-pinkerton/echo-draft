@@ -4,7 +4,7 @@ import { sanitizeTranscriptionMetaForDiagnostics } from "./transcriptionDiagnost
 
 describe("sanitizeTranscriptionMetaForDiagnostics", () => {
   it("omits provider-controlled errors, malformed IDs, and arbitrary response data", () => {
-    const sentinel = "PRIVATE_TRANSCRIPT_SENTINEL";
+    const sentinel = "private-customer-transcript";
     const output = sanitizeTranscriptionMetaForDiagnostics({
       sessionId: "session-1",
       error: sentinel,
@@ -18,6 +18,9 @@ describe("sanitizeTranscriptionMetaForDiagnostics", () => {
         status: "fallback",
         modelSource: "managed",
         preferredSpellingApplied: true,
+        retryDriftEditType: "deletion",
+        initialFidelityReasons: ["material-compression", sentinel],
+        retryFidelityReasons: ["strict-lexical-sequence-change"],
       },
       responseKeys: [sentinel],
       usage: { arbitrary: sentinel },
@@ -46,6 +49,9 @@ describe("sanitizeTranscriptionMetaForDiagnostics", () => {
         status: "fallback",
         modelSource: "managed",
         preferredSpellingApplied: true,
+        retryDriftEditType: "deletion",
+        initialFidelityReasons: ["material-compression"],
+        retryFidelityReasons: ["strict-lexical-sequence-change"],
       },
       timings: { transcriptionRequestIds: [expect.stringMatching(/^req-[a-f0-9]{8}$/)] },
     });
@@ -58,7 +64,13 @@ describe("sanitizeTranscriptionMetaForDiagnostics", () => {
         succeeded: false,
         reasonCode: "unsafe\r\nInjected: yes",
       },
-      cleanup: { status: "fallback", modelSource: "guessed" },
+      cleanup: {
+        status: "fallback",
+        modelSource: "guessed",
+        retryDriftEditType: "rewritten",
+        initialFidelityReasons: ["private-customer-transcript"],
+        retryFidelityReasons: ["unsafe\r\nInjected: yes"],
+      },
     });
 
     expect(output).toEqual({

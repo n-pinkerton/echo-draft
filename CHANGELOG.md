@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.15] - 2026-07-16
+
+### Fixed
+
+- **Intermittent Cleanup Preservation Warning**: Safely treats an otherwise valid strict retry that inserts or deletes exactly one non-substantive lexical token as an unchanged result, while continuing to reject semantic loss, critical or protected token changes, quotation drift, reordering, and wider edits.
+- **Cleanup Recovery Diagnostics**: Records the bounded retry edit shape and allowlisted preservation reason codes without exposing transcript content, and keeps model-application metadata distinct from independently verified dictionary spelling preparation.
+
 ## [1.4.14] - 2026-07-15
 
 ### Fixed

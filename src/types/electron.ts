@@ -25,6 +25,9 @@ export interface CleanupOutcome {
   provider?: string | null;
   retryCount?: number;
   retryDriftRecovered?: boolean;
+  retryDriftEditType?: "substitution" | "insertion" | "deletion";
+  initialFidelityReasons?: string[];
+  retryFidelityReasons?: string[];
   preferredSpellingApplied?: boolean;
   metrics?: Record<string, unknown>;
 }

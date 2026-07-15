@@ -11,6 +11,44 @@ const SAFE_META_STRINGS = [
   "stopSource",
 ] as const;
 
+const SAFE_FIDELITY_REASON_CODES = new Set([
+  "added-content-to-empty-input",
+  "added-whole-output-quotation",
+  "assistant-action-output",
+  "attachment-rewrite-risk",
+  "critical-token-attachment-change",
+  "critical-token-loss",
+  "empty-output",
+  "high-rewrite-risk",
+  "incomplete-workflow-progression",
+  "low-content-word-coverage",
+  "material-compression",
+  "material-expansion",
+  "modal-attachment-change",
+  "modal-certainty-change",
+  "negation-addition",
+  "negation-attachment-change",
+  "negation-loss",
+  "nested-quotation-inference",
+  "question-loss",
+  "quote-attachment-risk",
+  "relation-attachment-change",
+  "relation-marker-addition",
+  "relation-marker-loss",
+  "relation-verb-form-change",
+  "request-execution-output",
+  "request-modality-change",
+  "stance-attachment-change",
+  "stance-marker-addition",
+  "stance-marker-loss",
+  "strict-lexical-sequence-change",
+  "strict-significant-token-change",
+  "substantive-rewrite-risk",
+  "technical-token-attachment-change",
+  "technical-token-change",
+  "wrapper-leak",
+]);
+
 const boundedMetadataString = (value: unknown, maxLength = 128): string | null => {
   if (typeof value !== "string") return null;
   const candidate = value.trim();
@@ -32,6 +70,15 @@ const pickNumbersAndBooleans = (value: unknown): Record<string, number | boolean
           entry >= 0)
     )
   );
+};
+
+const pickFidelityReasonCodes = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string =>
+      typeof entry === "string" ? SAFE_FIDELITY_REASON_CODES.has(entry) : false
+    )
+    .slice(0, 12);
 };
 
 export const sanitizeTranscriptionMetaForDiagnostics = (
@@ -68,6 +115,8 @@ export const sanitizeTranscriptionMetaForDiagnostics = (
 
   if (meta.cleanup && typeof meta.cleanup === "object") {
     const cleanup = meta.cleanup as Record<string, unknown>;
+    const initialFidelityReasons = pickFidelityReasonCodes(cleanup.initialFidelityReasons);
+    const retryFidelityReasons = pickFidelityReasonCodes(cleanup.retryFidelityReasons);
     output.cleanup = {
       ...pickNumbersAndBooleans(cleanup),
       ...Object.fromEntries(
@@ -78,6 +127,13 @@ export const sanitizeTranscriptionMetaForDiagnostics = (
       ...(cleanup.modelSource === "selected" || cleanup.modelSource === "managed"
         ? { modelSource: cleanup.modelSource }
         : {}),
+      ...(cleanup.retryDriftEditType === "substitution" ||
+      cleanup.retryDriftEditType === "insertion" ||
+      cleanup.retryDriftEditType === "deletion"
+        ? { retryDriftEditType: cleanup.retryDriftEditType }
+        : {}),
+      ...(initialFidelityReasons.length ? { initialFidelityReasons } : {}),
+      ...(retryFidelityReasons.length ? { retryFidelityReasons } : {}),
       ...(cleanup.metrics && typeof cleanup.metrics === "object"
         ? { metrics: pickNumbersAndBooleans(cleanup.metrics) }
         : {}),
