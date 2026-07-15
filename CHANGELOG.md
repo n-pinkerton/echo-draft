@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.13] - 2026-07-15
+
+### Fixed
+
+- **Dictation Overlay Flash**: Keeps the recording and processing overlay transparent through its final hide frame, preventing an intermittent white box and distracting last-frame movement after dictation completes.
+
 ## [1.4.12] - 2026-07-15
 
 ### Fixed

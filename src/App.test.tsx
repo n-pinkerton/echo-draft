@@ -40,6 +40,7 @@ import App from "./App";
 
 describe("App recording indicator routing", () => {
   beforeEach(() => {
+    document.documentElement.classList.remove("dictation-window-surface");
     mocks.recordingState = {
       ...mocks.recordingState,
       isRecording: true,
@@ -92,6 +93,30 @@ describe("App recording indicator routing", () => {
     );
     expect(screen.getByText("0:12")).toBeInTheDocument();
     expect(screen.getByText("Insert · Cancel from the EchoDraft tray menu")).toBeInTheDocument();
+  });
+
+  it("keeps the overlay transparent through the final hide frame", () => {
+    const { rerender, unmount } = render(<App />);
+
+    expect(document.documentElement).toHaveClass("dictation-window-surface");
+
+    mocks.recordingState = {
+      ...mocks.recordingState,
+      isRecording: false,
+      isProcessing: false,
+      progress: {
+        stage: "idle",
+        stageLabel: "Ready",
+      },
+    };
+    rerender(<App />);
+
+    expect(screen.queryByTestId("recording-indicator")).not.toBeInTheDocument();
+    expect((window as any).electronAPI.hideWindow).toHaveBeenCalledTimes(1);
+    expect(document.documentElement).toHaveClass("dictation-window-surface");
+
+    unmount();
+    expect(document.documentElement).not.toHaveClass("dictation-window-surface");
   });
 
   it("shows earlier queued work without hiding the live recording state", () => {

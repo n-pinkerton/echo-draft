@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useLayoutEffect, useMemo } from "react";
 import "./index.css";
 import { useToast } from "./components/ui/toastContext";
 import { useAudioRecording } from "./hooks/useAudioRecording";
@@ -25,6 +25,13 @@ export default function App() {
     true,
     { serialize: serializeBoolean, deserialize: deserializeBoolean }
   );
+
+  useLayoutEffect(() => {
+    // Keep the transparent surface in place while the final hide IPC crosses
+    // the renderer/main-process boundary; otherwise one empty frame can flash.
+    document.documentElement.classList.add("dictation-window-surface");
+    return () => document.documentElement.classList.remove("dictation-window-surface");
+  }, []);
 
   useEffect(() => {
     const unsubscribeFallback = window.electronAPI?.onHotkeyFallbackUsed?.((data) => {

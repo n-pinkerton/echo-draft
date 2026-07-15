@@ -28,6 +28,7 @@ const MAIN_WINDOW_CONFIG = {
   alwaysOnTop: true,
   resizable: false,
   transparent: true,
+  backgroundColor: "#00000000",
   show: false, // Start hidden, show after setup
   skipTaskbar: false, // Keep visible in Dock/taskbar so app stays discoverable
   focusable: false,

@@ -14,6 +14,10 @@ describe("WindowPositionUtil.setupAlwaysOnTop", () => {
   it("keeps dictation capture responsive while another application has focus", () => {
     expect(MAIN_WINDOW_CONFIG.webPreferences.backgroundThrottling).toBe(false);
     expect(MAIN_WINDOW_CONFIG.focusable).toBe(false);
+    expect(MAIN_WINDOW_CONFIG).toMatchObject({
+      transparent: true,
+      backgroundColor: "#00000000",
+    });
   });
 
   it("keeps the resizable control panel above a usable minimum size", () => {
