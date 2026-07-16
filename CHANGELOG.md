@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.17] - 2026-07-16
+
+### Fixed
+
+- **Intermittent Long-Dictation Cleanup Failure**: Adds a final model-led rescue pass for long cleanups rejected only for lexical rewriting; the rescue is delivered only when its complete lexical sequence and the ordinary intent, literal, quotation, modality, negation, relationship, and technical-term checks all pass.
+- **Technical-Term Fidelity Matching**: Matches repeated ordinary words to their protected technical occurrence using bounded local and adjacent-clause context, avoiding false attachment to distant earlier text without losing owner or environment changes.
+- **Quiet Cleanup Experience**: Hides the floating recording widget as soon as recording stops; transcription and cleanup progress, queue state, and cancellation remain available from the tray menu without repeated on-screen flashes.
+
 ## [1.4.16] - 2026-07-16
 
 ### Changed

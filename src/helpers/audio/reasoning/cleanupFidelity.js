@@ -55,7 +55,6 @@ const CONTENT_STOP_WORDS = new Set([
   "them",
   "then",
   "they",
-  "this",
   "to",
   "us",
   "was",
@@ -590,7 +589,12 @@ const getContentWords = (value) => new Set(getContentWordTokens(value));
 
 const stemComparableWord = (word) => {
   if (word.length > 5 && word.endsWith("ies")) return `${word.slice(0, -3)}y`;
-  for (const suffix of ["ingly", "edly", "ing", "ed", "es", "ly", "s"]) {
+  if (word.length > 5 && word.endsWith("ices")) return word.slice(0, -1);
+  if (word.length > 5 && /(?:sses|xes|zes|ches|shes)$/u.test(word)) return word.slice(0, -2);
+  if (word.length > 4 && word.endsWith("s") && !/(?:ss|us|is)$/u.test(word)) {
+    return word.slice(0, -1);
+  }
+  for (const suffix of ["ingly", "edly", "ing", "ed", "ly"]) {
     if (word.endsWith(suffix) && word.length - suffix.length >= 4) {
       return word.slice(0, -suffix.length);
     }
@@ -914,8 +918,12 @@ const PREFERRED_SPELLING_ALIAS_RECIPIENT_DETERMINERS = new Set([
   "her",
   "his",
   "our",
+  "that",
   "the",
+  "these",
   "their",
+  "this",
+  "those",
   "your",
 ]);
 const PREFERRED_SPELLING_ALIAS_RECIPIENT_NOMINAL_PREPOSITIONS = new Set([
@@ -2501,6 +2509,81 @@ const LITERAL_ATTACHMENT_LABEL_WORDS = new Set([
   "you",
 ]);
 const LITERAL_ATTACHMENT_IGNORABLE_FILLERS = new Set(["er", "erm", "hm", "hmm", "uh", "um"]);
+const ADJACENT_ATTACHMENT_GENERIC_LEADING_WORDS = new Set([
+  "ask",
+  "create",
+  "development",
+  "engineers",
+  "he",
+  "i",
+  "include",
+  "it",
+  "keep",
+  "open",
+  "production",
+  "read",
+  "review",
+  "sandbox",
+  "save",
+  "she",
+  "staging",
+  "take",
+  "testing",
+  "they",
+  "use",
+  "we",
+  "write",
+  "you",
+]);
+const ADJACENT_ATTACHMENT_LEADING_DETERMINERS = new Set([
+  "a",
+  "an",
+  "her",
+  "his",
+  "its",
+  "my",
+  "our",
+  "that",
+  "the",
+  "these",
+  "their",
+  "this",
+  "those",
+  "your",
+]);
+const ADJACENT_ATTACHMENT_CONTEXT =
+  /\b(?:assigned?|belongs?|managed?|owner|owns?|recipient|responsible)\b|\b(?:development|production|sandbox|staging|testing)\s+(?:account|environment|tenant)\b/iu;
+const ADJACENT_ATTACHMENT_ENVIRONMENT =
+  /\b(?:development|production|sandbox|staging|testing)\b/iu;
+
+const getAdjacentAttachmentContext = (clause) => {
+  const raw = String(clause || "");
+  if (ADJACENT_ATTACHMENT_CONTEXT.test(raw)) {
+    return getWords(raw);
+  }
+
+  const firstEnvironment = ADJACENT_ATTACHMENT_ENVIRONMENT.exec(raw);
+  const environments = Array.from(
+    raw.matchAll(new RegExp(ADJACENT_ATTACHMENT_ENVIRONMENT, "giu")),
+    (match) => match[0].toLocaleLowerCase()
+  );
+  const leadingOwnerWords = getWords(raw.slice(0, firstEnvironment?.index ?? 0));
+  while (ADJACENT_ATTACHMENT_LEADING_DETERMINERS.has(leadingOwnerWords[0])) {
+    leadingOwnerWords.shift();
+  }
+  const [leadingWord = ""] = leadingOwnerWords;
+  if (
+    leadingOwnerWords.length === 0 ||
+    ADJACENT_ATTACHMENT_GENERIC_LEADING_WORDS.has(leadingWord) ||
+    environments.length === 0
+  ) {
+    return [];
+  }
+
+  // A leading owner phrase paired with an environment is a stable identity
+  // anchor regardless of capitalization or relationship verb.
+  return [...leadingOwnerWords, ...environments];
+};
 
 const getLiteralAttachmentAnchor = (value, index, direction) => {
   const raw = String(value || "");
@@ -2516,28 +2599,70 @@ const getLiteralAttachmentAnchor = (value, index, direction) => {
   return direction < 0 ? words.slice(-2).join(" ") : words.slice(0, 2).join(" ");
 };
 
-const getLiteralAttachmentIdentity = (value, occurrence) => ({
-  // Bind each value to the complete normalized prefix, not a fixed local
-  // window. Repeating generic labels must not hide an earlier recipient or
-  // environment swap while protected values remain in the same order.
-  prefix: getWords(String(value || "").slice(0, occurrence.index))
+const getLiteralAttachmentClausePrefix = (value, endIndex) => {
+  const prefix = String(value || "").slice(0, endIndex);
+  const boundaryPattern = /(?:[!?;]|\.(?=\s|$)|\r?\n)+/gu;
+  let clauseStart = 0;
+  let previousClause = "";
+  let match;
+
+  while ((match = boundaryPattern.exec(prefix)) !== null) {
+    previousClause = prefix.slice(clauseStart, match.index);
+    clauseStart = match.index + match[0].length;
+  }
+
+  const previousAnchor = getAdjacentAttachmentContext(previousClause)
+    .filter(
+      (word) =>
+        !LITERAL_ATTACHMENT_IGNORABLE_FILLERS.has(word) &&
+        !CONTENT_STOP_WORDS.has(word)
+    )
+    .map(stemComparableWord)
+    .join(" ");
+  // Retain the immediately preceding clause only when it explicitly carries
+  // ownership or environment context. Ordinary prose in an earlier sentence
+  // must not make every later technical term appear detached after grammar repair.
+  return [previousAnchor, prefix.slice(clauseStart)].filter(Boolean).join(" ");
+};
+
+const getLiteralAttachmentIdentity = (value, occurrence, { scopeToClause = false } = {}) => {
+  const prefixWords = getWords(
+    scopeToClause
+      ? getLiteralAttachmentClausePrefix(value, occurrence.index)
+      : String(value || "").slice(0, occurrence.index)
+  )
     .filter(
       (word) =>
         !LITERAL_ATTACHMENT_IGNORABLE_FILLERS.has(word) &&
         (!CONTENT_STOP_WORDS.has(word) || LITERAL_ATTACHMENT_LABEL_WORDS.has(word))
-    )
-    .join(" "),
-  right: getLiteralAttachmentAnchor(value, occurrence.index + occurrence.rawLength, 1),
-});
+    );
+  return {
+    prefix: (scopeToClause ? prefixWords.map(stemComparableWord) : prefixWords).join(" "),
+    right: getLiteralAttachmentAnchor(value, occurrence.index + occurrence.rawLength, 1),
+  };
+};
 
-const matchOrderedTokenOccurrences = (expectedOccurrences, actualOccurrences) => {
+const matchOrderedTokenOccurrences = (
+  expectedOccurrences,
+  actualOccurrences,
+  isPreferredMatch = null
+) => {
   const missingOccurrences = [];
   const matchedPairs = [];
   let cursor = 0;
   for (const expected of expectedOccurrences) {
-    const matchIndex = actualOccurrences.findIndex(
+    const firstMatchIndex = actualOccurrences.findIndex(
       (actual, index) => index >= cursor && actual.token === expected.token
     );
+    const preferredMatchIndex = isPreferredMatch
+      ? actualOccurrences.findIndex(
+          (actual, index) =>
+            index >= cursor &&
+            actual.token === expected.token &&
+            isPreferredMatch(expected, actual)
+        )
+      : -1;
+    const matchIndex = preferredMatchIndex >= 0 ? preferredMatchIndex : firstMatchIndex;
     if (matchIndex < 0) {
       missingOccurrences.push(expected);
       continue;
@@ -2548,10 +2673,19 @@ const matchOrderedTokenOccurrences = (expectedOccurrences, actualOccurrences) =>
   return { matchedPairs, missingOccurrences };
 };
 
-const countLiteralAttachmentChanges = (matchedPairs, expectedValue, actualValue) =>
+const countLiteralAttachmentChanges = (
+  matchedPairs,
+  expectedValue,
+  actualValue,
+  identityOptions
+) =>
   matchedPairs.filter(({ actual, expected }) => {
-    const expectedIdentity = getLiteralAttachmentIdentity(expectedValue, expected);
-    const actualIdentity = getLiteralAttachmentIdentity(actualValue, actual);
+    const expectedIdentity = getLiteralAttachmentIdentity(
+      expectedValue,
+      expected,
+      identityOptions
+    );
+    const actualIdentity = getLiteralAttachmentIdentity(actualValue, actual, identityOptions);
     return (
       expectedIdentity.prefix !== actualIdentity.prefix ||
       expectedIdentity.right !== actualIdentity.right
@@ -3118,7 +3252,24 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   const cleanedTechnicalTokenOccurrences = getTechnicalTokenOccurrences(cleaned);
   const protectedTechnicalTokenMatch = matchOrderedTokenOccurrences(
     protectedTechnicalTokenOccurrences,
-    cleanedTechnicalTokenOccurrences
+    cleanedTechnicalTokenOccurrences,
+    (expected, actual) => {
+      // Prefer the same sentence- or clause-local occurrence when a common
+      // word appears before the protected technical use (for example, a
+      // normal "plan" before "plan file").
+      const expectedIdentity = getLiteralAttachmentIdentity(
+        comparisonOriginalAttachmentText,
+        expected,
+        { scopeToClause: true }
+      );
+      const actualIdentity = getLiteralAttachmentIdentity(cleaned, actual, {
+        scopeToClause: true,
+      });
+      return (
+        expectedIdentity.prefix === actualIdentity.prefix &&
+        expectedIdentity.right === actualIdentity.right
+      );
+    }
   );
   const protectedTechnicalTokens = protectedTechnicalTokenOccurrences.map(
     (occurrence) => occurrence.token
@@ -3134,7 +3285,8 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
       ({ expected }) => !isCanonicalMeridiemTimeToken(expected.token)
     ),
     comparisonOriginalAttachmentText,
-    cleaned
+    cleaned,
+    { scopeToClause: true }
   );
   if (changedTechnicalTokenAttachmentCount > 0) {
     reasons.push("technical-token-attachment-change");

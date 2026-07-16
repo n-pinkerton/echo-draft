@@ -6,6 +6,7 @@ import {
   applyStrictCleanupTokensToOriginalPunctuation,
   applyTrustedPreferredSpellingAliases,
 } from "./cleanupFidelity.js";
+import { SYNTHETIC_LONG_FORM_MODEL_REPAIR } from "./__fixtures__/cleanupIncidentFixtures.js";
 
 describe("assessCleanupFidelity", () => {
   it("accepts one model-proposed context-resolved homophone correction", () => {
@@ -1357,6 +1358,82 @@ describe("assessCleanupFidelity", () => {
 
     expect(assessCleanupFidelity(original, cleaned)).toMatchObject({ accepted: true, reasons: [] });
   });
+
+  it("does not detach later technical terms because of harmless edits in earlier paragraphs", () => {
+    const assessment = assessCleanupFidelity(
+      SYNTHETIC_LONG_FORM_MODEL_REPAIR.original,
+      SYNTHETIC_LONG_FORM_MODEL_REPAIR.repaired
+    );
+
+    expect(assessment.reasons).not.toContain("technical-token-attachment-change");
+    expect(assessment.metrics).toMatchObject({
+      missingProtectedTechnicalTokenCount: 0,
+      changedTechnicalTokenAttachmentCount: 0,
+    });
+  });
+
+  it("retains adjacent cross-sentence ownership for protected technical terms", () => {
+    const sharedPrefix =
+      "This synthetic maintenance note describes a routine deployment with several independent checks. Keep the release sequence, preserve the validation examples, retain the rollback owner, record the monitoring step, and leave every stated caveat in place. The surrounding prose is intentionally long so attachment protection is exercised under the same conditions as an extended dictation. ";
+    const sharedSuffix =
+      " The remaining paragraphs keep the original schedule, escalation route, support contact, review order, recovery note, audit reminder, and final verification instruction unchanged.";
+    const original = `${sharedPrefix}Alice owns production and coordinates routine checks before every deployment. Engineers carefully and deliberately configure Alpha_ID for automated deployment today. Bob owns testing and coordinates routine checks before every deployment. Engineers carefully and deliberately configure Beta_ID for automated validation today.${sharedSuffix}`;
+    const cleaned = `${sharedPrefix}Bob owns testing and coordinates routine checks before every deployment. Engineers carefully and deliberately configure Alpha_ID for automated deployment today. Alice owns production and coordinates routine checks before every deployment. Engineers carefully and deliberately configure Beta_ID for automated validation today.${sharedSuffix}`;
+
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["technical-token-attachment-change"]),
+      metrics: expect.objectContaining({ changedTechnicalTokenAttachmentCount: 2 }),
+    });
+  });
+
+  it.each(["controls", "operates", "administers", "maintains"])(
+    "retains adjacent named environment attachment when the owner %s it",
+    (relationshipVerb) => {
+      const sharedPrefix =
+        "This synthetic maintenance note preserves a long release sequence, rollback owner, monitoring step, escalation route, review order, support contact, audit reminder, recovery note, and every stated caveat before final publication. ";
+      const sharedSuffix =
+        " The remaining note keeps the schedule, customer example, validation order, and final verification instruction unchanged.";
+      const original = `${sharedPrefix}Alice ${relationshipVerb} production during each routine deployment. Engineers configure Alpha_ID for automated deployment today. Bob ${relationshipVerb} testing during each routine deployment. Engineers configure Beta_ID for automated validation today.${sharedSuffix}`;
+      const cleaned = `${sharedPrefix}Bob ${relationshipVerb} testing during each routine deployment. Engineers configure Alpha_ID for automated deployment today. Alice ${relationshipVerb} production during each routine deployment. Engineers configure Beta_ID for automated validation today.${sharedSuffix}`;
+
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining(["technical-token-attachment-change"]),
+        metrics: expect.objectContaining({ changedTechnicalTokenAttachmentCount: 2 }),
+      });
+    }
+  );
+
+  it.each([
+    ["Team Alpha", "Team Beta"],
+    ["Operations East", "Operations West"],
+    ["Platform One", "Platform Two"],
+    ["alice", "bob"],
+    ["team alpha", "team beta"],
+    ["team of alpha", "team of beta"],
+    ["our team alpha", "our team beta"],
+    ["the alpha team", "the beta team"],
+    ["your east platform", "your west platform"],
+    ["this alpha team", "that beta team"],
+    ["these east platforms", "those west platforms"],
+  ])(
+    "retains compound owner attachment between %s and %s",
+    (firstOwner, secondOwner) => {
+      const sharedPrefix =
+        "This synthetic maintenance note preserves the complete release sequence, rollback contact, monitoring step, escalation route, support details, audit reminder, review order, recovery note, and every caveat before publication. ";
+      const sharedSuffix =
+        " The remaining note keeps the schedule, customer example, validation order, and final verification instruction unchanged.";
+      const original = `${sharedPrefix}${firstOwner} controls production during each deployment. Engineers configure Alpha_ID for automated deployment today. ${secondOwner} controls production during each deployment. Engineers configure Beta_ID for automated validation today.${sharedSuffix}`;
+      const cleaned = `${sharedPrefix}${secondOwner} controls production during each deployment. Engineers configure Alpha_ID for automated deployment today. ${firstOwner} controls production during each deployment. Engineers configure Beta_ID for automated validation today.${sharedSuffix}`;
+
+      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+        accepted: false,
+        reasons: expect.arrayContaining(["technical-token-attachment-change"]),
+        metrics: expect.objectContaining({ changedTechnicalTokenAttachmentCount: 2 }),
+      });
+    }
+  );
 
   it("retries a long rewrite that introduces multiple new content terms", () => {
     const original =

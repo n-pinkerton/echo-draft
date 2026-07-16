@@ -204,7 +204,7 @@ export class ReasoningCleanupService {
       },
     });
     const signal = runtime?.signal || null;
-    let retryAttempted = false;
+    let retryAttemptCount = 0;
     let attemptedRetryModel = null;
     try {
       throwIfTranscriptionCancelled(signal);
@@ -256,7 +256,7 @@ export class ReasoningCleanupService {
         retryModel,
         reasoningEffort
       );
-      retryAttempted = true;
+      retryAttemptCount = 1;
       attemptedRetryModel = retryModel;
       throwIfTranscriptionCancelled(signal);
       const retryPacket = buildFidelityRepairPacket(
@@ -315,14 +315,16 @@ export class ReasoningCleanupService {
         "changedStanceAttachmentCount",
         "changedModalAttachmentCount",
       ];
+      const hasNoHardSemanticMetricDrift = [
+        rawRetryAssessment,
+        reverseRetryAssessment,
+      ].every((assessment) =>
+        hardSemanticMetricNames.every((name) => assessment.metrics[name] === 0)
+      );
       const hasNoHardSemanticDrift = [
         rawRetryAssessment,
         reverseRetryAssessment,
-      ].every(
-        (assessment) =>
-          assessment.accepted &&
-          hardSemanticMetricNames.every((name) => assessment.metrics[name] === 0)
-      );
+      ].every((assessment) => assessment.accepted) && hasNoHardSemanticMetricDrift;
       const hasNoCriticalReverseDrift = [
         "missingCriticalTokenCount",
         "missingProtectedTechnicalTokenCount",
@@ -343,8 +345,16 @@ export class ReasoningCleanupService {
         retryMetrics.strictLexicalSingleEditType === "deletion" &&
         (rawRetryAssessment.metrics.missingContentWordCount > 0 ||
           rawRetryAssessment.metrics.semanticMissingContentWordCount > 0);
+      const advisoryFidelityReasons = new Set([
+        "substantive-rewrite-risk",
+        "high-rewrite-risk",
+      ]);
+      const hasOnlyAdvisoryFidelityReasons = (assessment) =>
+        assessment.reasons.length > 0 &&
+        assessment.reasons.every((reason) => advisoryFidelityReasons.has(reason));
       const sourceInherentRetryReasons = rawRetryAssessment.reasons.filter(
-        (reason) => reason !== "incomplete-workflow-progression" || retryResult !== trustedBaselineText
+        (reason) =>
+          reason !== "incomplete-workflow-progression" || retryResult !== trustedBaselineText
       );
       const retryAssessment = {
         ...rawRetryAssessment,
@@ -396,6 +406,86 @@ export class ReasoningCleanupService {
           metrics: effectiveRetryAssessment.metrics,
           retryCount: 1,
         });
+
+        if (
+          rawRetryAssessment.metrics.originalWords >= 80 &&
+          hasOnlyAdvisoryFidelityReasons(rawRetryAssessment)
+        ) {
+          retryAttemptCount = 2;
+          try {
+            throwIfTranscriptionCancelled(signal);
+            const strictResult = applyTrustedPreferredSpellingAliases(
+              trustedBaselineText,
+              sanitizeProcessedText(
+                await this.reasoningService.processText(
+                  trustedBaselineText,
+                  retryModel,
+                  null,
+                  {
+                    cleanupPromptMode: "strict-preservation",
+                    reasoningEffort: retryReasoningEffort,
+                    ...(signal ? { signal } : {}),
+                  }
+                )
+              ),
+              preferredSpellings
+            );
+            throwIfTranscriptionCancelled(signal);
+            const strictLexicalAssessment = assessStrictCleanupLexicalFidelity(
+              trustedBaselineText,
+              strictResult,
+              {
+                language:
+                  typeof localStorage !== "undefined"
+                    ? localStorage.getItem("preferredLanguage") || "auto"
+                    : "auto",
+              }
+            );
+            const strictAssessment = includePreferredSpellingMetrics(
+              assessCleanupFidelity(trustedBaselineText, strictResult, fidelityOptions)
+            );
+
+            if (strictLexicalAssessment.accepted && strictAssessment.accepted) {
+              const strictResultAssessment = {
+                ...strictAssessment,
+                initialFidelityReasons: firstAssessment.reasons,
+                retryFidelityReasons: effectiveRetryAssessment.reasons,
+                metrics: {
+                  ...strictAssessment.metrics,
+                  strictRescueApplied: true,
+                },
+              };
+              this.logger?.logReasoning?.("REASONING_SERVICE_COMPLETE", {
+                model,
+                retryModel,
+                retryReasoningEffort,
+                strictRescueApplied: true,
+                processingTimeMs: Date.now() - startTime,
+                resultLength: strictResult.length,
+                retryCount: 2,
+                success: true,
+              });
+              return {
+                text: strictResult,
+                assessment: strictResultAssessment,
+                retryCount: 2,
+                appliedModel: retryModel,
+                initialFidelityReasons: firstAssessment.reasons,
+                retryFidelityReasons: effectiveRetryAssessment.reasons,
+                strictRescueApplied: true,
+              };
+            }
+          } catch (strictError) {
+            if (isTranscriptionCancelled(strictError, signal)) {
+              throw createTranscriptionCancelledError();
+            }
+            this.logger?.logReasoning?.("REASONING_STRICT_RESCUE_FAILED", {
+              model,
+              retryModel,
+              error: strictError?.message || String(strictError),
+            });
+          }
+        }
         throw new CleanupFidelityError(effectiveRetryAssessment);
       }
 
@@ -425,8 +515,8 @@ export class ReasoningCleanupService {
       if (isTranscriptionCancelled(error, signal)) {
         throw createTranscriptionCancelledError();
       }
-      if (retryAttempted && error && typeof error === "object") {
-        error.cleanupRetryCount = 1;
+      if (retryAttemptCount > 0 && error && typeof error === "object") {
+        error.cleanupRetryCount = retryAttemptCount;
         error.cleanupRetryModel = attemptedRetryModel;
       }
       const processingTimeMs = Date.now() - startTime;
@@ -646,7 +736,11 @@ export class ReasoningCleanupService {
           fallbackReason:
             error?.code === "CLEANUP_FIDELITY_REJECTED" ? "fidelity_rejected" : "provider_error",
           retryCount:
-            error?.cleanupRetryCount === 1 || error?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0,
+            Number.isInteger(error?.cleanupRetryCount) && error.cleanupRetryCount > 0
+              ? error.cleanupRetryCount
+              : error?.code === "CLEANUP_FIDELITY_REJECTED"
+                ? 1
+                : 0,
           ...(Array.isArray(error?.assessment?.initialFidelityReasons)
             ? { initialFidelityReasons: error.assessment.initialFidelityReasons }
             : {}),

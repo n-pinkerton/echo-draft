@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReasoningCleanupService } from "./reasoningCleanupService.js";
+import { SYNTHETIC_LONG_FORM_MODEL_REPAIR } from "./__fixtures__/cleanupIncidentFixtures.js";
 
 describe("ReasoningCleanupService", () => {
   beforeEach(() => {
@@ -1134,6 +1135,98 @@ describe("ReasoningCleanupService", () => {
         cleanupPromptMode: "fidelity-repair",
         reasoningEffort: "none",
       }
+    );
+  });
+
+  it("delivers a strict model rescue after a long-form autonomous repair remains unsafe", async () => {
+    const { original, repaired, strict } = SYNTHETIC_LONG_FORM_MODEL_REPAIR;
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("Keep the plan and follow the repository standards.")
+        .mockResolvedValueOnce(repaired)
+        .mockResolvedValueOnce(strict),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: strict,
+      cleanup: {
+        applied: true,
+        status: "applied",
+        fallbackReason: null,
+        retryCount: 2,
+        metrics: expect.objectContaining({ strictRescueApplied: true }),
+      },
+    });
+  });
+
+  it.each([
+    [
+      "changed outcome",
+      (text: string) =>
+        text.replace("final verification and publish", "final deletion and archive"),
+    ],
+    [
+      "changed quantity and role",
+      (text: string) => text.replace("use two reviewers", "use three auditors"),
+    ],
+    [
+      "deleted requirement modifier",
+      (text: string) => text.replace("frequent checkpoints", "checkpoints"),
+    ],
+    [
+      "added negation",
+      (text: string) =>
+        text.replace(
+          "the developer will run this sample workflow",
+          "the developer will not run this sample workflow"
+        ),
+    ],
+  ])("does not waive an unsafe %s in a high-overlap long-form repair", async (_name, mutate) => {
+    const { original, repaired } = SYNTHETIC_LONG_FORM_MODEL_REPAIR;
+    const unsafeRepair = mutate(repaired);
+    const hasHardNegationReason = unsafeRepair.includes("will not run");
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi
+        .fn()
+        .mockResolvedValueOnce("Keep the plan and follow the repository standards.")
+        .mockResolvedValueOnce(unsafeRepair)
+        .mockResolvedValueOnce(unsafeRepair),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(original, "openai", null)
+    ).resolves.toMatchObject({
+      text: original,
+      cleanup: {
+        applied: false,
+        status: "fallback",
+        fallbackReason: "fidelity_rejected",
+        retryCount: hasHardNegationReason ? 1 : 2,
+      },
+    });
+    expect(reasoningService.processText).toHaveBeenCalledTimes(
+      hasHardNegationReason ? 2 : 3
     );
   });
 

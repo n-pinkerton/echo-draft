@@ -64,7 +64,7 @@ describe("App recording indicator routing", () => {
     };
   });
 
-  it("keeps a stage timer and cancellation guidance visible while processing", () => {
+  it("hides the floating overlay while processing and keeps status in the tray", () => {
     const { rerender } = render(<App />);
 
     expect(window.electronAPI.showRecordingIndicator).toHaveBeenCalledTimes(1);
@@ -86,13 +86,15 @@ describe("App recording indicator routing", () => {
     };
     rerender(<App />);
 
-    expect(window.electronAPI.hideWindow).not.toHaveBeenCalled();
-    expect(screen.getByTestId("dictation-status-indicator")).toHaveAttribute(
-      "data-stage",
-      "transcribing"
+    expect(window.electronAPI.hideWindow).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("dictation-status-indicator")).not.toBeInTheDocument();
+    expect(window.electronAPI.updateTrayStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        stage: "transcribing",
+        canCancel: true,
+        isProcessing: true,
+      })
     );
-    expect(screen.getByText("0:12")).toBeInTheDocument();
-    expect(screen.getByText("Insert · Cancel from the EchoDraft tray menu")).toBeInTheDocument();
   });
 
   it("keeps the overlay transparent through the final hide frame", () => {
