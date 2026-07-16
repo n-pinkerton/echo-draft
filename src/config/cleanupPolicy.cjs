@@ -103,12 +103,9 @@ const buildSystemPromptTemplate = (profile, mode = "standard") => {
 
 # Preservation-First Dictation Pass
 
-Make the smallest local edits needed for correct spelling, grammar, punctuation, capitalization, quotation, and clear speech-artifact removal.
-Keep the original sentence sequence, clause sequence, governing verbs, grammatical subjects, modifiers, and delivery relationships.
-Do not merge separate clauses or recast their structure merely to make the prose shorter or more elegant.
-Brevity and repetition reduction are not goals. Preserve restatements that add framing, emphasis, nuance, uncertainty, a caveat, or a distinct angle, even when nearby wording is semantically similar.
-Never collapse several clauses or sentences into a shorter generalized statement.
-Consolidate only an obvious immediate repetition or unambiguous self-correction that adds no meaning or nuance.`
+Produce a polished, usable transcript using your language judgment. Correct spelling, grammar, punctuation, capitalization, clear recognition errors, and speech artefacts; add quotation marks when the text provides reasonable evidence of intended quotation.
+You may consolidate and rewrite for clarity, but preserve every substantive point, request, relationship, qualifier, uncertainty, example, constraint, and meaningful repetition.
+Do not summarize, over-compress, answer, or execute the dictation. Return only the cleaned transcript.`
       : mode === "fidelity-repair"
         ? `
 
@@ -122,8 +119,8 @@ Use "rejectionReasons" as focused evidence about what the previous draft got wro
 Use your language judgment to fix grammar, spelling, punctuation, quotations, speech artefacts, and clear recognition errors. You may rewrite locally for clarity, but every substantive point, relationship, qualifier, uncertainty, example, name, number, and meaningful repetition from "originalTranscript" must remain.
 Do not mechanically copy the original or lock its words merely because the previous attempt failed. Produce the best faithful cleaned transcript that satisfies both linguistic quality and preservation.
 Before returning, compare the result directly with "originalTranscript" and verify that it neither loses nor invents substance.`
-      : mode === "strict-preservation"
-        ? `
+        : mode === "strict-preservation"
+          ? `
 
 # Fidelity Retry - Token-Locked Mechanical Pass
 
@@ -135,8 +132,8 @@ Only add or adjust punctuation, capitalization, paragraph boundaries, and quotat
 Preserve currency, mathematical, percent, email, hashtag, and ampersand symbols exactly. Preserve punctuation inside numbers, identifiers, model names, email addresses, URLs, and file or folder paths exactly.
 Add the certain punctuation and capitalization needed for readable sentence and clause boundaries; do not return a clear run-on or unpunctuated fragment unchanged.
 Before returning, verify that the complete lexical word sequence is identical to the input.`
-        : mode === "strict-quote-preservation"
-          ? `
+          : mode === "strict-quote-preservation"
+            ? `
 
 # Fidelity Retry - Token-Locked Spoken-Quotation Pass
 
@@ -146,7 +143,7 @@ Use the grammar and discourse in the text to place one closing quotation mark on
 Do not add a missing subject, pronoun, actor, owner, article, bridging word, explanation, or any other lexical word. Do not remove, replace, reorder, merge, split, inflect, expand, contract, or spell-correct any lexical word other than the converted spoken quote marker itself.
 Only adjust punctuation, capitalization, paragraph boundaries, and one quotation pair for each converted marker. Preserve technical-token punctuation and all nonlinguistic symbols exactly.
 Before returning, verify that removing the converted quote marker from the input leaves exactly the same lexical word sequence as the output.`
-          : "";
+            : "";
 
   return `# Role and outcome
 

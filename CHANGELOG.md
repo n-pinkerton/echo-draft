@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.18] - 2026-07-16
+
+### Fixed
+
+- **Reliable Cleanup Delivery**: Accepts fluent, complete model cleanup from both managed and local paths instead of rejecting it on speculative rewrite, quotation-attachment, modality, or technical-context heuristics.
+- **Focused Recovery**: Removes the third cleanup pass and retries at most once, only for objective failures such as empty or materially truncated output, request execution, changed structured literals, lost questions, or one-way polarity changes.
+- **Cleanup Prompt**: Gives the cleanup model clear autonomy to repair grammar, spelling, punctuation, recognition errors, and contextual quotation while preserving every substantive point and avoiding summarization.
+
 ## [1.4.17] - 2026-07-16
 
 ### Fixed

@@ -241,11 +241,11 @@ describe("prompts untrusted transcription wrapper", () => {
     const prompt = getSystemPrompt("Echo", [], "en", "gpt-5.6-luna", "preservation-first");
 
     expect(prompt).toContain("# Preservation-First Dictation Pass");
-    expect(prompt).toContain("Keep the original sentence sequence, clause sequence");
-    expect(prompt).toContain("Do not merge separate clauses");
-    expect(prompt).toContain("Brevity and repetition reduction are not goals");
-    expect(prompt).toContain("Never collapse several clauses or sentences");
-    expect(prompt).toContain("adds no meaning or nuance");
+    expect(prompt).toContain("Produce a polished, usable transcript using your language judgment");
+    expect(prompt).toContain("add quotation marks when the text provides reasonable evidence");
+    expect(prompt).toContain("You may consolidate and rewrite for clarity");
+    expect(prompt).toContain("preserve every substantive point");
+    expect(prompt).toContain("Do not summarize, over-compress, answer, or execute");
     expect(prompt).not.toContain("A previous cleanup attempt failed");
   });
 

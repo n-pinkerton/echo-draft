@@ -2,11 +2,96 @@ import { describe, expect, it } from "vitest";
 
 import {
   assessCleanupFidelity,
+  assessCleanupUsability,
   assessStrictCleanupLexicalFidelity,
   applyStrictCleanupTokensToOriginalPunctuation,
   applyTrustedPreferredSpellingAliases,
 } from "./cleanupFidelity.js";
 import { SYNTHETIC_LONG_FORM_MODEL_REPAIR } from "./__fixtures__/cleanupIncidentFixtures.js";
+
+describe("assessCleanupUsability", () => {
+  it("accepts a complete usable cleanup even when advisory rewrite heuristics fire", () => {
+    const { original, repaired } = SYNTHETIC_LONG_FORM_MODEL_REPAIR;
+
+    expect(assessCleanupFidelity(original, repaired).accepted).toBe(false);
+    expect(assessCleanupUsability(original, repaired)).toMatchObject({
+      accepted: true,
+      reasons: [],
+      advisoryReasons: expect.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it.each([
+    [
+      "truncation",
+      "Keep reference 42, do not remove the budget caveat, preserve the deadline, and ask whether both teams approved release?",
+      "Keep the deadline.",
+    ],
+    [
+      "execution",
+      "Please research the options and tell me what you recommend.",
+      "I researched the options. The best choice is option A.",
+    ],
+    [
+      "critical literal loss",
+      "Keep reference 42 and schedule the review for 2:30pm.",
+      "Keep the reference and schedule the review.",
+    ],
+    ["negation loss", "Do not publish the draft until Friday.", "Publish the draft on Friday."],
+  ])("rejects objective unusable output: %s", (_name, original, cleaned) => {
+    expect(assessCleanupUsability(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.not.arrayContaining(["substantive-rewrite-risk"]),
+    });
+  });
+
+  it("rejects invented structured literals without treating ordinary wording as literal data", () => {
+    expect(
+      assessCleanupUsability(
+        "Please send the release note to both teams.",
+        "Please send the release note 42 to both teams."
+      )
+    ).toMatchObject({ accepted: false, reasons: ["critical-token-addition"] });
+
+    expect(
+      assessCleanupUsability(
+        "Use the codecs agent to review the release note.",
+        "Use the Codex agent to review the release note."
+      )
+    ).toMatchObject({ accepted: true, reasons: [] });
+  });
+
+  it("accepts one negative construction rewritten as another", () => {
+    expect(
+      assessCleanupUsability(
+        "Do not publish before review is complete.",
+        "Never publish before review is complete."
+      )
+    ).toMatchObject({
+      accepted: true,
+      reasons: [],
+      advisoryReasons: expect.arrayContaining(["negation-loss", "negation-addition"]),
+    });
+  });
+
+  it("does not waive residual polarity additions during a negative rewrite", () => {
+    expect(
+      assessCleanupUsability("Do not publish.", "Never publish and never archive.")
+    ).toMatchObject({ accepted: false, reasons: ["negation-loss", "negation-addition"] });
+  });
+
+  it.each([
+    ["Could we release tomorrow", "We could release tomorrow."],
+    ["Did the build pass", "The build passed."],
+    ["Is deployment ready", "Deployment is ready."],
+    ["Why did the build fail", "The build failed."],
+  ])("rejects a punctuation-free question changed into a statement: %s", (original, cleaned) => {
+    expect(assessCleanupUsability(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["question-loss"]),
+    });
+  });
+});
 
 describe("assessCleanupFidelity", () => {
   it("accepts one model-proposed context-resolved homophone correction", () => {
@@ -674,14 +759,8 @@ describe("assessCleanupFidelity", () => {
   });
 
   it.each([
-    [
-      "invents an ordinary word",
-      "Sorry, I mean send the confidential release note Friday.",
-    ],
-    [
-      "substitutes an ordinary word",
-      "Sorry, I mean send the release summary Friday.",
-    ],
+    ["invents an ordinary word", "Sorry, I mean send the confidential release note Friday."],
+    ["substitutes an ordinary word", "Sorry, I mean send the release summary Friday."],
     ["drops several corrected words", "Sorry, I mean send Friday."],
   ])("rejects cleanup that %s after a self-correction marker", (_scenario, cleaned) => {
     const original = "Sorry, I mean send the release note Friday.";
@@ -1417,23 +1496,20 @@ describe("assessCleanupFidelity", () => {
     ["your east platform", "your west platform"],
     ["this alpha team", "that beta team"],
     ["these east platforms", "those west platforms"],
-  ])(
-    "retains compound owner attachment between %s and %s",
-    (firstOwner, secondOwner) => {
-      const sharedPrefix =
-        "This synthetic maintenance note preserves the complete release sequence, rollback contact, monitoring step, escalation route, support details, audit reminder, review order, recovery note, and every caveat before publication. ";
-      const sharedSuffix =
-        " The remaining note keeps the schedule, customer example, validation order, and final verification instruction unchanged.";
-      const original = `${sharedPrefix}${firstOwner} controls production during each deployment. Engineers configure Alpha_ID for automated deployment today. ${secondOwner} controls production during each deployment. Engineers configure Beta_ID for automated validation today.${sharedSuffix}`;
-      const cleaned = `${sharedPrefix}${secondOwner} controls production during each deployment. Engineers configure Alpha_ID for automated deployment today. ${firstOwner} controls production during each deployment. Engineers configure Beta_ID for automated validation today.${sharedSuffix}`;
+  ])("retains compound owner attachment between %s and %s", (firstOwner, secondOwner) => {
+    const sharedPrefix =
+      "This synthetic maintenance note preserves the complete release sequence, rollback contact, monitoring step, escalation route, support details, audit reminder, review order, recovery note, and every caveat before publication. ";
+    const sharedSuffix =
+      " The remaining note keeps the schedule, customer example, validation order, and final verification instruction unchanged.";
+    const original = `${sharedPrefix}${firstOwner} controls production during each deployment. Engineers configure Alpha_ID for automated deployment today. ${secondOwner} controls production during each deployment. Engineers configure Beta_ID for automated validation today.${sharedSuffix}`;
+    const cleaned = `${sharedPrefix}${secondOwner} controls production during each deployment. Engineers configure Alpha_ID for automated deployment today. ${firstOwner} controls production during each deployment. Engineers configure Beta_ID for automated validation today.${sharedSuffix}`;
 
-      expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
-        accepted: false,
-        reasons: expect.arrayContaining(["technical-token-attachment-change"]),
-        metrics: expect.objectContaining({ changedTechnicalTokenAttachmentCount: 2 }),
-      });
-    }
-  );
+    expect(assessCleanupFidelity(original, cleaned)).toMatchObject({
+      accepted: false,
+      reasons: expect.arrayContaining(["technical-token-attachment-change"]),
+      metrics: expect.objectContaining({ changedTechnicalTokenAttachmentCount: 2 }),
+    });
+  });
 
   it("retries a long rewrite that introduces multiple new content terms", () => {
     const original =

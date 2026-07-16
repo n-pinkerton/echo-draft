@@ -2553,8 +2553,7 @@ const ADJACENT_ATTACHMENT_LEADING_DETERMINERS = new Set([
 ]);
 const ADJACENT_ATTACHMENT_CONTEXT =
   /\b(?:assigned?|belongs?|managed?|owner|owns?|recipient|responsible)\b|\b(?:development|production|sandbox|staging|testing)\s+(?:account|environment|tenant)\b/iu;
-const ADJACENT_ATTACHMENT_ENVIRONMENT =
-  /\b(?:development|production|sandbox|staging|testing)\b/iu;
+const ADJACENT_ATTACHMENT_ENVIRONMENT = /\b(?:development|production|sandbox|staging|testing)\b/iu;
 
 const getAdjacentAttachmentContext = (clause) => {
   const raw = String(clause || "");
@@ -2613,9 +2612,7 @@ const getLiteralAttachmentClausePrefix = (value, endIndex) => {
 
   const previousAnchor = getAdjacentAttachmentContext(previousClause)
     .filter(
-      (word) =>
-        !LITERAL_ATTACHMENT_IGNORABLE_FILLERS.has(word) &&
-        !CONTENT_STOP_WORDS.has(word)
+      (word) => !LITERAL_ATTACHMENT_IGNORABLE_FILLERS.has(word) && !CONTENT_STOP_WORDS.has(word)
     )
     .map(stemComparableWord)
     .join(" ");
@@ -2630,12 +2627,11 @@ const getLiteralAttachmentIdentity = (value, occurrence, { scopeToClause = false
     scopeToClause
       ? getLiteralAttachmentClausePrefix(value, occurrence.index)
       : String(value || "").slice(0, occurrence.index)
-  )
-    .filter(
-      (word) =>
-        !LITERAL_ATTACHMENT_IGNORABLE_FILLERS.has(word) &&
-        (!CONTENT_STOP_WORDS.has(word) || LITERAL_ATTACHMENT_LABEL_WORDS.has(word))
-    );
+  ).filter(
+    (word) =>
+      !LITERAL_ATTACHMENT_IGNORABLE_FILLERS.has(word) &&
+      (!CONTENT_STOP_WORDS.has(word) || LITERAL_ATTACHMENT_LABEL_WORDS.has(word))
+  );
   return {
     prefix: (scopeToClause ? prefixWords.map(stemComparableWord) : prefixWords).join(" "),
     right: getLiteralAttachmentAnchor(value, occurrence.index + occurrence.rawLength, 1),
@@ -2657,9 +2653,7 @@ const matchOrderedTokenOccurrences = (
     const preferredMatchIndex = isPreferredMatch
       ? actualOccurrences.findIndex(
           (actual, index) =>
-            index >= cursor &&
-            actual.token === expected.token &&
-            isPreferredMatch(expected, actual)
+            index >= cursor && actual.token === expected.token && isPreferredMatch(expected, actual)
         )
       : -1;
     const matchIndex = preferredMatchIndex >= 0 ? preferredMatchIndex : firstMatchIndex;
@@ -2673,18 +2667,9 @@ const matchOrderedTokenOccurrences = (
   return { matchedPairs, missingOccurrences };
 };
 
-const countLiteralAttachmentChanges = (
-  matchedPairs,
-  expectedValue,
-  actualValue,
-  identityOptions
-) =>
+const countLiteralAttachmentChanges = (matchedPairs, expectedValue, actualValue, identityOptions) =>
   matchedPairs.filter(({ actual, expected }) => {
-    const expectedIdentity = getLiteralAttachmentIdentity(
-      expectedValue,
-      expected,
-      identityOptions
-    );
+    const expectedIdentity = getLiteralAttachmentIdentity(expectedValue, expected, identityOptions);
     const actualIdentity = getLiteralAttachmentIdentity(actualValue, actual, identityOptions);
     return (
       expectedIdentity.prefix !== actualIdentity.prefix ||
@@ -2983,6 +2968,47 @@ const startsWithActionInstructionOrQuestion = (normalizedText) => {
   return DIRECTIVE_ACTION_OPENERS.has(words[0]);
 };
 
+const CLEAR_QUESTION_AUXILIARIES = new Set([
+  "am",
+  "are",
+  "can",
+  "could",
+  "did",
+  "do",
+  "does",
+  "had",
+  "has",
+  "have",
+  "is",
+  "may",
+  "might",
+  "must",
+  "shall",
+  "should",
+  "was",
+  "were",
+  "will",
+  "would",
+]);
+
+const startsWithClearInterrogative = (rawText, normalizedText) => {
+  if (String(rawText || "").includes("?")) return true;
+  const words = String(normalizedText || "")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length < 2) return false;
+  if (SPOKEN_FORMATTING_QUESTION_WORDS.has(words[0])) return true;
+  return (
+    words.length >= 3 &&
+    !NEGATION_MARKERS.includes(words[1]) &&
+    CLEAR_QUESTION_AUXILIARIES.has(words[0])
+  );
+};
+
+const preservesQuestionOrRequestForm = (rawText, normalizedText) =>
+  startsWithClearInterrogative(rawText, normalizedText) ||
+  startsWithActionInstructionOrQuestion(normalizedText);
+
 const startsWithThirdPersonCompletion = (rawText, normalizedText) => {
   if (THIRD_PERSON_COMPLETION.test(String(rawText || "").trim())) return true;
   const words = normalizedText.split(/\s+/).filter(Boolean);
@@ -3234,8 +3260,18 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
   const missingCriticalTokens = criticalTokenMatch.missingOccurrences.map(
     (occurrence) => occurrence.token
   );
+  const addedCriticalTokenMatch = matchOrderedTokenOccurrences(
+    cleanedCriticalTokenOccurrences,
+    criticalTokenOccurrences
+  );
+  const addedCriticalTokens = addedCriticalTokenMatch.missingOccurrences.map(
+    (occurrence) => occurrence.token
+  );
   if (missingCriticalTokens.length > 0) {
     reasons.push("critical-token-loss");
+  }
+  if (addedCriticalTokens.length > 0) {
+    reasons.push("critical-token-addition");
   }
   const changedCriticalTokenAttachmentCount = countLiteralAttachmentChanges(
     criticalTokenMatch.matchedPairs,
@@ -3416,7 +3452,13 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
     reasons.push("incomplete-workflow-progression");
   }
 
-  if (original.includes("?") && !cleaned.includes("?")) {
+  const originalHasLiteralQuestion = original.includes("?");
+  if (
+    (originalHasLiteralQuestion && !cleaned.includes("?")) ||
+    (!originalHasLiteralQuestion &&
+      startsWithClearInterrogative(original, normalizedOriginal) &&
+      !preservesQuestionOrRequestForm(cleaned, normalizedCleaned))
+  ) {
     reasons.push("question-loss");
   }
 
@@ -3490,6 +3532,7 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
       orderedBigramRetention,
       criticalTokenCount: criticalTokens.length,
       missingCriticalTokenCount: missingCriticalTokens.length,
+      addedCriticalTokenCount: addedCriticalTokens.length,
       protectedTechnicalTokenCount: protectedTechnicalTokens.length,
       missingProtectedTechnicalTokenCount: missingProtectedTechnicalTokens.length,
       changedCriticalTokenAttachmentCount,
@@ -3501,6 +3544,54 @@ export function assessCleanupFidelity(originalText, cleanedText, options = {}) {
       changedStanceAttachmentCount,
       changedModalAttachmentCount,
     },
+  };
+}
+
+// These checks cover objective output failures that justify withholding model
+// output. The broader fidelity assessor remains useful diagnostic evidence, but
+// its linguistic attachment and rewrite heuristics are intentionally advisory:
+// they cannot reliably decide whether a fluent cleanup preserved meaning.
+const CLEANUP_USABILITY_BLOCKING_REASONS = new Set([
+  "added-content-to-empty-input",
+  "added-whole-output-quotation",
+  "assistant-action-output",
+  "critical-token-addition",
+  "critical-token-loss",
+  "empty-output",
+  "low-content-word-coverage",
+  "material-compression",
+  "material-expansion",
+  "negation-addition",
+  "negation-loss",
+  "question-loss",
+  "request-execution-output",
+  "wrapper-leak",
+]);
+
+export function assessCleanupUsability(originalText, cleanedText, options = {}) {
+  const diagnosticAssessment = assessCleanupFidelity(originalText, cleanedText, options);
+  const countNegations = (value) => {
+    const normalized = normalizeForComparison(value);
+    return NEGATION_MARKERS.reduce((total, marker) => total + countMarker(normalized, marker), 0);
+  };
+  const hasNegationReplacement =
+    diagnosticAssessment.reasons.includes("negation-loss") &&
+    diagnosticAssessment.reasons.includes("negation-addition") &&
+    countNegations(originalText) === countNegations(cleanedText);
+  const reasons = diagnosticAssessment.reasons.filter(
+    (reason) =>
+      CLEANUP_USABILITY_BLOCKING_REASONS.has(reason) &&
+      !(hasNegationReplacement && (reason === "negation-loss" || reason === "negation-addition"))
+  );
+  const advisoryReasons = diagnosticAssessment.reasons.filter(
+    (reason) => !reasons.includes(reason)
+  );
+
+  return {
+    ...diagnosticAssessment,
+    accepted: reasons.length === 0,
+    reasons,
+    advisoryReasons,
   };
 }
 
