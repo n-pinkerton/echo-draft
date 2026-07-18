@@ -44,6 +44,8 @@ Never log:
 - transcript text or recorded audio unless the code path is explicitly part of the debug capture flow described in `DEBUG.md`
 - full request bodies or provider payloads when summaries or IDs are enough
 
+The Android companion's shared diagnostic snapshot must use stable event codes and EchoDraft-owned source locations. Do not serialize `Throwable` messages, provider/folder URIs, device identifiers, dictation content, or audio into that file.
+
 The main logging boundary applies a defensive credential redactor, but callers must still avoid passing secrets. Prefer boolean presence fields such as `hasKey`; never log a credential value, prefix, preview, or length.
 
 ## Log shape

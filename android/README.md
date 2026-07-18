@@ -47,6 +47,8 @@ The selected folder itself is the inbox root; do not select its parent on either
 - The app keeps a finalized local copy if publishing fails. Tap **Retry pending memos** after restoring folder or sync access.
 - Desktop EchoDraft processes each ready memo with its currently selected transcription provider, model, and cleanup setting. Results appear in **To Do**, where their generated titles and text are searchable and they can be copied and marked actioned.
 
+When a mobile operation fails, EchoDraft keeps a privacy-safe rolling diagnostic locally and makes a best-effort copy named `echodraft-mobile-diagnostics.jsonl` in the selected shared folder. If OneDrive or the folder is unavailable, the local copy is retried when the app next opens, a folder is selected, or a memo upload/retry finishes. Diagnostic storage and provider work runs on application-scoped workers and never gates recording or memo completion. The file contains at most the latest 20 failures (64 KiB total): stable event codes, app/API versions, exception types, and EchoDraft source locations. It never includes exception messages, dictation text, audio, folder paths or URIs, credentials, or phone/device identifiers. Desktop EchoDraft ignores this support file.
+
 Recordings are capped at 32 MB. The Android app does not paste text or perform local transcription.
 
 If Android reaches its hard recording limit but cannot produce a valid M4A container, EchoDraft never publishes it as ready. It retains the raw result privately under the app's no-backup storage for manual recovery instead of risking a corrupt To Do item.

@@ -37,6 +37,10 @@ object EchoDraftWidgetUi {
                 "Previous work was interrupted. Open EchoDraft to continue.",
                 pending,
             )
+            MobileDiagnosticReporter.from(context).record(
+                MobileDiagnosticEvents.OPERATION_INTERRUPTED,
+                pendingMemoCount = pending,
+            )
             state = preferences.state()
         }
 

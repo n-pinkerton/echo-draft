@@ -63,6 +63,12 @@ Debug logs can still contain sensitive settings and local paths, while debug aud
 
 Do not send captured audio unless it is needed and you intend to share the recording. After support work is complete, turn off debug mode and use **Delete Diagnostic Data**.
 
+## Android companion failure diagnostics
+
+The private Android companion automatically keeps a content-free rolling failure log; it does not use the desktop debug-mode toggle. The latest 20 failures, capped at 64 KiB, are kept under Android no-backup app storage and copied on a best-effort basis to `echodraft-mobile-diagnostics.jsonl` in the user-selected shared inbox. If the document provider is unavailable, the local snapshot is retried when the app opens, a folder is selected, or a memo upload/retry completes.
+
+Mobile diagnostics contain stable event codes, EchoDraft app/API versions, exception types, pending-memo counts, and EchoDraft-owned source locations. They exclude exception messages, dictation text, audio, clipboard content, folder paths and URIs, credentials, and phone/device identifiers. Desktop EchoDraft ignores the diagnostic file. Diagnostic disk and document-provider work runs outside Activity, Service, and widget callbacks, so a stalled provider cannot block recording or memo completion. The private rolling snapshot remains until app data is cleared or the Android app is uninstalled; deleting only the shared copy may allow it to be recreated on the next sync.
+
 ## Disable debug logging
 
 - Turn off `Settings → Developer → Debug mode`, or

@@ -15,7 +15,6 @@ import android.media.MediaRecorder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.util.Log
 import java.util.concurrent.Executors
 
 class RecorderService : Service() {
@@ -24,6 +23,7 @@ class RecorderService : Service() {
     private lateinit var preferences: AppPreferences
     private lateinit var pendingStore: PendingRecordingStore
     private lateinit var publisher: SafInboxPublisher
+    private lateinit var diagnostics: MobileDiagnosticReporter
     private val operationFence = OperationFence()
 
     @Volatile
@@ -47,7 +47,13 @@ class RecorderService : Service() {
         preferences = AppPreferences(this)
         pendingStore = PendingRecordingStore.from(this)
         publisher = SafInboxPublisher(this)
-        pendingStore.removeStaleTemporaryFiles()
+        diagnostics = MobileDiagnosticReporter.from(this)
+        if (pendingStore.removeStaleTemporaryFiles() > 0) {
+            diagnostics.record(
+                MobileDiagnosticEvents.OPERATION_INTERRUPTED,
+                pendingMemoCount = pendingStore.pendingCount(),
+            )
+        }
         createNotificationChannel()
     }
 
@@ -71,6 +77,10 @@ class RecorderService : Service() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             phase = AppPreferences.Phase.ERROR
             val message = "Microphone permission is required. Open the app to finish setup."
+            diagnostics.record(
+                MobileDiagnosticEvents.RECORDING_START_FAILED,
+                pendingMemoCount = preferences.state().pendingCount,
+            )
             startForegroundWithType(
                 buildNotification(message, includeStop = false),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
@@ -127,16 +137,29 @@ class RecorderService : Service() {
     private fun startRecording(operation: Long) {
         if (!operationFence.isCurrent(operation)) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            fail(operation, "Microphone permission is required. Open the app to finish setup.")
+            fail(
+                operation,
+                MobileDiagnosticEvents.RECORDING_START_FAILED,
+                "Microphone permission is required. Open the app to finish setup.",
+            )
             return
         }
         if (!InboxTreeStore(this).isReady()) {
-            fail(operation, "Shared-folder access is unavailable. Open the app and choose it again.")
+            fail(
+                operation,
+                MobileDiagnosticEvents.SHARED_FOLDER_UNAVAILABLE,
+                "Shared-folder access is unavailable. Open the app and choose it again.",
+            )
             return
         }
 
-        val newSession = runCatching { pendingStore.createSession() }.getOrElse {
-            fail(operation, "EchoDraft could not create a private recording file.")
+        val newSession = runCatching { pendingStore.createSession() }.getOrElse { error ->
+            fail(
+                operation,
+                MobileDiagnosticEvents.RECORDING_STORAGE_FAILED,
+                "EchoDraft could not create a private recording file.",
+                error,
+            )
             return
         }
         val newRecorder = MediaRecorder(this)
@@ -181,8 +204,12 @@ class RecorderService : Service() {
             runCatching { newRecorder.reset() }
             newRecorder.release()
             pendingStore.discard(newSession)
-            Log.w(TAG, "Mobile recording could not start", error)
-            fail(operation, "EchoDraft could not start the microphone recording.")
+            fail(
+                operation,
+                MobileDiagnosticEvents.RECORDING_START_FAILED,
+                "EchoDraft could not start the microphone recording.",
+                error,
+            )
             return
         }
 
@@ -196,18 +223,23 @@ class RecorderService : Service() {
     private fun finishRecording(operation: Long) {
         val recording = activeRecording
         if (recording == null || recording.operation != operation) {
-            fail(operation, "No active recording was available to save.")
+            fail(
+                operation,
+                MobileDiagnosticEvents.RECORDING_MISSING,
+                "No active recording was available to save.",
+            )
             return
         }
 
         activeRecording = null
         val activeRecorder = recording.recorder
         val activeSession = recording.pendingSession
+        var stopError: RuntimeException? = null
         val stoppedExplicitly = try {
             activeRecorder.stop()
             true
         } catch (error: RuntimeException) {
-            Log.w(TAG, "Mobile recording did not stop synchronously", error)
+            stopError = error
             false
         }
         activeRecorder.release()
@@ -225,30 +257,42 @@ class RecorderService : Service() {
         ) {
             RecordingStopDisposition.FINALIZE -> Unit
             RecordingStopDisposition.RETAIN_FOR_RECOVERY -> {
+                var recoveryError: Throwable? = null
                 val retained = runCatching { pendingStore.retainForRecovery(activeSession) }
-                    .onFailure { Log.w(TAG, "Could not retain limit-stop recovery audio", it) }
+                    .onFailure { recoveryError = it }
                     .isSuccess
                 fail(
                     operation,
+                    MobileDiagnosticEvents.RECORDING_STOP_FAILED,
                     if (retained) {
                         "Android could not finalize the limit-stopped memo. A private recovery copy was kept on this phone."
                     } else {
                         "Android could not finalize the limit-stopped memo."
                     },
+                    recoveryError ?: stopError,
                 )
                 return
             }
             RecordingStopDisposition.DISCARD -> {
                 pendingStore.discard(activeSession)
-                fail(operation, "The recording was too short to save. Please try again.")
+                fail(
+                    operation,
+                    MobileDiagnosticEvents.RECORDING_STOP_FAILED,
+                    "The recording was too short to save. Please try again.",
+                    stopError,
+                )
                 return
             }
         }
 
         val ready = runCatching { pendingStore.finalize(activeSession) }.getOrElse { error ->
-            Log.w(TAG, "Mobile recording could not be finalized", error)
             pendingStore.discard(activeSession)
-            fail(operation, "EchoDraft could not finalize the recording.")
+            fail(
+                operation,
+                MobileDiagnosticEvents.RECORDING_FINALIZE_FAILED,
+                "EchoDraft could not finalize the recording.",
+                error,
+            )
             return
         }
         phase = AppPreferences.Phase.PUBLISHING
@@ -277,11 +321,16 @@ class RecorderService : Service() {
                 if (recording.externalId.toString() == currentMemoId) currentPublished = true
             } catch (error: Throwable) {
                 failures += 1
-                Log.w(TAG, "A mobile memo remains pending for retry", error)
+                diagnostics.record(
+                    MobileDiagnosticEvents.MEMO_PUBLISH_FAILED,
+                    error,
+                    pendingStore.pendingCount(),
+                )
             }
         }
 
         if (!operationFence.isCurrent(operation)) return
+        diagnostics.sync()
         val pendingCount = pendingStore.pendingCount()
         val message = when {
             failures == 0 && currentMemoId == null -> "Pending memos uploaded for EchoDraft."
@@ -294,8 +343,14 @@ class RecorderService : Service() {
         finishService(operation)
     }
 
-    private fun fail(operation: Long, message: String) {
+    private fun fail(
+        operation: Long,
+        diagnosticEvent: String,
+        message: String,
+        error: Throwable? = null,
+    ) {
         if (!operationFence.isCurrent(operation)) return
+        diagnostics.report(diagnosticEvent, error, pendingStore.pendingCount())
         phase = AppPreferences.Phase.ERROR
         updateState(phase, message)
         finishService(operation)
@@ -373,6 +428,10 @@ class RecorderService : Service() {
     override fun onTimeout(startId: Int, fgsType: Int) {
         operationFence.invalidate()
         phase = AppPreferences.Phase.ERROR
+        diagnostics.record(
+            MobileDiagnosticEvents.FOREGROUND_TIMEOUT,
+            pendingMemoCount = pendingStore.pendingCount(),
+        )
         preferences.updateState(
             phase,
             "Android stopped a long-running upload. The memo remains available to retry.",
@@ -386,6 +445,10 @@ class RecorderService : Service() {
     override fun onDestroy() {
         operationFence.invalidate()
         activeRecording?.let { recording ->
+            diagnostics.record(
+                MobileDiagnosticEvents.RECORDING_SERVICE_DESTROYED,
+                pendingMemoCount = preferences.state().pendingCount,
+            )
             runCatching { recording.recorder.reset() }
             recording.recorder.release()
             pendingStore.discard(recording.pendingSession)
@@ -401,7 +464,6 @@ class RecorderService : Service() {
         const val ACTION_STOP = "com.echodraft.mobile.action.STOP"
         const val ACTION_RETRY = "com.echodraft.mobile.action.RETRY"
 
-        private const val TAG = "EchoDraftRecorder"
         private const val NOTIFICATION_CHANNEL_ID = "mobile_memo_recording"
         private const val NOTIFICATION_ID = 2107
         private const val REQUEST_OPEN_APP = 41

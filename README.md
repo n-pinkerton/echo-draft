@@ -339,6 +339,8 @@ The private Android companion uses a dedicated cloud-synced folder instead of op
 
 Mobile results appear only in **To Do**. They do not paste automatically, replace the clipboard, or create a second History item. EchoDraft removes an uploaded audio/manifest pair from the sync folder only after the cleaned memo has been saved idempotently to To Do. The Android companion is intended for private sideloading, not app-store distribution.
 
+Mobile failures produce a bounded, content-free `echodraft-mobile-diagnostics.jsonl` support file in the selected shared folder when that provider is available. A private local copy is retained and retried if OneDrive is temporarily unavailable; the log excludes dictation/audio, exception messages, folder details, credentials, and phone/device identifiers.
+
 See [`android/README.md`](android/README.md) for the no-phone build command, later USB installation, folder setup, and widget instructions.
 
 ### Uninstall & Cache Cleanup

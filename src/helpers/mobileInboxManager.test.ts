@@ -166,6 +166,28 @@ describe("MobileInboxManager", () => {
     });
   });
 
+  it("ignores the mobile diagnostic log and unrelated subfolders", async () => {
+    const { inboxPath, userDataPath } = await createWorkspace();
+    const diagnosticPath = path.join(inboxPath, "echodraft-mobile-diagnostics.jsonl");
+    const unrelatedFolder = path.join(inboxPath, "unrelated.ready.json");
+    await fs.promises.writeFile(
+      diagnosticPath,
+      '{"format":"echodraft-mobile-diagnostics","version":1}\n'
+    );
+    await fs.promises.mkdir(unrelatedFolder);
+    const { databaseManager, manager, send } = createManager(userDataPath);
+    await manager.setInboxPath(inboxPath);
+
+    await manager.scanNow();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(databaseManager.saveTodo).not.toHaveBeenCalled();
+    await expect(fs.promises.readFile(diagnosticPath, "utf8")).resolves.toContain(
+      "echodraft-mobile-diagnostics"
+    );
+    await expect(fs.promises.stat(unrelatedFolder)).resolves.toMatchObject({});
+  });
+
   it("cleans up a previously saved matching item without transcribing it again", async () => {
     const { inboxPath, userDataPath } = await createWorkspace();
     const item = await writeReadyItem(inboxPath);

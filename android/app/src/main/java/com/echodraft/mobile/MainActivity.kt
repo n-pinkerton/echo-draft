@@ -18,6 +18,7 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
     private lateinit var preferences: AppPreferences
     private lateinit var treeStore: InboxTreeStore
     private lateinit var pendingStore: PendingRecordingStore
+    private lateinit var diagnostics: MobileDiagnosticReporter
     private lateinit var folderStatus: TextView
     private lateinit var recordingStatus: TextView
     private lateinit var pendingCount: TextView
@@ -36,11 +37,17 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
                     "Shared folder ready.",
                     pendingStore.pendingCount(),
                 )
+                diagnostics.sync()
             }
-            .onFailure {
+            .onFailure { error ->
                 preferences.updateState(
                     AppPreferences.Phase.ERROR,
                     "That folder is not writable. Choose another sync folder.",
+                    pendingStore.pendingCount(),
+                )
+                diagnostics.report(
+                    MobileDiagnosticEvents.FOLDER_SELECTION_FAILED,
+                    error,
                     pendingStore.pendingCount(),
                 )
             }
@@ -65,6 +72,7 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
         preferences = AppPreferences(this)
         treeStore = InboxTreeStore(this, preferences)
         pendingStore = PendingRecordingStore.from(this)
+        diagnostics = MobileDiagnosticReporter.from(this)
 
         folderStatus = findViewById(R.id.folder_status)
         recordingStatus = findViewById(R.id.recording_status)
@@ -93,12 +101,18 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
         val state = preferences.state()
         if (state.isBusy && !RecorderService.isRunning) {
             pendingStore.removeStaleTemporaryFiles()
+            val pendingMemos = pendingStore.pendingCount()
             preferences.updateState(
                 AppPreferences.Phase.ERROR,
                 "Previous work was interrupted. Any completed memo remains available to retry.",
-                pendingStore.pendingCount(),
+                pendingMemos,
+            )
+            diagnostics.record(
+                MobileDiagnosticEvents.OPERATION_INTERRUPTED,
+                pendingMemoCount = pendingMemos,
             )
         }
+        diagnostics.sync()
         render()
         EchoDraftWidgetUi.updateAll(this)
     }
@@ -111,7 +125,7 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
         val state = preferences.state()
         if (state.isRecording) {
             runCatching { RecorderService.requestStop(this) }
-                .onFailure { showStartError() }
+                .onFailure { showStartError(it) }
             return
         }
         if (state.isBusy) return
@@ -135,7 +149,7 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
 
     private fun startRecorder() {
         runCatching { RecorderService.requestStart(this) }
-            .onFailure { showStartError() }
+            .onFailure { showStartError(it) }
     }
 
     private fun retryPending() {
@@ -144,14 +158,20 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
             return
         }
         runCatching { RecorderService.requestRetry(this) }
-            .onFailure { showStartError() }
+            .onFailure { showStartError(it) }
     }
 
-    private fun showStartError() {
+    private fun showStartError(error: Throwable) {
+        val pendingMemos = pendingStore.pendingCount()
         preferences.updateState(
             AppPreferences.Phase.ERROR,
             "Android could not start the foreground task. Open the app and try again.",
-            pendingStore.pendingCount(),
+            pendingMemos,
+        )
+        diagnostics.report(
+            MobileDiagnosticEvents.FOREGROUND_TASK_START_FAILED,
+            error,
+            pendingMemos,
         )
     }
 

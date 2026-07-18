@@ -36,6 +36,8 @@ This is a public open-source repository. While working in it, and again before f
 
 The mobile inbox has no inbound network listener. Treat its sync folder as untrusted input: accept only the versioned UUID-based filename pair, reject symbolic roots/files, read through bounded stable file handles, and verify declared size and SHA-256 before dispatch. Bind processing to a canonical root snapshot, then atomically claim and revalidate the exact files before deletion or quarantine so a replacement at the original pathname is preserved. Delete verified audio before the claimed ready manifest, and retry a partial cleanup after an idempotent To Do save. Retry cloud-settling input before quarantining only a repeatedly stable invalid manifest; use a long retry interval when identity cannot be established safely. Manifests and metadata must not contain phone numbers, serial numbers, IMEIs, SIM details, or other device identifiers.
 
+The optional `echodraft-mobile-diagnostics.jsonl` support file is not an inbox manifest. Keep it bounded, content-free, and safe to sync: stable event codes and app-owned source locations are permitted; exception messages, provider/folder URIs, credentials, device identifiers, dictation text, and audio are not. The desktop scanner must ignore this file and continue accepting only the UUID-based ready-manifest contract.
+
 ## Logging and privacy
 
 - Follow `Docs/LOGGING.md` for redaction and field selection.

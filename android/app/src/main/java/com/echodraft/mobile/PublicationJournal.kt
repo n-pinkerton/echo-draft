@@ -18,11 +18,24 @@ internal class PublicationJournal(context: Context) {
         put(manifestKey(externalId), uri)
     }
 
+    fun rememberDiagnostics(uri: Uri) {
+        put(DIAGNOSTICS_KEY, uri)
+    }
+
     fun ownsAudio(externalId: UUID, uri: Uri): Boolean =
         preferences.getString(audioKey(externalId), null) == uri.toString()
 
     fun ownsManifest(externalId: UUID, uri: Uri): Boolean =
         preferences.getString(manifestKey(externalId), null) == uri.toString()
+
+    fun ownsDiagnostics(uri: Uri): Boolean =
+        preferences.getString(DIAGNOSTICS_KEY, null) == uri.toString()
+
+    fun clearDiagnostics() {
+        check(preferences.edit().remove(DIAGNOSTICS_KEY).commit()) {
+            "Could not retire the diagnostic publication recovery journal"
+        }
+    }
 
     fun clear(externalId: UUID) {
         check(
@@ -46,5 +59,6 @@ internal class PublicationJournal(context: Context) {
 
     companion object {
         private const val PREFERENCES_NAME = "mobile_publication_recovery"
+        private const val DIAGNOSTICS_KEY = "diagnostics"
     }
 }
