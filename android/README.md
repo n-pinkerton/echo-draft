@@ -50,11 +50,13 @@ The install command validates that the three private Microsoft values exist, ref
 ## One-time app setup
 
 1. Open **EchoDraft Mobile** and tap **Connect OneDrive**. Complete Microsoft sign-in and consent. EchoDraft creates/opens `Apps/EchoDraft Mobile Inbox` automatically.
-2. Allow microphone access. Allow notifications so the active-recording control is visible.
+2. Tap **Start recording** once. When Android asks in context, allow microphone access; also allow notifications so the active-recording control is visible. EchoDraft then starts that recording, so dictate a short test memo and tap **Stop recording**. The widget remains in **Set up** mode until both OneDrive is connected and microphone access is granted.
 3. Wait for OneDrive on the PC to sync the app folder. In desktop EchoDraft, open **Control Panel → To Do → Choose folder** and select its local copy, normally `OneDrive - <organisation>\Apps\EchoDraft Mobile Inbox`.
 4. To add the widget, long-press an empty area of the Android home screen, choose **Widgets**, then add **EchoDraft Mobile**. The in-app **Add home-screen widget** button can also request this when the launcher supports it.
 
 If sign-in expires, open the app and tap **Reconnect OneDrive**. The widget uses only cached local readiness state; it never performs authentication or network work in a broadcast callback.
+
+If the app says OneDrive is connected but the widget still says **Set up**, open the app and tap **Start recording** to trigger Android's microphone permission prompt. After granting it, finish or stop the recording that EchoDraft starts. Granting the permission refreshes existing widget instances; deleting and re-adding the widget is unnecessary.
 
 ## Use and failure behavior
 
@@ -62,6 +64,8 @@ If sign-in expires, open the app and tap **Reconnect OneDrive**. The widget uses
 - EchoDraft writes and verifies audio before publishing the ready manifest. Create uploads fail on name conflicts, and final audio and manifest identities, sizes, and bytes are rechecked together before the private phone copy can be removed.
 - A failed sign-in, network request, conflict, or verification leaves the finalized memo on the phone. Tap **Retry pending uploads** after restoring access.
 - Desktop EchoDraft uses its currently selected transcription provider, model, cleanup setting, and title contract. Results appear in **To Do**, where generated titles and text are searchable and items can be copied and marked actioned.
+
+While its dictation renderer is ready, desktop EchoDraft checks the selected local OneDrive folder every five seconds. After it has verified the upload and saved the cleaned memo to **To Do**, it removes that memo's audio and ready-manifest pair. The sync folder being empty after processing is therefore normal; successfully handled recordings can disappear from it quickly.
 
 When a mobile operation fails, EchoDraft keeps a content-free rolling diagnostic locally and makes a best-effort copy named `echodraft-mobile-diagnostics.jsonl` in the OneDrive app folder. If OneDrive is unavailable, the local copy is retried when the app opens or a memo upload/retry finishes. Local storage and Graph publication run on separate application workers and never gate recording completion. The file contains at most the latest 20 failures (64 KiB total): stable event codes, app/API versions, exception types, pending counts, and EchoDraft source locations. A strict allowlist rejects exception messages, dictation text, audio, paths/URIs, credentials, account details, and phone/device identifiers. Desktop EchoDraft ignores this support file.
 
