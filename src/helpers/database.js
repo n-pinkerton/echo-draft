@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { app } = require("electron");
+const { MAX_TODO_PAGE_SIZE, normalizeTodoPayload } = require("./todoPayload");
 
 class DatabaseManager {
   constructor() {
@@ -37,6 +38,22 @@ class DatabaseManager {
           word TEXT NOT NULL UNIQUE,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
+      `);
+
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS todo_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          external_id TEXT NOT NULL UNIQUE,
+          payload_hash TEXT NOT NULL,
+          text TEXT NOT NULL,
+          raw_text TEXT,
+          meta_json TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'actioned')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          actioned_at DATETIME
+        );
+        CREATE INDEX IF NOT EXISTS idx_todo_items_pending
+          ON todo_items(status, created_at DESC)
       `);
 
       return true;
@@ -104,6 +121,21 @@ class DatabaseManager {
     } catch {
       hydrated.meta = {};
     }
+    return hydrated;
+  }
+
+  hydrateTodoRow(row) {
+    if (!row) return row;
+    const hydrated = { ...row };
+    if (typeof hydrated.meta_json !== "string" || !hydrated.meta_json.trim()) {
+      hydrated.meta_json = "{}";
+    }
+    try {
+      hydrated.meta = JSON.parse(hydrated.meta_json);
+    } catch {
+      hydrated.meta = {};
+    }
+    delete hydrated.payload_hash;
     return hydrated;
   }
 
@@ -232,6 +264,92 @@ class DatabaseManager {
       return { success: result.changes > 0, id };
     } catch (error) {
       console.error("❌ Error deleting transcription:", error);
+      throw error;
+    }
+  }
+
+  saveTodo(payload) {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+
+      const normalized = normalizeTodoPayload(payload);
+      const result = this.db
+        .prepare(
+          `INSERT INTO todo_items
+            (external_id, payload_hash, text, raw_text, meta_json)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(external_id) DO NOTHING`
+        )
+        .run(
+          normalized.externalId,
+          normalized.payloadHash,
+          normalized.text,
+          normalized.rawText,
+          normalized.metaJson
+        );
+      const saved = this.db
+        .prepare("SELECT * FROM todo_items WHERE external_id = ?")
+        .get(normalized.externalId);
+      if (!saved || saved.payload_hash !== normalized.payloadHash) {
+        throw new Error("To Do external ID already has different content");
+      }
+      return {
+        id: saved.id,
+        success: true,
+        created: result.changes === 1,
+        todo: this.hydrateTodoRow(saved),
+      };
+    } catch (error) {
+      console.error("Error saving To Do item:", error.message);
+      throw error;
+    }
+  }
+
+  getPendingTodos(limit = MAX_TODO_PAGE_SIZE) {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+      const rows = this.db
+        .prepare(
+          "SELECT id, text, created_at FROM todo_items WHERE status = 'pending' ORDER BY created_at DESC, id DESC LIMIT ?"
+        )
+        .all(limit);
+      return rows;
+    } catch (error) {
+      console.error("Error getting To Do items:", error.message);
+      throw error;
+    }
+  }
+
+  markTodoActioned(id) {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+
+      const fetch = this.db.prepare("SELECT status FROM todo_items WHERE id = ?");
+      const existing = fetch.get(id);
+      if (!existing) {
+        return { success: false, message: "To Do item not found" };
+      }
+      if (existing.status === "actioned") {
+        return { success: true, alreadyActioned: true };
+      }
+
+      const result = this.db
+        .prepare(
+          "UPDATE todo_items SET status = 'actioned', actioned_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'"
+        )
+        .run(id);
+      return {
+        success: true,
+        alreadyActioned: result.changes === 0,
+      };
+    } catch (error) {
+      console.error("Error actioning To Do item:", error.message);
       throw error;
     }
   }

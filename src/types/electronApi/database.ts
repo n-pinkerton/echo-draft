@@ -1,4 +1,4 @@
-import type { TranscriptionItem, TranscriptionMeta } from "../electron";
+import type { TodoItem, TranscriptionItem, TranscriptionMeta } from "../electron";
 
 export interface ElectronAPIDatabase {
   // Database operations
@@ -13,6 +13,10 @@ export interface ElectronAPIDatabase {
   ) => Promise<{ id: number; success: boolean; transcription?: TranscriptionItem }>;
   getTranscriptions: (limit?: number) => Promise<TranscriptionItem[]>;
   getLatestTranscription?: () => Promise<TranscriptionItem | null>;
+  getPendingTodos: (limit?: number) => Promise<TodoItem[]>;
+  markTodoActioned: (
+    id: number
+  ) => Promise<{ success: boolean; alreadyActioned?: boolean; message?: string }>;
   patchTranscriptionMeta?: (
     id: number,
     metaPatch: Partial<TranscriptionMeta>

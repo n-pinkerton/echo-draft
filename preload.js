@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveTranscription: (text) => ipcRenderer.invoke("db-save-transcription", text),
   getTranscriptions: (limit) => ipcRenderer.invoke("db-get-transcriptions", limit),
   getLatestTranscription: () => ipcRenderer.invoke("db-get-latest-transcription"),
+  getPendingTodos: (limit) => ipcRenderer.invoke("db-get-pending-todos", limit),
+  markTodoActioned: (id) => ipcRenderer.invoke("db-mark-todo-actioned", id),
   patchTranscriptionMeta: (id, metaPatch) =>
     ipcRenderer.invoke("db-patch-transcription-meta", id, metaPatch),
   exportTranscriptions: (format) => ipcRenderer.invoke("db-export-transcriptions", format),

@@ -6,13 +6,15 @@ import SupportDropdown from "../ui/SupportDropdown";
 import UpgradePrompt from "../UpgradePrompt";
 import { AlertDialog, ConfirmDialog } from "../ui/dialog";
 import { Button } from "../ui/button";
-import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import type { TodoItem, TranscriptionItem as TranscriptionItemType } from "../../types/electron";
 import FileTranscribeDialog from "./FileTranscribeDialog";
 import UpdateActionButton from "./UpdateActionButton";
 import ControlPanelBanners from "./ControlPanelBanners";
 import TranscriptionsHeader from "./TranscriptionsHeader";
 import HistoryPanel from "./HistoryPanel";
 import DictationQuickStart from "./DictationQuickStart";
+import TodoPanel from "./TodoPanel";
 import type { AlertDialogState, ConfirmDialogState } from "../../hooks/useDialogs";
 
 type UpdateStatus = {
@@ -55,6 +57,7 @@ type Props = {
   setSettingsTarget: (next: string | undefined) => void;
 
   history: TranscriptionItemType[];
+  todos: TodoItem[];
   filteredHistory: TranscriptionItemType[];
   providerOptions: string[];
   isLoading: boolean;
@@ -93,6 +96,7 @@ type Props = {
   ) => Promise<void>;
   copyDiagnostics: (item: TranscriptionItemType) => Promise<void>;
   deleteTranscription: (id: number) => Promise<void>;
+  markTodoActioned: (id: number) => Promise<void>;
 };
 
 export default function ControlPanelView(props: Props) {
@@ -125,6 +129,7 @@ export default function ControlPanelView(props: Props) {
     settingsTarget,
     setSettingsTarget,
     history,
+    todos,
     filteredHistory,
     providerOptions,
     isLoading,
@@ -156,6 +161,7 @@ export default function ControlPanelView(props: Props) {
     copyToClipboard,
     copyDiagnostics,
     deleteTranscription,
+    markTodoActioned,
   } = props;
 
   return (
@@ -239,14 +245,6 @@ export default function ControlPanelView(props: Props) {
 
       <div className="p-4">
         <div className="max-w-3xl mx-auto">
-          <TranscriptionsHeader
-            historyLength={history.length}
-            filteredHistoryLength={filteredHistory.length}
-            isFileTranscribing={isFileTranscribing}
-            onOpenFileTranscribeDialog={() => handleFileTranscribeDialogOpenChange(true)}
-            onClearHistory={clearHistory}
-          />
-
           <ControlPanelBanners
             showCloudMigrationBanner={showCloudMigrationBanner}
             onDismissCloudMigration={() => {
@@ -304,26 +302,60 @@ export default function ControlPanelView(props: Props) {
             }}
           />
 
-          <HistoryPanel
-            history={history}
-            filteredHistory={filteredHistory}
-            providerOptions={providerOptions}
-            isLoading={isLoading}
-            hotkey={hotkey}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            modeFilter={modeFilter}
-            setModeFilter={setModeFilter}
-            statusFilter={statusFilter}
-            setStatusFilter={setStatusFilter}
-            providerFilter={providerFilter}
-            setProviderFilter={setProviderFilter}
-            exportTranscriptions={exportTranscriptions}
-            isExporting={isExporting}
-            copyToClipboard={copyToClipboard}
-            copyDiagnostics={copyDiagnostics}
-            deleteTranscription={deleteTranscription}
-          />
+          <Tabs defaultValue="history" className="mt-4">
+            <TabsList aria-label="Dictation views" className="h-9">
+              <TabsTrigger value="history" className="h-7 px-3 text-xs">
+                History
+              </TabsTrigger>
+              <TabsTrigger value="todo" className="h-7 gap-1.5 px-3 text-xs">
+                To Do
+                {todos.length > 0 ? (
+                  <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground">
+                    {todos.length}
+                  </span>
+                ) : null}
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="history">
+              <TranscriptionsHeader
+                historyLength={history.length}
+                filteredHistoryLength={filteredHistory.length}
+                isFileTranscribing={isFileTranscribing}
+                onOpenFileTranscribeDialog={() => handleFileTranscribeDialogOpenChange(true)}
+                onClearHistory={clearHistory}
+              />
+              <HistoryPanel
+                history={history}
+                filteredHistory={filteredHistory}
+                providerOptions={providerOptions}
+                isLoading={isLoading}
+                hotkey={hotkey}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                modeFilter={modeFilter}
+                setModeFilter={setModeFilter}
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+                providerFilter={providerFilter}
+                setProviderFilter={setProviderFilter}
+                exportTranscriptions={exportTranscriptions}
+                isExporting={isExporting}
+                copyToClipboard={copyToClipboard}
+                copyDiagnostics={copyDiagnostics}
+                deleteTranscription={deleteTranscription}
+              />
+            </TabsContent>
+
+            <TabsContent value="todo">
+              <TodoPanel
+                items={todos}
+                isLoading={isLoading}
+                copyToClipboard={copyToClipboard}
+                markActioned={markTodoActioned}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
     </div>

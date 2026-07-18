@@ -3,6 +3,7 @@ const {
   serializeTranscriptionCsv,
 } = require("../utils/transcriptionExport");
 const { requireTrustedRenderer } = require("../trustedRenderer");
+const { MAX_TODO_PAGE_SIZE } = require("../../todoPayload");
 
 function registerTranscriptionDbHandlers(
   { ipcMain, app, BrowserWindow, dialog, fs, path },
@@ -46,6 +47,20 @@ function registerTranscriptionDbHandlers(
   ipcMain.handle("db-get-latest-transcription", async (event) => {
     requireControlPanel(event);
     return databaseManager.getLatestTranscription();
+  });
+
+  ipcMain.handle("db-get-pending-todos", async (event, limit = MAX_TODO_PAGE_SIZE) => {
+    requireControlPanel(event);
+    const safeLimit = Number.isInteger(limit)
+      ? Math.max(1, Math.min(MAX_TODO_PAGE_SIZE, limit))
+      : MAX_TODO_PAGE_SIZE;
+    return databaseManager.getPendingTodos(safeLimit);
+  });
+
+  ipcMain.handle("db-mark-todo-actioned", async (event, id) => {
+    requireControlPanel(event);
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error("Invalid To Do ID");
+    return databaseManager.markTodoActioned(id);
   });
 
   ipcMain.handle("db-clear-transcriptions", async (event) => {

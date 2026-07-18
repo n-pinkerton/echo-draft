@@ -76,6 +76,12 @@ export interface TranscriptionItem {
   created_at: string;
 }
 
+export interface TodoItem {
+  id: number;
+  text: string;
+  created_at: string;
+}
+
 export interface DictionaryImportResult {
   success: boolean;
   canceled?: boolean;

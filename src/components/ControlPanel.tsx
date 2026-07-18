@@ -12,15 +12,18 @@ import {
   removeTranscription as removeFromStore,
   clearTranscriptions as clearStoreTranscriptions,
 } from "../stores/transcriptionStore";
-import type { TranscriptionItem as TranscriptionItemType } from "../types/electron";
+import type { TodoItem, TranscriptionItem as TranscriptionItemType } from "../types/electron";
 import { sanitizeTranscriptionMetaForDiagnostics } from "../utils/transcriptionDiagnostics";
 import { filterHistory, getProviderOptions } from "./controlPanel/historyFilterUtils";
 import ControlPanelView from "./controlPanel/ControlPanelView";
 import { useFileTranscription } from "./controlPanel/useFileTranscription";
 import { useWindowsPushToTalkStatus } from "../hooks/useWindowsPushToTalkStatus";
 
+const TODO_PAGE_SIZE = 100;
+
 export default function ControlPanel() {
   const history = useTranscriptions();
+  const [todos, setTodos] = useState<TodoItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
@@ -89,13 +92,17 @@ export default function ControlPanel() {
     hideAlertDialog,
   } = useDialogs();
 
-  const loadTranscriptions = useCallback(async () => {
+  const loadPanelData = useCallback(async () => {
     try {
       setIsLoading(true);
-      await initializeTranscriptions(250);
+      const [, pendingTodos] = await Promise.all([
+        initializeTranscriptions(250),
+        window.electronAPI.getPendingTodos(TODO_PAGE_SIZE),
+      ]);
+      setTodos(pendingTodos);
     } catch {
       showAlertDialog({
-        title: "Unable to load history",
+        title: "Unable to load dictations",
         description: "Please try again in a moment.",
       });
     } finally {
@@ -104,8 +111,8 @@ export default function ControlPanel() {
   }, [showAlertDialog]);
 
   useEffect(() => {
-    void loadTranscriptions();
-  }, [loadTranscriptions]);
+    void loadPanelData();
+  }, [loadPanelData]);
 
   useEffect(() => {
     if (updateStatus.updateDownloaded && !isDownloading) {
@@ -299,6 +306,32 @@ export default function ControlPanel() {
     });
   };
 
+  const markTodoActioned = async (id: number) => {
+    try {
+      const result = await window.electronAPI.markTodoActioned(id);
+      if (!result?.success) {
+        throw new Error(result?.message || "Could not mark the item as actioned");
+      }
+      try {
+        setTodos(await window.electronAPI.getPendingTodos(TODO_PAGE_SIZE));
+      } catch {
+        setTodos((current) => current.filter((item) => item.id !== id));
+      }
+      toast({
+        title: "Marked as actioned",
+        description: "The mobile memo was removed from To Do.",
+        variant: "success",
+        duration: 2000,
+      });
+    } catch {
+      toast({
+        title: "Could not update To Do",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleUpdateClick = async () => {
     if (updateStatus.updateDownloaded) {
       showConfirmDialog({
@@ -352,6 +385,7 @@ export default function ControlPanel() {
       settingsTarget={settingsTarget}
       setSettingsTarget={setSettingsTarget}
       history={history}
+      todos={todos}
       filteredHistory={filteredHistory}
       providerOptions={providerOptions}
       isLoading={isLoading}
@@ -383,6 +417,7 @@ export default function ControlPanel() {
       copyToClipboard={copyToClipboard}
       copyDiagnostics={copyDiagnostics}
       deleteTranscription={deleteTranscription}
+      markTodoActioned={markTodoActioned}
     />
   );
 }
