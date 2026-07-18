@@ -339,6 +339,8 @@ The private Android companion uses a dedicated cloud-synced folder instead of op
 
 Mobile results appear only in **To Do**. They do not paste automatically, replace the clipboard, or create a second History item. EchoDraft removes an uploaded audio/manifest pair from the sync folder only after the cleaned memo has been saved idempotently to To Do. The Android companion is intended for private sideloading, not app-store distribution.
 
+See [`android/README.md`](android/README.md) for the no-phone build command, later USB installation, folder setup, and widget instructions.
+
 ### Uninstall & Cache Cleanup
 
 - **In-App**: Use _Settings → General → Local Model Storage → Remove Downloaded Models_ to clear `~/.cache/echodraft/whisper-models` (or `%USERPROFILE%\.cache\echodraft\whisper-models` on Windows).
@@ -509,6 +511,8 @@ Important stability notes (to keep Windows in-place upgrades working):
 - `npm run format` - Format code with Prettier
 - `npm run clean` - Clean build artifacts
 - `npm run preview` - Preview production build
+- `npm run android:build` - Test, lint, and build the private Android companion (no phone required)
+- `npm run android:install` - Rebuild and install it on exactly one connected, authorized Android phone
 
 ### Architecture
 

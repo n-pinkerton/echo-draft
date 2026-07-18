@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EchoDraft Memo</string>
+    <string name="app_heading">EchoDraft mobile memo</string>
+    <string name="app_intro">Record now. EchoDraft on your PC will transcribe, clean up, title, and add the memo to To Do.</string>
+    <string name="folder_heading">Shared folder</string>
+    <string name="folder_not_selected">No sync folder selected</string>
+    <string name="choose_folder">Choose sync folder</string>
+    <string name="record">Start recording</string>
+    <string name="stop">Stop recording</string>
+    <string name="retry_uploads">Retry pending uploads</string>
+    <string name="add_widget">Add home-screen widget</string>
+    <string name="pending_count">Pending on phone: %1$d</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_setup">Open the app to finish setup</string>
+    <string name="status_recording">Recording…</string>
+    <string name="status_saving">Saving memo…</string>
+    <string name="widget_title">EchoDraft</string>
+    <string name="widget_record">Record</string>
+    <string name="widget_stop">Stop</string>
+    <string name="widget_open">Set up</string>
+    <string name="notification_channel_name">Mobile memo recording</string>
+    <string name="notification_channel_description">Shows when EchoDraft is recording or publishing a mobile memo.</string>
+    <string name="notification_starting">Starting recording…</string>
+    <string name="notification_recording">Recording mobile memo</string>
+    <string name="notification_saving">Saving mobile memo…</string>
+    <string name="notification_retrying">Retrying pending mobile memos…</string>
+    <string name="notification_stop">Stop</string>
+</resources>

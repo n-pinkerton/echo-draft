@@ -49,6 +49,8 @@
     "clean": "node cleanup.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "android:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android.ps1",
+    "android:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android.ps1 -Install",
     "smoke:windows-hotkey": "node scripts/smoke/windowsTapHotkey.live.cjs",
     "smoke:windows-paste": "node scripts/smoke/runWindowsSecurePaste.live.cjs"
   },

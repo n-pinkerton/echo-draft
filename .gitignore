@@ -268,6 +268,11 @@ $RECYCLE.BIN/
 *.swo
 *~
 
+# Private Android companion build state
+android/.gradle/
+android/local.properties
+android/**/build/
+
 # Claude Code
 .claude/
 .agent/

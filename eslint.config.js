@@ -9,6 +9,7 @@ module.exports = [
       "src/dist/**",
       "*.min.js",
       "build/**",
+      "android/**/build/**",
       "src/**", // src has its own config
     ],
   },

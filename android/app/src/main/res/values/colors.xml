@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="echo_blue">#2563EB</color>
+    <color name="echo_surface">#F8FAFC</color>
+    <color name="echo_text">#0F172A</color>
+    <color name="echo_muted">#475569</color>
+    <color name="echo_recording">#B91C1C</color>
+    <color name="widget_surface">#E6F0FF</color>
+</resources>
