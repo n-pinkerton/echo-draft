@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { normalizeCleanupTitle } = require("../config/cleanupOutputContract.cjs");
 
 const MAX_TODO_TEXT_LENGTH = 20_000;
 const MAX_TODO_META_BYTES = 256_000;
@@ -47,7 +48,16 @@ function normalizeTodoPayload(payload) {
     throw new Error("Invalid To Do metadata");
   }
 
-  const metaJson = payload.meta ? JSON.stringify(payload.meta) : "{}";
+  const titleProvided = payload.title !== undefined && payload.title !== null;
+  const title = normalizeCleanupTitle(payload.title);
+  if (titleProvided && !title) {
+    throw new Error("Invalid To Do title");
+  }
+
+  const metadata = payload.meta ? { ...payload.meta } : {};
+  delete metadata.title;
+  if (title) metadata.title = title;
+  const metaJson = JSON.stringify(metadata);
   if (Buffer.byteLength(metaJson, "utf8") > MAX_TODO_META_BYTES) {
     throw new Error("To Do metadata is too large");
   }
@@ -63,7 +73,7 @@ function normalizeTodoPayload(payload) {
     )
     .digest("hex");
 
-  return { externalId: externalId.toLowerCase(), text, rawText, metaJson, payloadHash };
+  return { externalId: externalId.toLowerCase(), text, rawText, title, metaJson, payloadHash };
 }
 
 module.exports = {
@@ -72,5 +82,6 @@ module.exports = {
   MAX_TODO_TEXT_LENGTH,
   UUID_PATTERN,
   canonicalizeJsonValue,
+  normalizeCleanupTitle,
   normalizeTodoPayload,
 };

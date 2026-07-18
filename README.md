@@ -327,7 +327,8 @@ You can press the hotkey again and record another dictation while earlier audio 
 
 - **Access**: Click the tray icon, then choose **Open Control Panel**
 - **Configure**: Choose between local and cloud processing
-- **History**: View, copy, and delete past transcriptions
+- **History**: View, search, copy, and delete past transcriptions. When cleanup returns the complete title contract, EchoDraft shows the generated title and includes it in search.
+- **To Do**: Review pending mobile memos, search their generated titles or text, copy them, and mark them as actioned.
 - **Models**: Download and manage local Whisper models
 - **Storage Cleanup**: Remove downloaded Whisper models from cache to reclaim space
 - **Settings**: Configure API keys, customize hotkeys, select or test the microphone, preview or adjust dictation sounds, and manage permissions. If a selected microphone disconnects, EchoDraft shows the fallback and temporarily uses the system default.
@@ -351,6 +352,8 @@ EchoDraft uses a fixed, model-specific cleanup policy built in the trusted main 
 - Keeps questions, requests, caveats, examples, names, numbers, qualifiers, uncertainty, and polarity
 - Preserves model identifiers and file, folder, path, directory, and agent-related tokens instead of guessing a cleaner spelling
 - Adds quotation marks to explicit speech, not around an entire request merely because it reads like a message
+- Requests one JSON object containing a concise content-derived `title` and the complete cleaned `text`. EchoDraft only persists the title when that exact contract succeeds.
+- Keeps usable cleaned text when the title envelope is missing or malformed; contract failure alone never causes fallback to the raw dictation.
 - Gives rejected OpenAI BYOK output one model-guided repair on the selected model and effort, using the original transcript, rejected draft, and safety reasons while rechecking the result for fidelity
 - Retries suspicious output conservatively and keeps the original wording if preservation cannot be verified; an independently verified dictionary-backed person-name spelling may still be retained
 

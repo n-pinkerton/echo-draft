@@ -245,7 +245,9 @@ describe("AudioManager.stopStreamingRecording", () => {
     vi.useFakeTimers();
 
     const processTextMock = ReasoningService.processText as unknown as ReturnType<typeof vi.fn>;
-    processTextMock.mockResolvedValueOnce("Hello, world.");
+    processTextMock.mockResolvedValueOnce(
+      JSON.stringify({ title: "Friendly greeting", text: "Hello, world." })
+    );
 
     (window as any).electronAPI = {
       assemblyAiStreamingSend: vi.fn(),
@@ -296,6 +298,7 @@ describe("AudioManager.stopStreamingRecording", () => {
     const payload = onTranscriptionComplete.mock.calls[0][0];
     expect(payload.text).toBe("Hello, world.");
     expect(payload.rawText).toBe("hello world");
+    expect(payload.title).toBe("Friendly greeting");
 
     manager.cleanup();
   });

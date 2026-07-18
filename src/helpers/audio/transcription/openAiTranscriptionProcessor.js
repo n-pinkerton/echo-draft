@@ -1203,6 +1203,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     let cleanedText = finalRawText;
     let source = activeResult.source || "openai";
     let cleanup = null;
+    let title = null;
 
     if (transcriber.shouldApplyReasoningCleanup?.()) {
       throwIfTranscriptionCancelled(externalSignal);
@@ -1225,6 +1226,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           );
         cleanedText = cleanupResult.text;
         cleanup = cleanupResult.cleanup;
+        title = cleanupResult.title || null;
       } else {
         cleanedText = await transcriber.reasoningCleanupService.processTranscription(
           finalRawText,
@@ -1252,6 +1254,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       rawText: finalRawText,
       source,
       timings,
+      ...(title ? { title } : {}),
       ...(suspectedIncomplete ? { suspectedIncomplete: true } : {}),
       ...(cleanup ? { cleanup } : {}),
     };
@@ -1309,6 +1312,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
                       ? "local-fallback-reasoned"
                       : "local-fallback",
                   timings,
+                  ...(cleanupResult.title ? { title: cleanupResult.title } : {}),
                   cleanup: cleanupResult.cleanup,
                 };
               }

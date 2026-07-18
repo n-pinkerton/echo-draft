@@ -6,6 +6,7 @@ import { getReasoningModelLabel } from "../../models/ModelRegistry";
 import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 import { sanitizeOpaqueRequestId } from "../../utils/diagnosticSanitizers";
 import { cn } from "../lib/utils";
+import { normalizeCleanupTitle } from "../../config/cleanupOutputContract.cjs";
 
 interface TranscriptionItemProps {
   item: TranscriptionItemType;
@@ -137,6 +138,7 @@ export default function TranscriptionItem({
   const status = meta.status || "success";
   const provider = meta.provider || meta.source || "unknown";
   const model = meta.model || "";
+  const title = normalizeCleanupTitle(meta.title);
   const cleanup = meta.cleanup ?? null;
   const cleanupFallback = cleanup?.status === "fallback";
   const preferredSpellingApplied = cleanupAppliedPreferredSpelling(cleanup);
@@ -360,6 +362,12 @@ export default function TranscriptionItem({
               </span>
             ) : null}
           </div>
+
+          {title ? (
+            <h3 className="mt-1.5 text-[13px] font-semibold leading-snug text-foreground">
+              {title}
+            </h3>
+          ) : null}
 
           <p
             className={cn(

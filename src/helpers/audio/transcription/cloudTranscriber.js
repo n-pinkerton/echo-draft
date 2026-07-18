@@ -89,6 +89,7 @@ export class CloudTranscriber {
       override !== null ? override : localStorage.getItem("useReasoningModel") === "true";
     let source = ECHO_DRAFT_CLOUD_SOURCE;
     let cleanup = null;
+    let title = null;
 
     if (useReasoningModel && processedText) {
       this.emitProgress?.({
@@ -142,6 +143,7 @@ export class CloudTranscriber {
             reasonResult.text
           );
           processedText = validated.text;
+          title = validated.title || null;
           cleanup = {
             requested: true,
             attempted: true,
@@ -167,6 +169,7 @@ export class CloudTranscriber {
             );
             processedText = result.text || rawText;
             cleanup = result.cleanup;
+            title = result.title || null;
           } else if (reasoningModel) {
             const result =
               typeof this.reasoningCleanupService?.processWithReasoningModelResult === "function"
@@ -190,6 +193,7 @@ export class CloudTranscriber {
               throw new Error("BYOK reasoning returned an empty cleanup response.");
             }
             processedText = result.text;
+            title = result.title || null;
             const retryDriftRecovered = result.retryDriftRecovered === true;
             const unchanged = processedText === rawText;
             const preferredSpellingApplied =
@@ -232,6 +236,7 @@ export class CloudTranscriber {
           throw createTranscriptionCancelledError();
         }
         processedText = rawText;
+        title = null;
         const managedCleanup = cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE;
         cleanup = {
           requested: true,
@@ -275,6 +280,7 @@ export class CloudTranscriber {
       limitReached: result.limitReached,
       wordsUsed: result.wordsUsed,
       wordsRemaining: result.wordsRemaining,
+      ...(title ? { title } : {}),
       ...(cleanup ? { cleanup } : {}),
     };
   }

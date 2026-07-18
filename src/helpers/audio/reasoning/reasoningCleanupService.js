@@ -15,6 +15,7 @@ import {
   isTranscriptionCancelled,
   throwIfTranscriptionCancelled,
 } from "../pipeline/cancellation";
+import { parseCleanupOutput } from "../../../config/cleanupOutputContract.cjs";
 
 const buildFidelityRepairPacket = (originalTranscript, rejectedCleanup, rejectionReasons) =>
   JSON.stringify({
@@ -24,6 +25,29 @@ const buildFidelityRepairPacket = (originalTranscript, rejectedCleanup, rejectio
       ? rejectionReasons.filter((reason) => typeof reason === "string")
       : [],
   });
+
+const prepareParsedCleanupText = (
+  originalText,
+  output,
+  preferredSpellings,
+  fidelityOptions = {}
+) => {
+  const prepare = (value) =>
+    applyTrustedPreferredSpellingAliases(
+      originalText,
+      sanitizeProcessedText(value),
+      preferredSpellings
+    );
+  const cleanedText = prepare(output.text);
+  if (output.formatRecovery?.kind !== "labelled") return cleanedText;
+
+  const metrics = assessCleanupFidelity(originalText, cleanedText, fidelityOptions).metrics;
+  const bodyRetainsSource =
+    metrics.missingContentWordCount === 0 &&
+    metrics.semanticMissingContentWordCount === 0 &&
+    metrics.missingCriticalTokenCount === 0;
+  return bodyRetainsSource ? cleanedText : prepare(output.formatRecovery.originalOutput);
+};
 
 /**
  * Shared cleanup/orchestration around `ReasoningService` for transcript post-processing.
@@ -162,7 +186,7 @@ export class ReasoningCleanupService {
    * @param {string} model
    * @param {string|null} agentName
    * @param {{signal?: AbortSignal}} runtime
-   * @returns {Promise<{text: string, assessment: any, retryCount: number, appliedModel: string|null, retryDriftRecovered?: boolean, retryDriftEditType?: "substitution"|"insertion"|"deletion", initialFidelityReasons?: string[], retryFidelityReasons?: string[]}>}
+   * @returns {Promise<{text: string, title?: string, assessment: any, retryCount: number, appliedModel: string|null, retryDriftRecovered?: boolean, retryDriftEditType?: "substitution"|"insertion"|"deletion", initialFidelityReasons?: string[], retryFidelityReasons?: string[]}>}
    */
   async processWithReasoningModelResult(text, model, _agentName, runtime = {}) {
     this.logger?.logReasoning?.("CALLING_REASONING_SERVICE", {
@@ -209,16 +233,19 @@ export class ReasoningCleanupService {
     try {
       throwIfTranscriptionCancelled(signal);
       const preferredSpellings = fidelityOptions.preferredSpellings;
-      const firstResult = applyTrustedPreferredSpellingAliases(
+      const firstOutput = parseCleanupOutput(
+        await this.reasoningService.processText(modelInputText, model, null, {
+          cleanupPromptMode: "preservation-first",
+          reasoningEffort,
+          ...(signal ? { signal } : {}),
+        }),
+        modelInputText
+      );
+      const firstResult = prepareParsedCleanupText(
         modelInputText,
-        sanitizeProcessedText(
-          await this.reasoningService.processText(modelInputText, model, null, {
-            cleanupPromptMode: "preservation-first",
-            reasoningEffort,
-            ...(signal ? { signal } : {}),
-          })
-        ),
-        preferredSpellings
+        firstOutput,
+        preferredSpellings,
+        fidelityOptions
       );
       throwIfTranscriptionCancelled(signal);
       // The recognizer transcript remains the trust baseline apart from an
@@ -242,6 +269,7 @@ export class ReasoningCleanupService {
           assessment: firstAssessment,
           retryCount: 0,
           appliedModel: model,
+          ...(firstOutput.title ? { title: firstOutput.title } : {}),
         };
       }
 
@@ -264,16 +292,19 @@ export class ReasoningCleanupService {
         firstResult,
         firstAssessment.reasons
       );
-      const retryResult = applyTrustedPreferredSpellingAliases(
+      const retryOutput = parseCleanupOutput(
+        await this.reasoningService.processText(retryPacket, retryModel, null, {
+          cleanupPromptMode: "fidelity-repair",
+          reasoningEffort: retryReasoningEffort,
+          ...(signal ? { signal } : {}),
+        }),
+        trustedBaselineText
+      );
+      const retryResult = prepareParsedCleanupText(
         trustedBaselineText,
-        sanitizeProcessedText(
-          await this.reasoningService.processText(retryPacket, retryModel, null, {
-            cleanupPromptMode: "fidelity-repair",
-            reasoningEffort: retryReasoningEffort,
-            ...(signal ? { signal } : {}),
-          })
-        ),
-        preferredSpellings
+        retryOutput,
+        preferredSpellings,
+        fidelityOptions
       );
       throwIfTranscriptionCancelled(signal);
       const retryAssessment = {
@@ -312,6 +343,7 @@ export class ReasoningCleanupService {
         assessment: retryAssessment,
         retryCount: 1,
         appliedModel: retryModel,
+        ...(retryOutput.title ? { title: retryOutput.title } : {}),
         initialFidelityReasons: firstAssessment.reasons,
         retryFidelityReasons: retryAssessment.reasons,
       };
@@ -340,7 +372,8 @@ export class ReasoningCleanupService {
   }
 
   validateCleanupCandidate(originalText, candidateText) {
-    const text = sanitizeProcessedText(candidateText);
+    const output = parseCleanupOutput(candidateText, originalText);
+    const text = prepareParsedCleanupText(originalText, output);
     // Managed cleanup uses the same objective usability boundary as local
     // cleanup. Broad linguistic diagnostics must never discard fluent model
     // output merely because it was rewritten or punctuated differently.
@@ -348,7 +381,7 @@ export class ReasoningCleanupService {
     if (!assessment.accepted) {
       throw new CleanupFidelityError(assessment);
     }
-    return { text, assessment };
+    return { text, assessment, ...(output.title ? { title: output.title } : {}) };
   }
 
   /**
@@ -464,6 +497,7 @@ export class ReasoningCleanupService {
         !unchanged;
       return {
         text: result.text,
+        ...(result.title ? { title: result.title } : {}),
         cleanup: {
           ...baseOutcome,
           attempted: true,

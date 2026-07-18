@@ -33,6 +33,7 @@ try {
 
   const firstPayload = {
     externalId: externalIdFor(1),
+    title: "Test mobile memo title",
     text: "Test mobile memo 1",
     rawText: "test mobile memo 1",
     meta: {
@@ -43,6 +44,7 @@ try {
   const first = manager.saveTodo(firstPayload);
   assert.equal(first.created, true);
   assert.equal(first.todo.payload_hash, undefined);
+  assert.equal(first.todo.meta.title, "Test mobile memo title");
 
   const reorderedRetry = manager.saveTodo({
     ...firstPayload,
@@ -77,7 +79,7 @@ try {
 
   const firstPage = manager.getPendingTodos(100);
   assert.equal(firstPage.length, 100);
-  assert.deepEqual(Object.keys(firstPage[0]).sort(), ["created_at", "id", "text"]);
+  assert.deepEqual(Object.keys(firstPage[0]).sort(), ["created_at", "id", "text", "title"]);
   assert.equal(
     firstPage.some((item) => item.id === first.id),
     false
@@ -92,6 +94,10 @@ try {
     backfilledPage.some((item) => item.id === first.id),
     true
   );
+  assert.equal(
+    backfilledPage.find((item) => item.id === first.id)?.title,
+    "Test mobile memo title"
+  );
 
   const history = manager.saveTranscription({ text: "History still works" });
   assert.equal(history.success, true);
@@ -100,7 +106,12 @@ try {
   manager.db.close();
   manager = null;
   reopened = new DatabaseManager();
-  assert.equal(reopened.getPendingTodos(100).length, 100);
+  const reopenedTodos = reopened.getPendingTodos(100);
+  assert.equal(reopenedTodos.length, 100);
+  assert.equal(
+    reopenedTodos.find((item) => item.id === first.id)?.title,
+    "Test mobile memo title"
+  );
   assert.equal(reopened.markTodoActioned(newest.id).alreadyActioned, true);
   assert.equal(reopened.getTranscriptions(10).length, 1);
 

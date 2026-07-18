@@ -3,7 +3,11 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { app } = require("electron");
-const { MAX_TODO_PAGE_SIZE, normalizeTodoPayload } = require("./todoPayload");
+const {
+  MAX_TODO_PAGE_SIZE,
+  normalizeCleanupTitle,
+  normalizeTodoPayload,
+} = require("./todoPayload");
 
 class DatabaseManager {
   constructor() {
@@ -314,10 +318,21 @@ class DatabaseManager {
       }
       const rows = this.db
         .prepare(
-          "SELECT id, text, created_at FROM todo_items WHERE status = 'pending' ORDER BY created_at DESC, id DESC LIMIT ?"
+          "SELECT id, text, meta_json, created_at FROM todo_items WHERE status = 'pending' ORDER BY created_at DESC, id DESC LIMIT ?"
         )
         .all(limit);
-      return rows;
+      return rows.map((row) => {
+        let metadata = {};
+        try {
+          metadata = JSON.parse(row.meta_json || "{}");
+        } catch {}
+        return {
+          id: row.id,
+          text: row.text,
+          title: normalizeCleanupTitle(metadata?.title),
+          created_at: row.created_at,
+        };
+      });
     } catch (error) {
       console.error("Error getting To Do items:", error.message);
       throw error;

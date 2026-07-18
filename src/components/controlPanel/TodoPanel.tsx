@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Check, ClipboardCheck, Copy, Loader2, Smartphone } from "lucide-react";
 
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import type { TodoItem } from "../../types/electron";
 
 type Props = {
@@ -25,6 +26,12 @@ function formatCreatedAt(value: string) {
 
 export default function TodoPanel({ items, isLoading, copyToClipboard, markActioned }: Props) {
   const [actioningId, setActioningId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const visibleItems = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) => `${item.title || ""} ${item.text}`.toLowerCase().includes(query));
+  }, [items, searchQuery]);
 
   const handleActioned = async (id: number) => {
     if (actioningId !== null) return;
@@ -42,6 +49,14 @@ export default function TodoPanel({ items, isLoading, copyToClipboard, markActio
         <p className="text-[11px] text-muted-foreground">
           Copy a mobile memo, then mark it as actioned when the follow-up is complete.
         </p>
+        <Input
+          data-testid="todo-search"
+          aria-label="Search mobile To Do dictations"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="Search mobile dictations…"
+          className="mt-2 h-8 text-xs"
+        />
       </div>
 
       {isLoading ? (
@@ -63,9 +78,21 @@ export default function TodoPanel({ items, isLoading, copyToClipboard, markActio
             Mobile dictations will appear here after EchoDraft processes them.
           </p>
         </div>
+      ) : visibleItems.length === 0 ? (
+        <div className="flex flex-col items-center justify-center px-4 py-10 text-center">
+          <p className="text-sm text-muted-foreground">No matching mobile dictations.</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-2 h-7 px-2 text-[11px]"
+            onClick={() => setSearchQuery("")}
+          >
+            Clear search
+          </Button>
+        </div>
       ) : (
         <div className="max-h-[calc(100vh-320px)] min-h-[120px] divide-y divide-border/50 overflow-y-auto">
-          {items.map((item, index) => {
+          {visibleItems.map((item, index) => {
             const itemNumber = index + 1;
             return (
               <article
@@ -82,6 +109,12 @@ export default function TodoPanel({ items, isLoading, copyToClipboard, markActio
                     Mobile
                   </span>
                 </div>
+
+                {item.title ? (
+                  <h3 className="mt-1.5 text-[13px] font-semibold leading-snug text-foreground">
+                    {item.title}
+                  </h3>
+                ) : null}
 
                 <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-[1.5] text-foreground">
                   {item.text}

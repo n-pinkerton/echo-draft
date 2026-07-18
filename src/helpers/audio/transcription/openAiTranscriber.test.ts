@@ -394,7 +394,11 @@ describe("OpenAiTranscriber", () => {
       metrics: { retryDriftRecovered: true },
     };
     const reasoningCleanupService = {
-      processTranscriptionWithOutcome: vi.fn(async () => ({ text: "hello", cleanup })),
+      processTranscriptionWithOutcome: vi.fn(async () => ({
+        text: "hello",
+        title: "Greeting note",
+        cleanup,
+      })),
     };
     const transcriber = new OpenAiTranscriber({
       logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
@@ -413,6 +417,7 @@ describe("OpenAiTranscriber", () => {
       success: true,
       text: "hello",
       rawText: "hello",
+      title: "Greeting note",
       source: "openai",
       cleanup,
     });

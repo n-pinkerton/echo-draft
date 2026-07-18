@@ -8,7 +8,13 @@ describe("historyFilterUtils", () => {
       id: 1,
       text: "Hello world",
       raw_text: "Hello world",
-      meta: { provider: "openai", model: "gpt-4o-mini", outputMode: "insert", status: "success" },
+      meta: {
+        title: "Quarterly planning note",
+        provider: "openai",
+        model: "gpt-4o-mini",
+        outputMode: "insert",
+        status: "success",
+      },
     },
     {
       id: 2,
@@ -32,6 +38,15 @@ describe("historyFilterUtils", () => {
     expect(
       filterHistory(history as any, {
         searchQuery: "hello",
+        modeFilter: "all",
+        statusFilter: "all",
+        providerFilter: "all",
+      }).map((x: any) => x.id)
+    ).toEqual([1]);
+
+    expect(
+      filterHistory(history as any, {
+        searchQuery: "quarterly planning",
         modeFilter: "all",
         statusFilter: "all",
         providerFilter: "all",

@@ -39,6 +39,7 @@ export interface TranscriptionMeta {
   source?: string;
   provider?: string;
   model?: string;
+  title?: string;
   pasteSucceeded?: boolean;
   clipboardSucceeded?: boolean;
   delivery?: {
@@ -80,6 +81,7 @@ export interface TodoItem {
   id: number;
   text: string;
   created_at: string;
+  title?: string | null;
 }
 
 export interface DictionaryImportResult {

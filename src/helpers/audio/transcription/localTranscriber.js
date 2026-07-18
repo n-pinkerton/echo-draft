@@ -131,6 +131,7 @@ export class LocalTranscriber {
         );
         let cleanedText = rawText;
         let cleanup = null;
+        let title = null;
 
         if (this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
@@ -138,6 +139,7 @@ export class LocalTranscriber {
           const cleanupResult = await this.applyReasoningCleanup(rawText, "local", runtime);
           cleanedText = cleanupResult.text;
           cleanup = cleanupResult.cleanup;
+          title = cleanupResult.title || null;
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
         }
 
@@ -147,6 +149,7 @@ export class LocalTranscriber {
           rawText,
           source: "local",
           timings,
+          ...(title ? { title } : {}),
           ...(cleanup ? { cleanup } : {}),
         };
       }
@@ -221,6 +224,7 @@ export class LocalTranscriber {
         const rawText = result.text;
         let cleanedText = rawText;
         let cleanup = null;
+        let title = null;
 
         if (this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
@@ -232,6 +236,7 @@ export class LocalTranscriber {
           );
           cleanedText = cleanupResult.text;
           cleanup = cleanupResult.cleanup;
+          title = cleanupResult.title || null;
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
         }
 
@@ -241,6 +246,7 @@ export class LocalTranscriber {
           rawText,
           source: "local-parakeet",
           timings,
+          ...(title ? { title } : {}),
           ...(cleanup ? { cleanup } : {}),
         };
       }

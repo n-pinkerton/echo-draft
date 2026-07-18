@@ -295,6 +295,42 @@ describe("LocalTranscriber", () => {
     expect(result.timings?.reasoningProcessingDurationMs).toEqual(expect.any(Number));
   });
 
+  it("propagates a cleanup title from local transcription", async () => {
+    (window as any).electronAPI.transcribeLocalWhisper.mockResolvedValue({
+      success: true,
+      text: "Raw text",
+    });
+
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => true,
+      getCleanupEnabledOverride: () => null,
+      reasoningCleanupService: {
+        processTranscriptionWithOutcome: vi.fn(async () => ({
+          text: "Cleaned text",
+          title: "Local cleanup title",
+          cleanup: { status: "applied" },
+        })),
+      },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+
+    const result = await transcriber.processWithLocalWhisper(
+      {
+        type: "audio/webm",
+        arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
+      } as any,
+      "base",
+      {}
+    );
+
+    expect(result).toMatchObject({
+      text: "Cleaned text",
+      rawText: "Raw text",
+      title: "Local cleanup title",
+    });
+  });
+
   it("propagates cancellation during local-transcription cleanup", async () => {
     (window as any).electronAPI.transcribeLocalWhisper.mockResolvedValue({
       success: true,

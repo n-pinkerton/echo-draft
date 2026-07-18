@@ -1,5 +1,6 @@
 import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
 import { normalizeEchoDraftSource } from "../../utils/branding";
+import { normalizeCleanupTitle } from "../../config/cleanupOutputContract.cjs";
 
 export type ModeFilter = "all" | "insert" | "clipboard" | "file";
 export type StatusFilter = "all" | "success" | "delivery_issue" | "error" | "cancelled";
@@ -38,7 +39,8 @@ export function filterHistory(
     const model = String(normalizeEchoDraftSource(meta.model || "")).toLowerCase();
     const outputMode = String(meta.outputMode || "insert").toLowerCase();
     const status = String(meta.status || "success").toLowerCase();
-    const haystack = [item.text || "", item.raw_text || "", provider, model, status, outputMode]
+    const title = normalizeCleanupTitle(meta.title) || "";
+    const haystack = [title, item.text || "", item.raw_text || "", provider, model, status, outputMode]
       .join(" ")
       .toLowerCase();
 

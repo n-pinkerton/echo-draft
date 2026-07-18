@@ -25,6 +25,157 @@ describe("ReasoningCleanupService", () => {
     });
   });
 
+  it("extracts a managed cleanup title before running the fidelity gate", () => {
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService: { isAvailable: vi.fn(), processText: vi.fn() },
+    });
+
+    expect(
+      svc.validateCleanupCandidate(
+        "follow up with Sam tomorrow",
+        JSON.stringify({
+          title: "Follow up with Sam",
+          text: "Follow up with Sam tomorrow.",
+        })
+      )
+    ).toMatchObject({
+      title: "Follow up with Sam",
+      text: "Follow up with Sam tomorrow.",
+      assessment: { accepted: true },
+    });
+  });
+
+  it("keeps accepted cleaned text when the title contract is absent", async () => {
+    const cleaned = "Please follow up tomorrow.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => cleaned),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const result = await svc.processTranscriptionWithOutcome(
+      "please follow up tomorrow",
+      "openai",
+      null
+    );
+
+    expect(result).toMatchObject({
+      text: cleaned,
+      cleanup: { status: "applied", fallbackReason: null },
+    });
+    expect(result).not.toHaveProperty("title");
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves literal Title and Text labels when plain cleanup output has no contract", async () => {
+    const cleaned = "Title: Quarterly note\nText: Keep every detail.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => cleaned),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome(cleaned, "openai", null)
+    ).resolves.toMatchObject({
+      text: cleaned,
+      cleanup: { status: "unchanged", fallbackReason: null },
+    });
+  });
+
+  it("keeps a cleaned labelled body when only the output added contract-like labels", async () => {
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => "Title: Quarterly note\nText: Keep every detail."),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const result = await svc.processTranscriptionWithOutcome(
+      "Keep every detail.",
+      "openai",
+      null
+    );
+
+    expect(result).toMatchObject({
+      text: "Keep every detail.",
+      cleanup: { status: "unchanged", fallbackReason: null },
+    });
+    expect(result).not.toHaveProperty("title");
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not strip genuinely dictated inline labels after the model formats them", async () => {
+    const original = "title release note text keep every detail";
+    const formatted = "Title: Release note\nText: Keep every detail.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => formatted),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    const result = await svc.processTranscriptionWithOutcome(original, "openai", null);
+
+    expect(result.text).toBe(formatted);
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a title with an accepted structured cleanup", async () => {
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () =>
+        JSON.stringify({
+          title: "Follow up with Sam",
+          text: "Please follow up with Sam tomorrow.",
+        })
+      ),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    localStorage.setItem("reasoningModel", "gpt-5.6-luna");
+    localStorage.setItem("reasoningProvider", "openai");
+    localStorage.setItem("useReasoningModel", "true");
+
+    await expect(
+      svc.processTranscriptionWithOutcome("please follow up with Sam tomorrow", "openai", null)
+    ).resolves.toMatchObject({
+      title: "Follow up with Sam",
+      text: "Please follow up with Sam tomorrow.",
+      cleanup: { status: "applied", fallbackReason: null },
+    });
+  });
+
   it.each([
     ["Could we release tomorrow", "We could release tomorrow."],
     ["Do not publish.", "Never publish and never archive."],

@@ -181,6 +181,7 @@ describe("createTranscriptionCompleteHandler", () => {
       success: true,
       text: "hello world",
       rawText: "hello world",
+      title: "Greeting follow-up",
       source: "openai",
       timings: {},
       context: { sessionId: "s-1", jobId: 1, outputMode: "clipboard" },
@@ -203,6 +204,7 @@ describe("createTranscriptionCompleteHandler", () => {
       status: "success",
       provider: "openai",
       model: "gpt-4o-mini",
+      title: "Greeting follow-up",
       textMetrics: {
         rawWords: 2,
         cleanedWords: 2,

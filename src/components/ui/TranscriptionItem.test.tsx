@@ -13,6 +13,23 @@ const makeItem = (rawText: string | null | undefined, meta: Record<string, unkno
 });
 
 describe("TranscriptionItem", () => {
+  it("labels a cleaned dictation with its generated title", () => {
+    render(
+      <TranscriptionItem
+        item={makeItem("Original raw text", { title: "Quarterly planning note" }) as any}
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "Quarterly planning note" })).toBeInTheDocument();
+    expect(screen.getByText("Finished text")).toBeInTheDocument();
+  });
+
   it.each([null, undefined, "   "])(
     "never substitutes finished text for an unavailable raw transcript (%s)",
     (rawText) => {

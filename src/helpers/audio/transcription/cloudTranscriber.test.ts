@@ -107,6 +107,7 @@ describe("CloudTranscriber", () => {
         processWithReasoningModel: vi.fn(),
         validateCleanupCandidate: (_raw: string, text: string) => ({
           text,
+          title: "Managed cleanup title",
           assessment: { metrics: {} },
         }),
       },
@@ -126,6 +127,7 @@ describe("CloudTranscriber", () => {
       expect.any(String)
     );
     expect(result.text).toBe("clean");
+    expect(result.title).toBe("Managed cleanup title");
     expect(result.rawText).toBe("raw");
     expect(result.source).toBe(ECHO_DRAFT_REASONED_SOURCE);
     expect(result.cleanup).toMatchObject({

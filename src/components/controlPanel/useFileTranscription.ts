@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 
 import AudioManager from "../../helpers/audioManager";
 import logger from "../../utils/logger";
+import { normalizeCleanupTitle } from "../../config/cleanupOutputContract.cjs";
 import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 
 type ToastFn = (args: {
@@ -248,6 +249,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
 
           const provider = providerRef.current || result.source || null;
           const model = modelRef.current || null;
+          const dictationTitle = normalizeCleanupTitle(result.title);
           const totalDurationMs = Math.max(0, Date.now() - startedAt);
 
           const saveResult = await window.electronAPI.saveTranscription({
@@ -260,6 +262,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
               source: result.source,
               provider,
               model,
+              ...(dictationTitle ? { title: dictationTitle } : {}),
               cleanupEnabled: fileCleanupEnabled,
               ...(result.cleanup ? { cleanup: result.cleanup } : {}),
               file: context.file,

@@ -3,6 +3,7 @@ import { ECHO_DRAFT_CLOUD_SOURCE, normalizeEchoDraftSource } from "../../utils/b
 import { throwIfTranscriptionCancelled } from "../../helpers/audio/pipeline/cancellation";
 import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 import { countWords } from "./textMetrics";
+import { normalizeCleanupTitle } from "../../config/cleanupOutputContract.cjs";
 
 const CLIPBOARD_PROTECTION_FAILURE_CODES = new Set([
   "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
@@ -520,6 +521,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       };
       const provider = job?.provider || result.source || "";
       const model = job?.model || "";
+      const dictationTitle = normalizeCleanupTitle(result.title);
       const deliverySucceeded = [
         "inserted",
         "inserted_clipboard_warning",
@@ -543,6 +545,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
           source: result.source,
           provider,
           model,
+          ...(dictationTitle ? { title: dictationTitle } : {}),
           pasteSucceeded,
           clipboardSucceeded,
           delivery: {

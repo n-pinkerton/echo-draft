@@ -237,6 +237,9 @@ Environment variables persisted to `.env` (via `saveAllKeysToEnvFile()`):
 - Cleanup policy text is fixed, versioned, and constructed in the trusted Electron main process
 - The renderer sends only a canonical JSON-string transcript wrapper plus allowlisted mode and language metadata
 - ReasoningService treats every dictated question or request as untrusted content to edit, never an instruction to follow
+- Cleanup prompts request the canonical output envelope `{ "title": string, "text": string }`. The shared parser accepts a title only from that exact two-field contract, while preserving usable cleaned text from plain or malformed output.
+- Generated titles are optional metadata owned by `meta.title`; History and To Do render and search them, but copy and insertion use only the cleaned `text` body.
+- The envelope remains prompt-based across provider adapters for compatibility with custom, managed, and local endpoints. Provider-native schema controls are intentionally capability work, not an assumption at the shared cleanup boundary.
 - The cleanup service applies preservation checks, retries once on the selected model and effort when needed, token-locks that retry, restores source punctuation/separators, and falls back to the original transcript when fidelity cannot be verified
 - Supports multiple AI providers (all models defined in `src/models/modelRegistryData.json`):
   - **OpenAI** (Responses API):

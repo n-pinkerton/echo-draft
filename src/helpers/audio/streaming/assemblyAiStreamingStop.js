@@ -294,6 +294,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
 
   const rawText = finalText;
   let cleanup = null;
+  let title = null;
 
   const useReasoningModel = localStorage.getItem("useReasoningModel") === "true";
   if (useReasoningModel && finalText) {
@@ -347,6 +348,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
           reasonResult.text
         );
         finalText = validated.text;
+        title = validated.title || null;
         cleanup = {
           requested: true,
           attempted: true,
@@ -384,6 +386,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
           );
           finalText = result.text || rawText;
           cleanup = result.cleanup;
+          title = result.title || null;
         } else if (reasoningModel) {
           const result =
             typeof manager.reasoningCleanupService?.processWithReasoningModelResult === "function"
@@ -407,6 +410,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
             throw new Error("BYOK reasoning returned an empty cleanup response.");
           }
           finalText = result.text;
+          title = result.title || null;
           cleanup = {
             requested: true,
             attempted: true,
@@ -441,6 +445,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
         throw createTranscriptionCancelledError();
       }
       finalText = rawText;
+      title = null;
       const managedCleanup = isEchoDraftCloudMode(cloudReasoningMode);
       cleanup = {
         requested: true,
@@ -495,6 +500,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
           source: "assemblyai-streaming",
           timings,
           context: manager.streamingContext,
+          ...(title ? { title } : {}),
           ...(cleanup ? { cleanup } : {}),
         },
         { signal }
