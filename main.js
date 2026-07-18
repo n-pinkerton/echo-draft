@@ -104,6 +104,7 @@ let trayManager = null;
 let updateManager = null;
 let globeKeyManager = null;
 let windowsKeyManager = null;
+let mobileInboxManager = null;
 let authBridgeServer = null;
 let windowsHotkeyController = null;
 let disposeWindowsHotkeyRecovery = null;
@@ -159,6 +160,7 @@ async function startApp() {
   updateManager = managers.updateManager;
   globeKeyManager = managers.globeKeyManager;
   windowsKeyManager = managers.windowsKeyManager;
+  mobileInboxManager = managers.mobileInboxManager;
   if (!authBridgeServer) {
     const devAppUrl = DevServerManager.getAppUrl(true);
     const expectedOrigin = devAppUrl ? new URL(devAppUrl).origin : null;
@@ -255,6 +257,7 @@ async function startApp() {
 
   // Create main window
   await windowManager.createMainWindow();
+  mobileInboxManager.start();
   controlPanelShortcutRegistration = registerControlPanelShortcut(
     { globalShortcut },
     {
@@ -426,6 +429,7 @@ if (gotSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    mobileInboxManager?.stop?.();
     controlPanelShortcutRegistration?.dispose?.();
     controlPanelShortcutRegistration = null;
     disposeWindowsHotkeyRecovery?.();

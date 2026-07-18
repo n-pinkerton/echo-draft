@@ -1,15 +1,19 @@
 import { useMemo, useState } from "react";
-import { Check, ClipboardCheck, Copy, Loader2, Smartphone } from "lucide-react";
+import { Check, ClipboardCheck, Copy, FolderOpen, Loader2, Smartphone } from "lucide-react";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import type { TodoItem } from "../../types/electron";
+import type { MobileInboxStatus } from "../../types/electronApi/mobileInbox";
 
 type Props = {
   items: TodoItem[];
   isLoading: boolean;
   copyToClipboard: (text: string) => Promise<void>;
   markActioned: (id: number) => Promise<void>;
+  mobileInboxStatus?: MobileInboxStatus | null;
+  isChoosingInboxFolder?: boolean;
+  chooseMobileInboxFolder?: () => Promise<void>;
 };
 
 function formatCreatedAt(value: string) {
@@ -24,7 +28,15 @@ function formatCreatedAt(value: string) {
   });
 }
 
-export default function TodoPanel({ items, isLoading, copyToClipboard, markActioned }: Props) {
+export default function TodoPanel({
+  items,
+  isLoading,
+  copyToClipboard,
+  markActioned,
+  mobileInboxStatus,
+  isChoosingInboxFolder = false,
+  chooseMobileInboxFolder,
+}: Props) {
   const [actioningId, setActioningId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const visibleItems = useMemo(() => {
@@ -46,6 +58,43 @@ export default function TodoPanel({ items, isLoading, copyToClipboard, markActio
   return (
     <div className="rounded-lg border border-border bg-card/50 dark:bg-card/30 backdrop-blur-sm">
       <div className="border-b border-border/50 p-3">
+        {chooseMobileInboxFolder ? (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                <Smartphone size={13} aria-hidden="true" />
+                {mobileInboxStatus?.configured ? "Mobile sync folder" : "Set up mobile sync"}
+              </p>
+              <p
+                className="mt-1 truncate text-[11px] text-muted-foreground"
+                title={mobileInboxStatus?.folderPath || undefined}
+              >
+                {mobileInboxStatus?.configured
+                  ? mobileInboxStatus.folderPath
+                  : "Choose the PC copy of your phone’s EchoDraft cloud folder."}
+              </p>
+              {mobileInboxStatus?.state === "folder_unavailable" ? (
+                <p className="mt-1 text-[11px] text-destructive" role="status">
+                  Folder unavailable. Check that cloud sync is running.
+                </p>
+              ) : null}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-[11px]"
+              disabled={isChoosingInboxFolder}
+              onClick={() => void chooseMobileInboxFolder()}
+            >
+              {isChoosingInboxFolder ? (
+                <Loader2 size={12} className="mr-1 animate-spin" aria-hidden="true" />
+              ) : (
+                <FolderOpen size={12} className="mr-1" aria-hidden="true" />
+              )}
+              {mobileInboxStatus?.configured ? "Change" : "Choose folder"}
+            </Button>
+          </div>
+        ) : null}
         <p className="text-[11px] text-muted-foreground">
           Copy a mobile memo, then mark it as actioned when the follow-up is complete.
         </p>

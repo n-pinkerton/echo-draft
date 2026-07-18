@@ -65,6 +65,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getLatestTranscription: () => ipcRenderer.invoke("db-get-latest-transcription"),
   getPendingTodos: (limit) => ipcRenderer.invoke("db-get-pending-todos", limit),
   markTodoActioned: (id) => ipcRenderer.invoke("db-mark-todo-actioned", id),
+  getMobileInboxStatus: () => ipcRenderer.invoke("mobile-inbox-get-status"),
+  chooseMobileInboxFolder: () => ipcRenderer.invoke("mobile-inbox-choose-folder"),
+  completeMobileInboxItem: (requestId, result) =>
+    ipcRenderer.invoke("mobile-inbox-complete", requestId, result),
+  mobileInboxRendererReady: () => ipcRenderer.invoke("mobile-inbox-renderer-ready"),
   patchTranscriptionMeta: (id, metaPatch) =>
     ipcRenderer.invoke("db-patch-transcription-meta", id, metaPatch),
   exportTranscriptions: (format) => ipcRenderer.invoke("db-export-transcriptions", format),
@@ -116,6 +121,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("transcriptions-cleared", listener);
     return () => ipcRenderer.removeListener("transcriptions-cleared", listener);
   },
+  onTodoAdded: registerListener("todo-added", (callback) => (_event, item) => callback(item)),
+  onMobileInboxProcess: registerListener(
+    "mobile-inbox-process",
+    (callback) => (_event, payload) => callback(payload)
+  ),
 
   // Environment variables
   getApiKeyStatus: () => ipcRenderer.invoke("get-api-key-status"),

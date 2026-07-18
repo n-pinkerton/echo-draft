@@ -4,6 +4,10 @@ import { throwIfTranscriptionCancelled } from "../../helpers/audio/pipeline/canc
 import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 import { countWords } from "./textMetrics";
 import { normalizeCleanupTitle } from "../../config/cleanupOutputContract.cjs";
+import {
+  createMobileInboxCompletion,
+  getMobileInboxRequestId,
+} from "./mobileInbox";
 
 const CLIPBOARD_PROTECTION_FAILURE_CODES = new Set([
   "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
@@ -85,6 +89,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
     playWarningCue,
   } = deps;
   const deliveryCommitCountRef = deps.deliveryCommitCountRef || { current: 0 };
+  const completeMobileInboxRequest = deps.completeMobileInboxRequest;
 
   const electronAPI =
     deps.electronAPI || (typeof window !== "undefined" ? window.electronAPI : undefined);
@@ -123,11 +128,32 @@ export const createTranscriptionCompleteHandler = (deps) => {
         ? result.context.jobId
         : (job?.jobId ?? null);
 
+    const mobileInboxRequestId = getMobileInboxRequestId(result?.context);
+
     if (resolvedSessionId) {
       sessionsByIdRef.current.delete(resolvedSessionId);
     }
     if (activeSessionRef.current?.sessionId === resolvedSessionId) {
       activeSessionRef.current = null;
+    }
+
+    if (mobileInboxRequestId) {
+      try {
+        const completion = createMobileInboxCompletion(result, job);
+        if (completeMobileInboxRequest) {
+          await completeMobileInboxRequest(result.context, completion);
+        } else {
+          await electronAPI?.completeMobileInboxItem?.(mobileInboxRequestId, completion);
+        }
+      } catch (error) {
+        logger.warn(
+          "Failed to report mobile inbox completion",
+          { error: error?.message || String(error) },
+          "transcription"
+        );
+      }
+      if (resolvedSessionId) removeJob(resolvedSessionId);
+      return;
     }
 
     if (!result.success) {

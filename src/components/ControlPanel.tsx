@@ -13,6 +13,7 @@ import {
   clearTranscriptions as clearStoreTranscriptions,
 } from "../stores/transcriptionStore";
 import type { TodoItem, TranscriptionItem as TranscriptionItemType } from "../types/electron";
+import type { MobileInboxStatus } from "../types/electronApi/mobileInbox";
 import { sanitizeTranscriptionMetaForDiagnostics } from "../utils/transcriptionDiagnostics";
 import { filterHistory, getProviderOptions } from "./controlPanel/historyFilterUtils";
 import ControlPanelView from "./controlPanel/ControlPanelView";
@@ -24,6 +25,8 @@ const TODO_PAGE_SIZE = 100;
 export default function ControlPanel() {
   const history = useTranscriptions();
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [mobileInboxStatus, setMobileInboxStatus] = useState<MobileInboxStatus | null>(null);
+  const [isChoosingInboxFolder, setIsChoosingInboxFolder] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
@@ -95,11 +98,13 @@ export default function ControlPanel() {
   const loadPanelData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const [, pendingTodos] = await Promise.all([
+      const [, pendingTodos, inboxStatus] = await Promise.all([
         initializeTranscriptions(250),
         window.electronAPI.getPendingTodos(TODO_PAGE_SIZE),
+        window.electronAPI.getMobileInboxStatus(),
       ]);
       setTodos(pendingTodos);
+      setMobileInboxStatus(inboxStatus);
     } catch {
       showAlertDialog({
         title: "Unable to load dictations",
@@ -113,6 +118,12 @@ export default function ControlPanel() {
   useEffect(() => {
     void loadPanelData();
   }, [loadPanelData]);
+
+  useEffect(() => {
+    return window.electronAPI.onTodoAdded?.((item) => {
+      setTodos((current) => [item, ...current.filter((candidate) => candidate.id !== item.id)]);
+    });
+  }, []);
 
   useEffect(() => {
     if (updateStatus.updateDownloaded && !isDownloading) {
@@ -332,6 +343,30 @@ export default function ControlPanel() {
     }
   };
 
+  const chooseMobileInboxFolder = async () => {
+    try {
+      setIsChoosingInboxFolder(true);
+      const result = await window.electronAPI.chooseMobileInboxFolder();
+      if (result.success && result.status) {
+        setMobileInboxStatus(result.status);
+        toast({
+          title: "Mobile folder ready",
+          description: "EchoDraft will watch this folder for phone memos.",
+          variant: "success",
+          duration: 3000,
+        });
+      }
+    } catch {
+      toast({
+        title: "Could not use that folder",
+        description: "Choose a local folder that your cloud storage syncs to this PC.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsChoosingInboxFolder(false);
+    }
+  };
+
   const handleUpdateClick = async () => {
     if (updateStatus.updateDownloaded) {
       showConfirmDialog({
@@ -386,6 +421,9 @@ export default function ControlPanel() {
       setSettingsTarget={setSettingsTarget}
       history={history}
       todos={todos}
+      mobileInboxStatus={mobileInboxStatus}
+      isChoosingInboxFolder={isChoosingInboxFolder}
+      chooseMobileInboxFolder={chooseMobileInboxFolder}
       filteredHistory={filteredHistory}
       providerOptions={providerOptions}
       isLoading={isLoading}

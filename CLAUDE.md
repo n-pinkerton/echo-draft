@@ -250,12 +250,25 @@ Environment variables persisted to `.env` (via `saveAllKeysToEnvFile()`):
     - Claude Sonnet 4.5 (`claude-sonnet-4-5`) - Balanced performance
     - Claude Haiku 4.5 (`claude-haiku-4-5`) - Fast with near-frontier intelligence
     - Claude Opus 4.5 (`claude-opus-4-5`) - Most capable Claude model
-  - **Google Gemini** (Direct API integration):
+- **Google Gemini** (Direct API integration):
     - Gemini 2.5 Pro (`gemini-2.5-pro`) - Most capable Gemini model
     - Gemini 2.5 Flash (`gemini-2.5-flash`) - High-performance with thinking
     - Gemini 2.5 Flash Lite (`gemini-2.5-flash-lite`) - Lowest latency and cost
     - Gemini 2.0 Flash (`gemini-2.0-flash`) - Fast, long-context option
   - **Local**: GGUF models via llama.cpp (Qwen, Llama, Mistral, GPT-OSS)
+
+### Mobile inbox architecture
+
+- The private Android companion and desktop app exchange files through one user-selected cloud-synced folder; the desktop does not expose an HTTP listener, alter the firewall, or store a device identifier.
+- Android acquires that folder with `ACTION_OPEN_DOCUMENT_TREE`, requests persistable read/write URI permission, and asks the user to reselect it if the persisted tree is moved, deleted, or revoked. Provider capability flags are checked rather than assuming every document provider supports the same operations.
+- Android publishes audio first. It closes the complete audio document before publishing the ready manifest; where the selected provider advertises rename support, it writes the manifest under a temporary name and renames it last. Otherwise it creates and closes the final ready document only after the audio write succeeds.
+- Protocol v1 is deliberately narrow: `<uuid>.m4a` plus `<uuid>.ready.json`, `audio/mp4`, a declared byte size, SHA-256, and creation timestamp. The ready manifest is written last by the phone.
+- `MobileInboxManager` owns desktop folder configuration, retry/quarantine state, idempotency checks, and orchestration. `MobileInboxFileStore` owns canonical-root snapshots, bounded stable-handle reads, identity/hash revalidation, atomic private claims, quarantine, and exact-pair deletion.
+- A selected desktop root must resolve to a regular non-symbolic folder. Each scan snapshots its canonical root and input identities. Sync-settling failures are retried and do not block later items; only a stable invalid item that repeats through the bounded settling window is quarantined. Inputs that cannot be safely identified move to a long retry interval instead of being renamed or retried continuously.
+- Completed cleanup verifies both inputs, atomically claims and revalidates the exact files, deletes audio first, and removes the claimed ready manifest last. A replacement published at either original pathname is left untouched. A partial cleanup remains recoverable because the saved To Do hash lets the next scan remove a surviving manifest without retranscribing.
+- The trusted dictation renderer signals readiness and puts verified mobile audio into the existing `AudioManager` FIFO. Every recreated main window receives generation-scoped teardown listeners, and cancellation or renderer-hook cleanup settles the active mobile request for retry. This preserves the active transcription provider/model and cleanup setting without a second provider pipeline.
+- Mobile completion uses a dedicated delivery branch: the main process saves the cleaned body and optional contract title to `todo_items`; it does not paste, write the clipboard, or save a duplicate normal History row.
+- Control-panel IPC can choose/read the folder. Dictation-renderer IPC alone can acknowledge readiness or return a bounded processing result.
 
 ### 8. Model Registry Architecture
 

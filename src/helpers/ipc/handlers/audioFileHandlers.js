@@ -1,79 +1,23 @@
 const debugLogger = require("../../debugLogger");
 const { guessAudioMimeType } = require("../utils/audioMimeUtils");
 const { requireTrustedRenderer } = require("../trustedRenderer");
+const {
+  readFileHandleBounded,
+  readStableRegularFile,
+  sameFileIdentity,
+} = require("../../files/stableFileRead");
 
 const MAX_SELECTED_AUDIO_BYTES = 512 * 1024 * 1024;
-const AUDIO_READ_CHUNK_BYTES = 4 * 1024 * 1024;
 
-const sameFileIdentity = (left, right) =>
-  Boolean(
-    left &&
-    right &&
-    Number.isFinite(left.dev) &&
-    Number.isFinite(left.ino) &&
-    left.dev === right.dev &&
-    left.ino === right.ino
-  );
-
-async function readFileHandleBounded(
-  fileHandle,
-  expectedSize,
-  { maxBytes = MAX_SELECTED_AUDIO_BYTES, chunkBytes = AUDIO_READ_CHUNK_BYTES } = {}
+async function readSelectedAudioFile(
+  fs,
+  filePath,
+  { maxBytes = MAX_SELECTED_AUDIO_BYTES, rejectSymbolicLinks = false } = {}
 ) {
-  if (
-    !Number.isSafeInteger(expectedSize) ||
-    expectedSize < 1 ||
-    expectedSize > maxBytes ||
-    !Number.isSafeInteger(chunkBytes) ||
-    chunkBytes < 1
-  ) {
-    throw new Error("Selected audio file size is invalid");
-  }
-
-  const chunks = [];
-  let totalBytes = 0;
-  while (totalBytes < expectedSize) {
-    const requestedBytes = Math.min(chunkBytes, expectedSize - totalBytes);
-    const chunk = Buffer.allocUnsafe(requestedBytes);
-    // eslint-disable-next-line no-await-in-loop
-    const { bytesRead } = await fileHandle.read(chunk, 0, requestedBytes, null);
-    if (bytesRead <= 0) break;
-    totalBytes += bytesRead;
-    if (totalBytes > maxBytes) throw new Error("Selected audio file exceeds the size limit");
-    chunks.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead));
-  }
-  if (totalBytes !== expectedSize) {
-    throw new Error("Selected audio file changed while it was being read");
-  }
-  return Buffer.concat(chunks, totalBytes);
-}
-
-async function readSelectedAudioFile(fs, filePath) {
-  const fileHandle = await fs.promises.open(filePath, "r");
-  try {
-    const before = await fileHandle.stat();
-    if (!before.isFile() || before.size < 1 || before.size > MAX_SELECTED_AUDIO_BYTES) {
-      throw new Error("Selected audio file is empty, invalid, or larger than 512 MB");
-    }
-    const buffer = await readFileHandleBounded(fileHandle, before.size);
-    const after = await fileHandle.stat();
-    const pathAfter = await fs.promises.stat(filePath);
-    if (
-      !after.isFile() ||
-      !pathAfter.isFile() ||
-      !sameFileIdentity(before, after) ||
-      !sameFileIdentity(before, pathAfter) ||
-      after.size !== before.size ||
-      pathAfter.size !== before.size ||
-      after.mtimeMs !== before.mtimeMs ||
-      after.ctimeMs !== before.ctimeMs
-    ) {
-      throw new Error("Selected audio file changed while it was being read");
-    }
-    return { buffer, stats: before };
-  } finally {
-    await fileHandle.close();
-  }
+  return await readStableRegularFile(fs, filePath, {
+    maxBytes,
+    rejectSymbolicLinks,
+  });
 }
 
 function registerAudioFileHandlers(
@@ -153,6 +97,7 @@ function registerAudioFileHandlers(
 }
 
 module.exports = {
+  MAX_SELECTED_AUDIO_BYTES,
   readFileHandleBounded,
   readSelectedAudioFile,
   registerAudioFileHandlers,

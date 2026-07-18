@@ -52,6 +52,7 @@ const ISSUED_SESSION_TTL_MS = 60 * 60 * 1000;
 class WindowManager {
   constructor() {
     this.mainWindow = null;
+    this.mainWindowCreatedHandler = null;
     this.controlPanelWindow = null;
     this.tray = null;
     this.hotkeyManager = new HotkeyManager();
@@ -191,6 +192,14 @@ class WindowManager {
 
   async createMainWindow() {
     return createMainWindowImpl(this);
+  }
+
+  setMainWindowCreatedHandler(handler) {
+    this.mainWindowCreatedHandler = typeof handler === "function" ? handler : null;
+  }
+
+  notifyMainWindowCreated(window) {
+    this.mainWindowCreatedHandler?.(window);
   }
 
   setMainWindowInteractivity(shouldCapture) {

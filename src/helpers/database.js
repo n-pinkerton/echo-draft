@@ -5,6 +5,7 @@ const os = require("os");
 const { app } = require("electron");
 const {
   MAX_TODO_PAGE_SIZE,
+  UUID_PATTERN,
   normalizeCleanupTitle,
   normalizeTodoPayload,
 } = require("./todoPayload");
@@ -307,6 +308,25 @@ class DatabaseManager {
       };
     } catch (error) {
       console.error("Error saving To Do item:", error.message);
+      throw error;
+    }
+  }
+
+  getTodoByExternalId(externalId) {
+    try {
+      if (!this.db) {
+        throw new Error("Database not initialized");
+      }
+      const normalizedId = typeof externalId === "string" ? externalId.toLowerCase() : "";
+      if (!UUID_PATTERN.test(normalizedId)) {
+        throw new Error("Invalid To Do external ID");
+      }
+      const row = this.db
+        .prepare("SELECT * FROM todo_items WHERE external_id = ?")
+        .get(normalizedId);
+      return row ? this.hydrateTodoRow(row) : null;
+    } catch (error) {
+      console.error("Error getting To Do item:", error.message);
       throw error;
     }
   }

@@ -234,4 +234,53 @@ describe("TranscriptionPipeline", () => {
       expect.any(Error)
     );
   });
+
+  it.each(["whisper", "nvidia"])(
+    "reports local %s no-audio as a contextual mobile failure",
+    async (provider) => {
+      localStorage.setItem("useLocalWhisper", "true");
+      localStorage.setItem("localTranscriptionProvider", provider);
+      const emitError = vi.fn();
+      const localTranscriber = {
+        processWithLocalWhisper: vi.fn(async () => {
+          throw new Error("No audio detected");
+        }),
+        processWithLocalParakeet: vi.fn(async () => {
+          throw new Error("No audio detected");
+        }),
+      };
+      const pipeline = new TranscriptionPipeline({
+        logger: {
+          debug: vi.fn(),
+          trace: vi.fn(),
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+        emitProgress: vi.fn(),
+        emitError,
+        shouldContinue: () => true,
+        getOnTranscriptionComplete: () => vi.fn(),
+        openAiTranscriber: { getTranscriptionModel: () => "gpt-4o-mini-transcribe" },
+        localTranscriber,
+        cloudTranscriber: { processWithEchoDraftCloud: vi.fn() },
+        audioLevelAnalyzer: vi.fn(async () => ({ available: false, reason: "test" })),
+      });
+      const context = {
+        sessionId: "550e8400-e29b-41d4-a716-446655440000",
+        outputMode: "mobile-todo",
+        mobileInboxRequestId: "5f8d2d0e-3792-48cc-b8df-bf651c365a17",
+      };
+
+      await pipeline.processAudio(new Blob(["audio"], { type: "audio/mp4" }), {}, context);
+
+      expect(emitError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Transcription failed: No audio detected",
+          context,
+        }),
+        expect.any(Error)
+      );
+    }
+  );
 });

@@ -8,6 +8,7 @@ import { AlertDialog, ConfirmDialog } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import type { TodoItem, TranscriptionItem as TranscriptionItemType } from "../../types/electron";
+import type { MobileInboxStatus } from "../../types/electronApi/mobileInbox";
 import FileTranscribeDialog from "./FileTranscribeDialog";
 import UpdateActionButton from "./UpdateActionButton";
 import ControlPanelBanners from "./ControlPanelBanners";
@@ -58,6 +59,9 @@ type Props = {
 
   history: TranscriptionItemType[];
   todos: TodoItem[];
+  mobileInboxStatus: MobileInboxStatus | null;
+  isChoosingInboxFolder: boolean;
+  chooseMobileInboxFolder: () => Promise<void>;
   filteredHistory: TranscriptionItemType[];
   providerOptions: string[];
   isLoading: boolean;
@@ -130,6 +134,9 @@ export default function ControlPanelView(props: Props) {
     setSettingsTarget,
     history,
     todos,
+    mobileInboxStatus,
+    isChoosingInboxFolder,
+    chooseMobileInboxFolder,
     filteredHistory,
     providerOptions,
     isLoading,
@@ -351,6 +358,9 @@ export default function ControlPanelView(props: Props) {
               <TodoPanel
                 items={todos}
                 isLoading={isLoading}
+                mobileInboxStatus={mobileInboxStatus}
+                isChoosingInboxFolder={isChoosingInboxFolder}
+                chooseMobileInboxFolder={chooseMobileInboxFolder}
                 copyToClipboard={copyToClipboard}
                 markActioned={markTodoActioned}
               />

@@ -108,6 +108,67 @@ const createDeliveryHarness = ({
 };
 
 describe("createTranscriptionCompleteHandler", () => {
+  it("routes a mobile result to To Do without touching clipboard or History", async () => {
+    const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const requestId = "5f8d2d0e-3792-48cc-b8df-bf651c365a17";
+    const completeMobileInboxItem = vi.fn(async () => ({ success: true }));
+    const saveTranscription = vi.fn();
+    const safePaste = vi.fn();
+    const writeClipboard = vi.fn();
+    const removeJob = vi.fn();
+    const handler = createTranscriptionCompleteHandler({
+      activeSessionRef: { current: null },
+      audioManagerRef: {
+        current: { saveTranscription, safePaste, warmupStreamingConnection: vi.fn() },
+      },
+      jobsBySessionIdRef: {
+        current: new Map([
+          [sessionId, { sessionId, jobId: 3, provider: "openai", model: "gpt-4o-transcribe" }],
+        ]),
+      },
+      normalizeTriggerPayload: (payload: any) => payload,
+      recordingSessionIdRef: { current: null },
+      removeJob,
+      sessionsByIdRef: { current: new Map() },
+      setProgress: vi.fn(),
+      setTranscript: vi.fn(),
+      toast: vi.fn(),
+      updateStage: vi.fn(),
+      upsertJob: vi.fn(),
+      electronAPI: { completeMobileInboxItem, writeClipboard },
+    });
+
+    await handler({
+      success: true,
+      title: "Call Taylor",
+      text: "Call Taylor tomorrow.",
+      rawText: "call taylor tomorrow",
+      source: "openai",
+      cleanup: { requested: true, status: "applied" },
+      context: {
+        sessionId,
+        jobId: 3,
+        outputMode: "mobile-todo",
+        mobileInboxRequestId: requestId,
+      },
+    });
+
+    expect(completeMobileInboxItem).toHaveBeenCalledWith(
+      requestId,
+      expect.objectContaining({
+        success: true,
+        title: "Call Taylor",
+        text: "Call Taylor tomorrow.",
+        provider: "openai",
+        model: "gpt-4o-transcribe",
+      })
+    );
+    expect(saveTranscription).not.toHaveBeenCalled();
+    expect(safePaste).not.toHaveBeenCalled();
+    expect(writeClipboard).not.toHaveBeenCalled();
+    expect(removeJob).toHaveBeenCalledWith(sessionId);
+  });
+
   it("handles clipboard mode: writes clipboard, saves history, updates stage", async () => {
     const activeSessionRef = { current: null as any };
     const sessionsByIdRef = { current: new Map() };

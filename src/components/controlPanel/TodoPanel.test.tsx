@@ -98,4 +98,42 @@ describe("TodoPanel", () => {
     expect(screen.getByRole("button", { name: "Copy mobile memo 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy mobile memo 2" })).toBeInTheDocument();
   });
+
+  it("offers a simple mobile folder setup and shows the selected path", () => {
+    const chooseMobileInboxFolder = vi.fn(async () => {});
+    const { rerender } = render(
+      <TodoPanel
+        items={[]}
+        isLoading={false}
+        copyToClipboard={vi.fn(async () => {})}
+        markActioned={vi.fn(async () => {})}
+        mobileInboxStatus={{
+          configured: false,
+          folderPath: null,
+          state: "not_configured",
+        }}
+        chooseMobileInboxFolder={chooseMobileInboxFolder}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    expect(chooseMobileInboxFolder).toHaveBeenCalledOnce();
+
+    rerender(
+      <TodoPanel
+        items={[]}
+        isLoading={false}
+        copyToClipboard={vi.fn(async () => {})}
+        markActioned={vi.fn(async () => {})}
+        mobileInboxStatus={{
+          configured: true,
+          folderPath: "C:/OneDrive/EchoDraft Mobile",
+          state: "waiting",
+        }}
+        chooseMobileInboxFolder={chooseMobileInboxFolder}
+      />
+    );
+    expect(screen.getByText("C:/OneDrive/EchoDraft Mobile")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
+  });
 });

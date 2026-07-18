@@ -236,7 +236,8 @@ export class TranscriptionPipeline {
         "performance"
       );
 
-      if (errorMessage !== "No audio detected") {
+      const isMobileInboxJob = context?.outputMode === "mobile-todo";
+      if (errorMessage !== "No audio detected" || isMobileInboxJob) {
         this.emitProgress({
           stage: "error",
           stageLabel: "Error",

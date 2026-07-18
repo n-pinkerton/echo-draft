@@ -25,6 +25,7 @@ const { registerEnvironmentHandlers } = require("./ipc/handlers/environmentHandl
 const { registerLlamaCppHandlers } = require("./ipc/handlers/llamaCppHandlers");
 const { registerLlamaServerHandlers } = require("./ipc/handlers/llamaServerHandlers");
 const { registerModelManagementHandlers } = require("./ipc/handlers/modelManagementHandlers");
+const { registerMobileInboxHandlers } = require("./ipc/handlers/mobileInboxHandlers");
 const { registerParakeetHandlers } = require("./ipc/handlers/parakeetHandlers");
 const { registerProviderRequestHandlers } = require("./ipc/handlers/providerRequestHandlers");
 const { registerRendererLogHandlers } = require("./ipc/handlers/rendererLogHandlers");
@@ -54,6 +55,7 @@ class IPCHandlers {
     this.trayManager = managers.trayManager;
     this.updateManager = managers.updateManager;
     this.windowsKeyManager = managers.windowsKeyManager;
+    this.mobileInboxManager = managers.mobileInboxManager;
     this.sessionId = crypto.randomUUID();
     this.assemblyAiStreaming = null;
     this.cancelableRequests = new CancelableRequestRegistry();
@@ -143,6 +145,10 @@ class IPCHandlers {
     registerAudioFileHandlers(
       { ipcMain, BrowserWindow, dialog, fs, path },
       { windowManager: this.windowManager }
+    );
+    registerMobileInboxHandlers(
+      { ipcMain, BrowserWindow, dialog },
+      { mobileInboxManager: this.mobileInboxManager, windowManager: this.windowManager }
     );
 
     registerClipboardHandlers(

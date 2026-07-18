@@ -7,6 +7,7 @@ import type { ElectronAPIDictionary } from "./dictionary";
 import type { ElectronAPIHotkeys } from "./hotkeys";
 import type { ElectronAPIKeys } from "./keys";
 import type { ElectronAPIModels } from "./models";
+import type { ElectronAPIMobileInbox } from "./mobileInbox";
 import type { ElectronAPISystem } from "./system";
 import type { ElectronAPIUpdates } from "./updates";
 import type { ElectronAPIWindow } from "./window";
@@ -23,5 +24,6 @@ export interface ElectronAPI
     ElectronAPIDebugLogging,
     ElectronAPISystem,
     ElectronAPICloud,
+    ElectronAPIMobileInbox,
     ElectronAPIAssemblyAiStreaming {}
 

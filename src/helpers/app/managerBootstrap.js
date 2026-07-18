@@ -1,4 +1,4 @@
-const { dialog } = require("electron");
+const { app, dialog } = require("electron");
 
 function setupProductionPath({ env = process.env, platform = process.platform } = {}) {
   if (platform === "darwin" && env.NODE_ENV !== "development") {
@@ -40,6 +40,7 @@ function bootstrapManagers() {
   const UpdateManager = require("../../updater");
   const GlobeKeyManager = require("../globeKeyManager");
   const WindowsKeyManager = require("../windowsKeyManager");
+  const { MobileInboxManager } = require("../mobileInboxManager");
   const IPCHandlers = require("../ipcHandlers");
 
   const windowManager = new WindowManager();
@@ -57,6 +58,15 @@ function bootstrapManagers() {
   }));
   const globeKeyManager = new GlobeKeyManager();
   const windowsKeyManager = new WindowsKeyManager();
+  const mobileInboxManager = new MobileInboxManager({
+    app,
+    databaseManager,
+    windowManager,
+    logger: debugLogger,
+  });
+  windowManager.setMainWindowCreatedHandler((window) => {
+    mobileInboxManager.observeRendererWindow(window);
+  });
 
   // Set up Globe key error handler on macOS
   if (process.platform === "darwin") {
@@ -101,6 +111,7 @@ function bootstrapManagers() {
     trayManager,
     updateManager,
     windowsKeyManager,
+    mobileInboxManager,
   });
 
   return {
@@ -116,6 +127,7 @@ function bootstrapManagers() {
     updateManager,
     globeKeyManager,
     windowsKeyManager,
+    mobileInboxManager,
   };
 }
 

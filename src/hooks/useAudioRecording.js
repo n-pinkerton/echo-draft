@@ -22,6 +22,11 @@ import {
 } from "./audioRecording/recordingHandlers";
 import { createStageUpdater } from "./audioRecording/stageUpdater";
 import { createTranscriptionCompleteHandler } from "./audioRecording/transcriptionCompleteHandler";
+import {
+  enqueueMobileInboxItem,
+  getMobileInboxRequestId,
+  reportMobileInboxFailure,
+} from "./audioRecording/mobileInbox";
 
 const SLOW_STAGE_THRESHOLD_MS = 10_000;
 
@@ -58,6 +63,7 @@ export const useAudioRecording = (toast, options = {}) => {
   const progressResetTimerRef = useRef(null);
   const recordingOperationQueueRef = useRef(null);
   const deliveryCommitCountRef = useRef(0);
+  const pendingMobileInboxRequestsRef = useRef(new Map());
   if (!recordingOperationQueueRef.current) {
     recordingOperationQueueRef.current = createRecordingOperationQueue();
   }
@@ -195,6 +201,40 @@ export const useAudioRecording = (toast, options = {}) => {
     [performStartRecording, performStopRecording]
   );
 
+  const completeMobileInboxRequest = useCallback((context, result) => {
+    const requestId = getMobileInboxRequestId(context);
+    const pending = requestId ? pendingMobileInboxRequestsRef.current.get(requestId) : null;
+    if (!requestId || !pending) return null;
+    if (pending.settlement) return pending.settlement;
+
+    const settle = window.electronAPI?.completeMobileInboxItem;
+    if (!settle) return null;
+    pending.settlement = (async () => {
+      try {
+        const response = await settle(requestId, result);
+        if (pendingMobileInboxRequestsRef.current.get(requestId) === pending) {
+          pendingMobileInboxRequestsRef.current.delete(requestId);
+        }
+        return response;
+      } catch (error) {
+        if (pendingMobileInboxRequestsRef.current.get(requestId) === pending) {
+          try {
+            await settle(requestId, { success: false });
+            if (pendingMobileInboxRequestsRef.current.get(requestId) === pending) {
+              pendingMobileInboxRequestsRef.current.delete(requestId);
+            }
+          } catch {
+            if (pendingMobileInboxRequestsRef.current.get(requestId) === pending) {
+              pending.settlement = null;
+            }
+          }
+        }
+        throw error;
+      }
+    })();
+    return pending.settlement;
+  }, []);
+
   const cancelProcessing = useCallback(() => {
     if (
       deliveryCommitCountRef.current > 0 ||
@@ -205,6 +245,7 @@ export const useAudioRecording = (toast, options = {}) => {
     const audioManager = audioManagerRef.current;
     const cancelledContext =
       audioManager?.activeProcessingContext || audioManager?.streamingContext || null;
+    const isMobileInboxJob = Boolean(getMobileInboxRequestId(cancelledContext));
     const cancelled = audioManager?.cancelProcessing() || false;
     if (!cancelled) {
       return false;
@@ -220,6 +261,9 @@ export const useAudioRecording = (toast, options = {}) => {
         activeSessionRef.current = null;
       }
     }
+    if (isMobileInboxJob) {
+      void completeMobileInboxRequest(cancelledContext, { success: false })?.catch?.(() => {});
+    }
     const preservedCount = Math.max(
       0,
       Number(audioManager?.getState?.()?.queuedProcessingJobs) || 0
@@ -234,7 +278,7 @@ export const useAudioRecording = (toast, options = {}) => {
     });
     void playCancelCue();
     return true;
-  }, [removeJob, updateStage]);
+  }, [completeMobileInboxRequest, removeJob, updateStage]);
 
   const routeToggleDictation = useCallback(
     (payload = {}) => toggleRecording(payload),
@@ -276,6 +320,7 @@ export const useAudioRecording = (toast, options = {}) => {
       playErrorCue,
       playWarningCue,
       deliveryCommitCountRef,
+      completeMobileInboxRequest,
     });
 
     audioManagerRef.current.setCallbacks(
@@ -294,6 +339,16 @@ export const useAudioRecording = (toast, options = {}) => {
         updateStage,
         upsertJob,
         onTranscriptionComplete: handleTranscriptionComplete,
+        onProcessingError: (error) => {
+          if (!getMobileInboxRequestId(error?.context)) return false;
+          void completeMobileInboxRequest(error.context, { success: false })?.catch?.(() => {});
+          const sessionId = error?.context?.sessionId;
+          if (typeof sessionId === "string") {
+            sessionsByIdRef.current.delete(sessionId);
+            removeJob(sessionId);
+          }
+          return true;
+        },
         playErrorCue,
         playStopCue,
       })
@@ -331,6 +386,7 @@ export const useAudioRecording = (toast, options = {}) => {
     });
 
     const handleNoAudioDetected = () => {
+      if (getMobileInboxRequestId(audioManagerRef.current?.activeProcessingContext)) return;
       updateStage("error", { message: "No audio detected" });
       void playErrorCue();
       toast({
@@ -342,14 +398,38 @@ export const useAudioRecording = (toast, options = {}) => {
 
     const disposeNoAudio = window.electronAPI.onNoAudioDetected?.(handleNoAudioDetected);
 
+    const disposeMobileInbox = window.electronAPI.onMobileInboxProcess?.((payload) => {
+      try {
+        const context = enqueueMobileInboxItem({
+          audioManager: audioManagerRef.current,
+          payload,
+          removeJob,
+          upsertJob,
+        });
+        pendingMobileInboxRequestsRef.current.set(context.mobileInboxRequestId, {
+          context,
+          settlement: null,
+        });
+      } catch {
+        reportMobileInboxFailure(window.electronAPI, payload);
+      }
+    });
+    void window.electronAPI.mobileInboxRendererReady?.().catch(() => {});
+
     return () => {
       disposeToggle?.();
       disposeStart?.();
       disposeStop?.();
       disposeCancelProcessing?.();
       disposeNoAudio?.();
+      disposeMobileInbox?.();
       disposeE2E?.();
       clearProgressResetTimer();
+      const pendingMobileRequests = [...pendingMobileInboxRequestsRef.current.values()];
+      pendingMobileInboxRequestsRef.current.clear();
+      for (const pending of pendingMobileRequests) {
+        reportMobileInboxFailure(window.electronAPI, pending.context);
+      }
       if (audioManagerRef.current) {
         audioManagerRef.current.cleanup();
       }
@@ -357,6 +437,7 @@ export const useAudioRecording = (toast, options = {}) => {
   }, [
     clearProgressResetTimer,
     cancelProcessing,
+    completeMobileInboxRequest,
     normalizeTriggerPayload,
     onToggle,
     removeJob,

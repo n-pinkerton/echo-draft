@@ -333,6 +333,12 @@ You can press the hotkey again and record another dictation while earlier audio 
 - **Storage Cleanup**: Remove downloaded Whisper models from cache to reclaim space
 - **Settings**: Configure API keys, customize hotkeys, select or test the microphone, preview or adjust dictation sounds, and manage permissions. If a selected microphone disconnects, EchoDraft shows the fallback and temporarily uses the system default.
 
+### Mobile To Do inbox
+
+The private Android companion uses a dedicated cloud-synced folder instead of opening a network port on the PC. In **Control Panel → To Do**, choose the local PC copy of that folder (for example, a folder synced by OneDrive). Phone recordings then follow the same transcription provider, model, cleanup setting, and generated-title contract currently selected in the desktop app; Android does not transcribe them locally.
+
+Mobile results appear only in **To Do**. They do not paste automatically, replace the clipboard, or create a second History item. EchoDraft removes an uploaded audio/manifest pair from the sync folder only after the cleaned memo has been saved idempotently to To Do. The Android companion is intended for private sideloading, not app-store distribution.
+
 ### Uninstall & Cache Cleanup
 
 - **In-App**: Use _Settings → General → Local Model Storage → Remove Downloaded Models_ to clear `~/.cache/echodraft/whisper-models` (or `%USERPROFILE%\.cache\echodraft\whisper-models` on Windows).

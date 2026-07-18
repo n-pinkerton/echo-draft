@@ -113,4 +113,24 @@ describe("audio file selection IPC", () => {
     );
     expect(fileHandle.close).toHaveBeenCalledOnce();
   });
+
+  it("rejects symbolic links before opening a mobile inbox file", async () => {
+    const fileHandle = createFileHandle();
+    const fs = {
+      promises: {
+        lstat: vi.fn(async () =>
+          stableStat({ isFile: () => false, isSymbolicLink: () => true })
+        ),
+        open: vi.fn(async () => fileHandle),
+      },
+    };
+
+    await expect(
+      readSelectedAudioFile(fs as any, "C:/private/voice.m4a", {
+        maxBytes: 32 * 1024 * 1024,
+        rejectSymbolicLinks: true,
+      })
+    ).rejects.toThrow(/regular file/i);
+    expect(fs.promises.open).not.toHaveBeenCalled();
+  });
 });

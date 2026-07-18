@@ -19,6 +19,7 @@ export const createAudioManagerCallbacks = (deps) => {
     updateStage,
     upsertJob,
     onTranscriptionComplete,
+    onProcessingError,
     playErrorCue,
     playStopCue,
   } = deps;
@@ -40,6 +41,11 @@ export const createAudioManagerCallbacks = (deps) => {
       }
     },
     onError: (error = {}) => {
+      try {
+        if (onProcessingError?.(error) === true) return;
+      } catch (interceptError) {
+        logger.error("Processing error interceptor failed", interceptError, "dictation");
+      }
       const errorSessionId =
         typeof error?.context?.sessionId === "string" && error.context.sessionId.trim()
           ? error.context.sessionId.trim()

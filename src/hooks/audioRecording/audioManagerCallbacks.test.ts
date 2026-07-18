@@ -24,6 +24,41 @@ describe("createAudioManagerCallbacks", () => {
     traceLog.mockClear();
   });
 
+  it("lets the mobile bridge absorb a processing error without a dictation toast", () => {
+    const onProcessingError = vi.fn(() => true);
+    const toast = vi.fn();
+    const playErrorCue = vi.fn();
+    const callbacks = createAudioManagerCallbacks({
+      activeSessionRef: { current: null },
+      audioManagerRef: { current: null },
+      sessionsByIdRef: { current: new Map() },
+      recordingSessionIdRef: { current: null },
+      removeJob: vi.fn(),
+      setIsProcessing: vi.fn(),
+      setIsRecording: vi.fn(),
+      setIsStreaming: vi.fn(),
+      setPartialTranscript: vi.fn(),
+      setProgress: vi.fn(),
+      toast,
+      updateStage: vi.fn(),
+      upsertJob: vi.fn(),
+      onTranscriptionComplete: vi.fn(),
+      onProcessingError,
+      playErrorCue,
+      playStopCue: vi.fn(),
+    });
+
+    const error = {
+      description: "Mobile transcription failed",
+      context: { mobileInboxRequestId: "550e8400-e29b-41d4-a716-446655440000" },
+    };
+    callbacks.onError(error);
+
+    expect(onProcessingError).toHaveBeenCalledWith(error);
+    expect(toast).not.toHaveBeenCalled();
+    expect(playErrorCue).not.toHaveBeenCalled();
+  });
+
   it("plays the process cue only from a confirmed recording-closed progress event", () => {
     const playStopCue = vi.fn();
     const callbacks = createAudioManagerCallbacks({

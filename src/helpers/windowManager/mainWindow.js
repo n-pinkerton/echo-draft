@@ -46,6 +46,7 @@ async function createMainWindow(manager) {
     ...MAIN_WINDOW_CONFIG,
     ...position,
   });
+  manager.notifyMainWindowCreated?.(manager.mainWindow);
 
   // Main window (dictation overlay) should never appear in dock/taskbar
   // On macOS, users access the app via the menu bar tray icon
