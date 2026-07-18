@@ -1,7 +1,24 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+val privateProperties = Properties().apply {
+    val propertiesFile = rootProject.file("local.properties")
+    if (propertiesFile.isFile) propertiesFile.inputStream().use(::load)
+}
+
+fun privateConfig(name: String): String =
+    (privateProperties.getProperty(name) ?: System.getenv(name)).orEmpty().trim()
+
+fun quotedBuildConfig(value: String): String =
+    "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+val msalClientId = privateConfig("echodraft.msalClientId")
+val msalTenantId = privateConfig("echodraft.msalTenantId")
+val msalSignatureHash = privateConfig("echodraft.msalSignatureHash")
 
 android {
     namespace = "com.echodraft.mobile"
@@ -13,6 +30,15 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        buildConfigField("String", "MSAL_CLIENT_ID", quotedBuildConfig(msalClientId))
+        buildConfigField("String", "MSAL_TENANT_ID", quotedBuildConfig(msalTenantId))
+        buildConfigField("String", "MSAL_SIGNATURE_HASH", quotedBuildConfig(msalSignatureHash))
+        manifestPlaceholders["msalSignatureHash"] = msalSignatureHash.ifBlank { "not-configured" }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
@@ -37,6 +63,7 @@ android {
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
+    implementation("com.microsoft.identity.client:msal:8.4.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260522")

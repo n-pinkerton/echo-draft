@@ -96,29 +96,6 @@ internal class MobileDiagnosticStore(
         }
     }
 
-    private fun encodeEvent(event: DiagnosticEvent): String = buildString {
-            append("{\"version\":1")
-            append(",\"createdAt\":").append(jsonString(event.createdAt))
-            append(",\"event\":").append(jsonString(event.event))
-            append(",\"appVersion\":").append(jsonString(event.appVersion))
-            append(",\"appVersionCode\":").append(event.appVersionCode)
-            append(",\"androidApi\":").append(event.androidApi)
-            append(",\"pendingMemoCount\":").append(event.pendingMemoCount)
-            if (event.exceptionType != null) {
-                append(",\"exceptionType\":")
-                    .append(jsonString(event.exceptionType))
-            }
-            if (event.appStack.isNotEmpty()) {
-                append(",\"appStack\":[")
-                event.appStack.forEachIndexed { index, frame ->
-                    if (index > 0) append(',')
-                    append(jsonString(frame))
-                }
-                append(']')
-            }
-            append('}')
-        }
-
     private fun readEvents(): List<DiagnosticEvent> {
         val destination = File(directory, FILE_NAME)
         val temporary = File(directory, TEMPORARY_FILE_NAME)
@@ -146,54 +123,6 @@ internal class MobileDiagnosticStore(
             .mapNotNull(::decodeEvent)
             .toList()
             .takeLast(MAX_EVENTS)
-    }
-
-    private fun decodeEvent(line: String): DiagnosticEvent? = runCatching {
-        val json = JSONObject(line)
-        val keys = buildSet {
-            val iterator = json.keys()
-            while (iterator.hasNext()) add(iterator.next())
-        }
-        check(keys.containsAll(REQUIRED_EVENT_KEYS) && ALLOWED_EVENT_KEYS.containsAll(keys))
-        check(json.requireInt("version") == 1)
-        val createdAt = json.getString("createdAt")
-        check(Instant.parse(createdAt).toString() == createdAt)
-        val event = json.getString("event")
-        check(MobileDiagnosticEvents.isKnown(event))
-        val appVersion = json.getString("appVersion")
-        check(APP_VERSION_PATTERN.matches(appVersion))
-        val exceptionType = if (json.has("exceptionType")) {
-            json.getString("exceptionType").also { check(EXCEPTION_TYPE_PATTERN.matches(it)) }
-        } else {
-            null
-        }
-        val appStack = if (json.has("appStack")) {
-            val array = json.getJSONArray("appStack")
-            check(array.length() in 1..MAX_APP_STACK_FRAMES)
-            List(array.length()) { index ->
-                array.getString(index).also { check(STACK_FRAME_PATTERN.matches(it)) }
-            }
-        } else {
-            emptyList()
-        }
-        DiagnosticEvent(
-            createdAt = createdAt,
-            event = event,
-            appVersion = appVersion,
-            appVersionCode = json.requireInt("appVersionCode", minimum = 0),
-            androidApi = json.requireInt("androidApi", minimum = 0),
-            pendingMemoCount = json.requireInt("pendingMemoCount", minimum = 0),
-            exceptionType = exceptionType,
-            appStack = appStack,
-        )
-    }.getOrNull()
-
-    private fun JSONObject.requireInt(key: String, minimum: Int = Int.MIN_VALUE): Int {
-        val value = get(key)
-        check(value is Int || value is Long)
-        val number = (value as Number).toLong()
-        check(number in minimum.toLong()..Int.MAX_VALUE.toLong())
-        return number.toInt()
     }
 
     private fun encodeSnapshot(events: List<DiagnosticEvent>): ByteArray =
@@ -281,6 +210,20 @@ internal class MobileDiagnosticStore(
             },
         )
 
+        fun isSafeSnapshot(bytes: ByteArray): Boolean {
+            if (!hasFormatHeader(bytes)) return false
+            val text = bytes.toString(Charsets.UTF_8)
+            if (!text.toByteArray(Charsets.UTF_8).contentEquals(bytes) || !text.endsWith('\n')) {
+                return false
+            }
+            val lines = text.removeSuffix("\n").split('\n')
+            if (lines.firstOrNull() != HEADER_LINE) return false
+            val events = lines.drop(1)
+            return events.size in 1..MAX_EVENTS && events.all { line ->
+                line.toByteArray(Charsets.UTF_8).size <= MAX_EVENT_BYTES && decodeEvent(line) != null
+            }
+        }
+
         fun hasFormatHeader(bytes: ByteArray): Boolean {
             if (bytes.size !in 1..MAX_SNAPSHOT_BYTES) return false
             if (bytes.size < HEADER_BYTES.size) return false
@@ -290,6 +233,79 @@ internal class MobileDiagnosticStore(
         fun isHeaderPrefix(bytes: ByteArray): Boolean =
             bytes.size <= HEADER_BYTES.size &&
                 bytes.indices.all { index -> bytes[index] == HEADER_BYTES[index] }
+
+        private fun decodeEvent(line: String): DiagnosticEvent? = runCatching {
+            val json = JSONObject(line)
+            val keys = buildSet {
+                val iterator = json.keys()
+                while (iterator.hasNext()) add(iterator.next())
+            }
+            check(keys.containsAll(REQUIRED_EVENT_KEYS) && ALLOWED_EVENT_KEYS.containsAll(keys))
+            check(json.requireInt("version") == 1)
+            val createdAt = json.getString("createdAt")
+            check(Instant.parse(createdAt).toString() == createdAt)
+            val event = json.getString("event")
+            check(MobileDiagnosticEvents.isKnown(event))
+            val appVersion = json.getString("appVersion")
+            check(APP_VERSION_PATTERN.matches(appVersion))
+            val exceptionType = if (json.has("exceptionType")) {
+                json.getString("exceptionType").also { check(EXCEPTION_TYPE_PATTERN.matches(it)) }
+            } else {
+                null
+            }
+            val appStack = if (json.has("appStack")) {
+                val array = json.getJSONArray("appStack")
+                check(array.length() in 1..MAX_APP_STACK_FRAMES)
+                List(array.length()) { index ->
+                    array.getString(index).also { check(STACK_FRAME_PATTERN.matches(it)) }
+                }
+            } else {
+                emptyList()
+            }
+            DiagnosticEvent(
+                createdAt = createdAt,
+                event = event,
+                appVersion = appVersion,
+                appVersionCode = json.requireInt("appVersionCode", minimum = 0),
+                androidApi = json.requireInt("androidApi", minimum = 0),
+                pendingMemoCount = json.requireInt("pendingMemoCount", minimum = 0),
+                exceptionType = exceptionType,
+                appStack = appStack,
+            ).also { decoded ->
+                check(encodeEvent(decoded) == line)
+            }
+        }.getOrNull()
+
+        private fun encodeEvent(event: DiagnosticEvent): String = buildString {
+            append("{\"version\":1")
+            append(",\"createdAt\":").append(jsonString(event.createdAt))
+            append(",\"event\":").append(jsonString(event.event))
+            append(",\"appVersion\":").append(jsonString(event.appVersion))
+            append(",\"appVersionCode\":").append(event.appVersionCode)
+            append(",\"androidApi\":").append(event.androidApi)
+            append(",\"pendingMemoCount\":").append(event.pendingMemoCount)
+            if (event.exceptionType != null) {
+                append(",\"exceptionType\":")
+                    .append(jsonString(event.exceptionType))
+            }
+            if (event.appStack.isNotEmpty()) {
+                append(",\"appStack\":[")
+                event.appStack.forEachIndexed { index, frame ->
+                    if (index > 0) append(',')
+                    append(jsonString(frame))
+                }
+                append(']')
+            }
+            append('}')
+        }
+
+        private fun JSONObject.requireInt(key: String, minimum: Int = Int.MIN_VALUE): Int {
+            val value = get(key)
+            check(value is Int || value is Long)
+            val number = (value as Number).toLong()
+            check(number in minimum.toLong()..Int.MAX_VALUE.toLong())
+            return number.toInt()
+        }
 
         private fun jsonString(value: String): String = buildString {
             append('"')
