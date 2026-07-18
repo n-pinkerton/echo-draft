@@ -11,7 +11,7 @@ val privateProperties = Properties().apply {
 }
 
 fun privateConfig(name: String): String =
-    (privateProperties.getProperty(name) ?: System.getenv(name)).orEmpty().trim()
+    privateProperties.getProperty(name).orEmpty().trim()
 
 fun quotedBuildConfig(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
@@ -28,8 +28,8 @@ android {
         applicationId = "com.echodraft.mobile"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         buildConfigField("String", "MSAL_CLIENT_ID", quotedBuildConfig(msalClientId))
         buildConfigField("String", "MSAL_TENANT_ID", quotedBuildConfig(msalTenantId))

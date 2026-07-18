@@ -47,6 +47,24 @@ class OneDriveAuthConfigTest {
         }
     }
 
+    @Test
+    fun `rejects noncanonical identifiers and signature encodings`() {
+        val clientId = "550e8400-e29b-41d4-a716-446655440000"
+        val tenantId = "98b41ef1-b87a-4d60-9b62-3df07252fd7a"
+        val signature = Base64.getEncoder().encodeToString(ByteArray(20))
+
+        listOf("{$clientId}", clientId.replace("-", "")).forEach { invalidClientId ->
+            assertThrows(IllegalArgumentException::class.java) {
+                OneDriveAuthConfig(invalidClientId, tenantId, "com.echodraft.mobile", signature)
+            }
+        }
+        listOf(signature.removeSuffix("="), signature.replace("=", " =")).forEach { invalidSignature ->
+            assertThrows(IllegalArgumentException::class.java) {
+                OneDriveAuthConfig(clientId, tenantId, "com.echodraft.mobile", invalidSignature)
+            }
+        }
+    }
+
     private fun encoded(value: String): String =
         java.net.URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 }

@@ -10,6 +10,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $androidRoot = Join-Path $repoRoot 'android'
 $gradleWrapper = Join-Path $androidRoot 'gradlew.bat'
 $apkPath = Join-Path $androidRoot 'app\build\outputs\apk\debug\app-debug.apk'
+$localPropertiesPath = Join-Path $androidRoot 'local.properties'
 
 function Resolve-AndroidSdk {
     $candidates = @(
@@ -42,6 +43,65 @@ function Resolve-JavaHome {
     throw 'Compatible Java not found. Install Android Studio, which includes the required Java runtime.'
 }
 
+function Assert-PrivateOneDriveConfig {
+    if (-not (Test-Path -LiteralPath $localPropertiesPath)) {
+        throw 'Private OneDrive configuration is missing. Follow android/README.md before installing.'
+    }
+
+    $values = @{}
+    foreach ($line in Get-Content -LiteralPath $localPropertiesPath) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#') -or $trimmed.StartsWith('!')) {
+            continue
+        }
+        $separator = $line.IndexOf('=')
+        if ($separator -le 0) {
+            continue
+        }
+        $key = $line.Substring(0, $separator).Trim()
+        $values[$key] = $line.Substring($separator + 1).Trim()
+    }
+
+    $requiredKeys = @(
+        'echodraft.msalClientId',
+        'echodraft.msalTenantId',
+        'echodraft.msalSignatureHash'
+    )
+    $missingKeys = @($requiredKeys | Where-Object { -not $values.ContainsKey($_) -or -not $values[$_] })
+    if ($missingKeys.Count -gt 0) {
+        throw 'Private OneDrive configuration is incomplete. Follow android/README.md before installing.'
+    }
+
+    $canonicalUuidPattern = '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+    foreach ($key in @('echodraft.msalClientId', 'echodraft.msalTenantId')) {
+        $value = [string]$values[$key]
+        $parsed = [Guid]::Empty
+        if (
+            $value -notmatch $canonicalUuidPattern -or
+            -not [Guid]::TryParse($value, [ref]$parsed) -or
+            $parsed.ToString('D') -cne $value.ToLowerInvariant()
+        ) {
+            throw 'Private OneDrive configuration contains an invalid application or tenant identifier.'
+        }
+    }
+
+    $signatureValue = [string]$values['echodraft.msalSignatureHash']
+    if ($signatureValue -notmatch '^[A-Za-z0-9+/]{27}=$') {
+        throw 'Private OneDrive configuration contains an invalid Android signature hash.'
+    }
+    try {
+        $signatureBytes = [Convert]::FromBase64String($signatureValue)
+    } catch {
+        throw 'Private OneDrive configuration contains an invalid Android signature hash.'
+    }
+    if (
+        $signatureBytes.Length -ne 20 -or
+        [Convert]::ToBase64String($signatureBytes) -cne $signatureValue
+    ) {
+        throw 'Private OneDrive configuration contains an invalid Android signature hash.'
+    }
+}
+
 if (-not (Test-Path -LiteralPath $gradleWrapper)) {
     throw "Gradle wrapper not found at $gradleWrapper"
 }
@@ -51,6 +111,10 @@ $javaHome = Resolve-JavaHome
 $env:ANDROID_HOME = $sdkRoot
 $env:ANDROID_SDK_ROOT = $sdkRoot
 $env:JAVA_HOME = $javaHome
+
+if ($Install) {
+    Assert-PrivateOneDriveConfig
+}
 
 Write-Host 'Building and checking the private EchoDraft Android companion...'
 & $gradleWrapper -p $androidRoot testDebugUnitTest lintDebug assembleDebug
@@ -75,18 +139,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "adb could not list devices (exit code $LASTEXITCODE)"
 }
 
-$authorizedDevices = @(
+$deviceEntries = @(
     $deviceOutput |
-        Where-Object { $_ -match '^\S+\s+device$' } |
-        ForEach-Object { ($_ -split '\s+')[0] }
+        Where-Object { $_ -match '^\S+\s+\S+$' -and $_ -notmatch '^List of devices' } |
+        ForEach-Object {
+            $parts = $_ -split '\s+'
+            [pscustomobject]@{ Serial = $parts[0]; State = $parts[1] }
+        }
 )
 
-if ($authorizedDevices.Count -ne 1) {
-    $deviceStates = @(
-        $deviceOutput |
-            Where-Object { $_ -match '^\S+\s+\S+$' -and $_ -notmatch '^List of devices' } |
-            ForEach-Object { ($_ -split '\s+')[1] }
-    )
+if ($deviceEntries.Count -ne 1 -or $deviceEntries[0].State -ne 'device') {
+    $deviceStates = @($deviceEntries | ForEach-Object { $_.State })
     $stateText = if ($deviceStates.Count -gt 0) {
         " Detected device states: $($deviceStates -join ', ')."
     } else {
@@ -96,9 +159,9 @@ if ($authorizedDevices.Count -ne 1) {
 }
 
 Write-Host 'Installing the debug APK on the connected phone...'
-& $adb -s $authorizedDevices[0] install -r $apkPath
+& $adb -s $deviceEntries[0].Serial install -r $apkPath
 if ($LASTEXITCODE -ne 0) {
     throw "Android installation failed with exit code $LASTEXITCODE"
 }
 
-Write-Host 'EchoDraft Mobile is installed. Open it on the phone to select the shared inbox folder.'
+Write-Host 'EchoDraft Mobile is installed. Open it, tap Connect OneDrive, and complete Microsoft sign-in.'

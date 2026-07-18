@@ -22,7 +22,7 @@ class RecorderService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var preferences: AppPreferences
     private lateinit var pendingStore: PendingRecordingStore
-    private lateinit var publisher: SafInboxPublisher
+    private lateinit var publisher: GraphInboxPublisher
     private lateinit var diagnostics: MobileDiagnosticReporter
     private val operationFence = OperationFence()
 
@@ -46,7 +46,10 @@ class RecorderService : Service() {
         isRunning = true
         preferences = AppPreferences(this)
         pendingStore = PendingRecordingStore.from(this)
-        publisher = SafInboxPublisher(this)
+        publisher = GraphInboxPublisher(
+            OneDriveSession.from(this),
+            MicrosoftGraphDriveApi(),
+        )
         diagnostics = MobileDiagnosticReporter.from(this)
         if (pendingStore.removeStaleTemporaryFiles() > 0) {
             diagnostics.record(
@@ -144,11 +147,11 @@ class RecorderService : Service() {
             )
             return
         }
-        if (!InboxTreeStore(this).isReady()) {
+        if (!preferences.oneDriveConnected) {
             fail(
                 operation,
-                MobileDiagnosticEvents.SHARED_FOLDER_UNAVAILABLE,
-                "Shared-folder access is unavailable. Open the app and choose it again.",
+                MobileDiagnosticEvents.ONEDRIVE_UNAVAILABLE,
+                "OneDrive setup is unavailable. Open the app and connect again.",
             )
             return
         }

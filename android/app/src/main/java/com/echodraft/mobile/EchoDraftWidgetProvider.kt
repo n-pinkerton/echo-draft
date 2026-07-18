@@ -44,9 +44,8 @@ object EchoDraftWidgetUi {
             state = preferences.state()
         }
 
-        // Broadcast receivers must not synchronously query a potentially remote document provider.
-        val folderReady = InboxTreeStore(context, preferences).hasPersistedAccess()
-        val setupReady = folderReady && preferences.hasMicrophonePermission(context)
+        // Broadcast receivers use only local cached state; authentication and Graph stay off this path.
+        val setupReady = preferences.oneDriveConnected && preferences.hasMicrophonePermission(context)
         val views = RemoteViews(context.packageName, R.layout.echo_draft_widget)
         views.setTextViewText(R.id.widget_title, context.getString(R.string.widget_title))
         views.setTextViewText(

@@ -31,26 +31,26 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="30dp"
-            android:text="@string/folder_heading"
+            android:text="@string/onedrive_heading"
             android:textColor="@color/echo_text"
             android:textSize="17sp"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/folder_status"
+            android:id="@+id/onedrive_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="@string/folder_not_selected"
+            android:text="@string/onedrive_not_connected"
             android:textColor="@color/echo_muted"
             android:textSize="15sp" />
 
         <Button
-            android:id="@+id/choose_folder_button"
+            android:id="@+id/connect_onedrive_button"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="@string/choose_folder" />
+            android:text="@string/connect_onedrive" />
 
         <TextView
             android:id="@+id/recording_status"

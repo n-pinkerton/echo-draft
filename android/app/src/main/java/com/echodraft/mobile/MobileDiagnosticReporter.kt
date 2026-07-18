@@ -5,9 +5,13 @@ import android.util.Log
 import java.util.concurrent.Executors
 
 internal object MobileDiagnosticEvents {
+    // Legacy v0.1 code retained so an existing local snapshot remains valid after upgrade.
     const val FOLDER_SELECTION_FAILED = "folder_selection_failed"
+    const val ONEDRIVE_CONNECTION_FAILED = "onedrive_connection_failed"
+    const val ONEDRIVE_UNAVAILABLE = "onedrive_unavailable"
     const val FOREGROUND_TASK_START_FAILED = "foreground_task_start_failed"
     const val OPERATION_INTERRUPTED = "operation_interrupted"
+    // Legacy v0.1 code retained so an existing local snapshot remains valid after upgrade.
     const val SHARED_FOLDER_UNAVAILABLE = "shared_folder_unavailable"
     const val RECORDING_STORAGE_FAILED = "recording_storage_failed"
     const val RECORDING_START_FAILED = "recording_start_failed"
@@ -20,6 +24,8 @@ internal object MobileDiagnosticEvents {
 
     private val all = setOf(
         FOLDER_SELECTION_FAILED,
+        ONEDRIVE_CONNECTION_FAILED,
+        ONEDRIVE_UNAVAILABLE,
         FOREGROUND_TASK_START_FAILED,
         OPERATION_INTERRUPTED,
         SHARED_FOLDER_UNAVAILABLE,
@@ -39,7 +45,12 @@ internal object MobileDiagnosticEvents {
 internal class MobileDiagnosticReporter private constructor(context: Context) {
     private val applicationContext = context.applicationContext
     private val store: MobileDiagnosticStore by lazy { MobileDiagnosticStore.from(applicationContext) }
-    private val sink: SafDiagnosticSink by lazy { SafDiagnosticSink(applicationContext) }
+    private val sink: GraphDiagnosticSink by lazy {
+        GraphDiagnosticSink(
+            OneDriveSession.from(applicationContext),
+            MicrosoftGraphDriveApi(),
+        )
+    }
     private var syncInFlight = false
     private var syncPending = false
 

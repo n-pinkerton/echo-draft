@@ -22,7 +22,11 @@ data class OneDriveAuthConfig(
         requireUuid(clientId)
         requireUuid(tenantId)
         require(PACKAGE_NAME_PATTERN.matches(packageName))
-        require(runCatching { Base64.getDecoder().decode(signatureHash) }.getOrNull()?.size == 20) {
+        val signatureBytes = runCatching { Base64.getDecoder().decode(signatureHash) }.getOrNull()
+        require(
+            signatureBytes?.size == 20 &&
+                Base64.getEncoder().encodeToString(signatureBytes) == signatureHash
+        ) {
             "The Android signature hash is invalid"
         }
     }

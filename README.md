@@ -335,13 +335,13 @@ You can press the hotkey again and record another dictation while earlier audio 
 
 ### Mobile To Do inbox
 
-The private Android companion uses a dedicated cloud-synced folder instead of opening a network port on the PC. In **Control Panel → To Do**, choose the local PC copy of that folder (for example, a folder synced by OneDrive). Phone recordings then follow the same transcription provider, model, cleanup setting, and generated-title contract currently selected in the desktop app; Android does not transcribe them locally.
+The private Android companion uses Microsoft sign-in and delegated `Files.ReadWrite.AppFolder` access to publish into its own `Apps/EchoDraft Mobile Inbox` OneDrive folder; it does not open a network port on the PC or require a custom backend. In **Control Panel → To Do**, choose the local PC copy of that folder after OneDrive syncs it. Phone recordings then follow the same transcription provider, model, cleanup setting, and generated-title contract currently selected in the desktop app; Android does not transcribe them locally.
 
 Mobile results appear only in **To Do**. They do not paste automatically, replace the clipboard, or create a second History item. EchoDraft removes an uploaded audio/manifest pair from the sync folder only after the cleaned memo has been saved idempotently to To Do. The Android companion is intended for private sideloading, not app-store distribution.
 
-Mobile failures produce a bounded, content-free `echodraft-mobile-diagnostics.jsonl` support file in the selected shared folder when that provider is available. A private local copy is retained and retried if OneDrive is temporarily unavailable; the log excludes dictation/audio, exception messages, folder details, credentials, and phone/device identifiers.
+Mobile failures produce a bounded, strictly allowlisted, content-free `echodraft-mobile-diagnostics.jsonl` support file in the OneDrive app folder when Graph is available. A private local copy is retained and retried if OneDrive is temporarily unavailable; the log excludes dictation/audio, exception messages, paths/URIs, account details, credentials, and phone/device identifiers.
 
-See [`android/README.md`](android/README.md) for the no-phone build command, later USB installation, folder setup, and widget instructions.
+See [`android/README.md`](android/README.md) for the no-phone build command, private Microsoft registration, later USB installation, OneDrive connection, and widget instructions.
 
 ### Uninstall & Cache Cleanup
 

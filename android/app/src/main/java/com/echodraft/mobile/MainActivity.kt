@@ -3,9 +3,7 @@ package com.echodraft.mobile
 import android.Manifest
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
-import android.content.Intent
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -13,47 +11,23 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceChangeListener {
     private lateinit var preferences: AppPreferences
-    private lateinit var treeStore: InboxTreeStore
     private lateinit var pendingStore: PendingRecordingStore
     private lateinit var diagnostics: MobileDiagnosticReporter
-    private lateinit var folderStatus: TextView
+    private lateinit var oneDriveSession: OneDriveSession
+    private lateinit var oneDriveStatus: TextView
+    private lateinit var connectButton: Button
     private lateinit var recordingStatus: TextView
     private lateinit var pendingCount: TextView
     private lateinit var recordButton: Button
     private lateinit var retryButton: Button
+    private val graphApi = MicrosoftGraphDriveApi()
     private var startAfterPermission = false
-
-    private val folderPicker = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val uri = result.data?.data ?: return@registerForActivityResult
-        runCatching { treeStore.persist(uri, result.data?.flags ?: 0) }
-            .onSuccess {
-                preferences.updateState(
-                    AppPreferences.Phase.IDLE,
-                    "Shared folder ready.",
-                    pendingStore.pendingCount(),
-                )
-                diagnostics.sync()
-            }
-            .onFailure { error ->
-                preferences.updateState(
-                    AppPreferences.Phase.ERROR,
-                    "That folder is not writable. Choose another sync folder.",
-                    pendingStore.pendingCount(),
-                )
-                diagnostics.report(
-                    MobileDiagnosticEvents.FOLDER_SELECTION_FAILED,
-                    error,
-                    pendingStore.pendingCount(),
-                )
-            }
-        render()
-        EchoDraftWidgetUi.updateAll(this)
-    }
+    private var connectionInFlight = false
+    private var connectedBeforeSignIn = false
 
     private val permissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -70,17 +44,18 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         preferences = AppPreferences(this)
-        treeStore = InboxTreeStore(this, preferences)
         pendingStore = PendingRecordingStore.from(this)
         diagnostics = MobileDiagnosticReporter.from(this)
+        oneDriveSession = OneDriveSession.from(this)
 
-        folderStatus = findViewById(R.id.folder_status)
+        oneDriveStatus = findViewById(R.id.onedrive_status)
+        connectButton = findViewById(R.id.connect_onedrive_button)
         recordingStatus = findViewById(R.id.recording_status)
         pendingCount = findViewById(R.id.pending_count)
         recordButton = findViewById(R.id.record_button)
         retryButton = findViewById(R.id.retry_button)
 
-        findViewById<Button>(R.id.choose_folder_button).setOnClickListener { chooseFolder() }
+        connectButton.setOnClickListener { connectOneDrive() }
         recordButton.setOnClickListener { toggleRecording() }
         retryButton.setOnClickListener { retryPending() }
         findViewById<Button>(R.id.add_widget_button).setOnClickListener { requestWidgetPin() }
@@ -129,8 +104,8 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
             return
         }
         if (state.isBusy) return
-        if (!treeStore.isReady()) {
-            chooseFolder()
+        if (!preferences.oneDriveConnected) {
+            connectOneDrive()
             return
         }
         if (!preferences.hasMicrophonePermission(this)) {
@@ -153,8 +128,8 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
     }
 
     private fun retryPending() {
-        if (!treeStore.isReady()) {
-            chooseFolder()
+        if (!preferences.oneDriveConnected) {
+            connectOneDrive()
             return
         }
         runCatching { RecorderService.requestRetry(this) }
@@ -175,15 +150,111 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
         )
     }
 
-    private fun chooseFolder() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
-                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION,
+    private fun connectOneDrive() {
+        if (connectionInFlight || preferences.state().isBusy) return
+        val pendingMemos = pendingStore.pendingCount()
+        if (!oneDriveSession.isConfigured()) {
+            preferences.oneDriveConnected = false
+            preferences.updateState(
+                AppPreferences.Phase.ERROR,
+                getString(R.string.onedrive_build_not_configured),
+                pendingMemos,
+            )
+            diagnostics.record(
+                MobileDiagnosticEvents.ONEDRIVE_CONNECTION_FAILED,
+                pendingMemoCount = pendingMemos,
+            )
+            render()
+            EchoDraftWidgetUi.updateAll(this)
+            return
+        }
+
+        connectionInFlight = true
+        connectedBeforeSignIn = preferences.oneDriveConnected
+        preferences.updateState(
+            AppPreferences.Phase.IDLE,
+            getString(R.string.onedrive_connecting),
+            pendingMemos,
         )
-        folderPicker.launch(intent)
+        render()
+        oneDriveSession.signIn(this, object : OneDriveSession.SignInCallback {
+            override fun onSignedIn() {
+                if (!canUpdateUi()) return
+                verifyOneDriveConnection()
+            }
+
+            override fun onCancelled() {
+                if (!canUpdateUi()) return
+                connectionInFlight = false
+                preferences.oneDriveConnected = connectedBeforeSignIn
+                preferences.updateState(
+                    AppPreferences.Phase.IDLE,
+                    getString(R.string.onedrive_sign_in_cancelled),
+                    pendingStore.pendingCount(),
+                )
+                render()
+                EchoDraftWidgetUi.updateAll(this@MainActivity)
+            }
+
+            override fun onError(error: Throwable) {
+                if (!canUpdateUi()) return
+                finishConnectionFailure(error)
+            }
+        })
     }
+
+    private fun verifyOneDriveConnection() {
+        preferences.updateState(
+            AppPreferences.Phase.IDLE,
+            getString(R.string.onedrive_checking),
+            pendingStore.pendingCount(),
+        )
+        render()
+        connectionExecutor.execute {
+            val result = runCatching {
+                val accessToken = oneDriveSession.acquireAccessToken()
+                graphApi.appRoot(accessToken)
+            }
+            runOnUiThread {
+                if (!canUpdateUi()) return@runOnUiThread
+                result.fold(
+                    onSuccess = {
+                        connectionInFlight = false
+                        preferences.oneDriveConnected = true
+                        preferences.updateState(
+                            AppPreferences.Phase.IDLE,
+                            getString(R.string.onedrive_connected_message),
+                            pendingStore.pendingCount(),
+                        )
+                        diagnostics.sync()
+                        render()
+                        EchoDraftWidgetUi.updateAll(this)
+                    },
+                    onFailure = ::finishConnectionFailure,
+                )
+            }
+        }
+    }
+
+    private fun finishConnectionFailure(error: Throwable) {
+        connectionInFlight = false
+        preferences.oneDriveConnected = connectedBeforeSignIn
+        val pendingMemos = pendingStore.pendingCount()
+        preferences.updateState(
+            AppPreferences.Phase.ERROR,
+            getString(R.string.onedrive_connection_failed),
+            pendingMemos,
+        )
+        diagnostics.report(
+            MobileDiagnosticEvents.ONEDRIVE_CONNECTION_FAILED,
+            error,
+            pendingMemos,
+        )
+        render()
+        EchoDraftWidgetUi.updateAll(this)
+    }
+
+    private fun canUpdateUi(): Boolean = !isFinishing && !isDestroyed
 
     private fun requestWidgetPin() {
         val manager = AppWidgetManager.getInstance(this)
@@ -194,16 +265,28 @@ class MainActivity : ComponentActivity(), SharedPreferences.OnSharedPreferenceCh
 
     private fun render() {
         val state = preferences.state()
-        val root = runCatching { treeStore.requireWritableRoot() }.getOrNull()
-        folderStatus.text = root?.displayName ?: getString(R.string.folder_not_selected)
+        val connected = preferences.oneDriveConnected
+        oneDriveStatus.text = getString(
+            if (connected) R.string.onedrive_connected else R.string.onedrive_not_connected,
+        )
+        connectButton.text = getString(
+            if (connected) R.string.reconnect_onedrive else R.string.connect_onedrive,
+        )
+        connectButton.isEnabled = !connectionInFlight && !state.isBusy
         recordingStatus.text = state.message
         recordingStatus.setTextColor(
             getColor(if (state.isRecording) R.color.echo_recording else R.color.echo_text),
         )
         recordButton.text = getString(if (state.isRecording) R.string.stop else R.string.record)
-        recordButton.isEnabled = state.phase != AppPreferences.Phase.PUBLISHING
+        recordButton.isEnabled = state.phase != AppPreferences.Phase.PUBLISHING && !connectionInFlight
         pendingCount.text = getString(R.string.pending_count, state.pendingCount)
         retryButton.visibility = if (state.pendingCount > 0 && !state.isBusy) View.VISIBLE else View.GONE
-        retryButton.isEnabled = root != null
+        retryButton.isEnabled = connected && !connectionInFlight
+    }
+
+    companion object {
+        private val connectionExecutor = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "echodraft-onedrive-setup")
+        }
     }
 }

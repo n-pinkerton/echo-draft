@@ -1,10 +1,12 @@
 # EchoDraft Mobile (private Android companion)
 
-This is a deliberately small, sideload-only companion for one EchoDraft user. It records an AAC memo, publishes it to a user-selected cloud-synced folder, and leaves transcription and cleanup to the desktop app. It has no `INTERNET` permission, backend, analytics, account system, or on-phone transcription.
+This is a deliberately small, sideload-only companion for one EchoDraft user. It records an AAC memo, publishes it to EchoDraft's private OneDrive app folder, and leaves transcription, cleanup, and title generation to the desktop app. It has no custom backend, analytics, client secret, app-store release flow, or on-phone transcription.
 
-## Build now (no phone required)
+Microsoft sign-in is handled by MSAL. EchoDraft requests only delegated `Files.ReadWrite.AppFolder` access, so it can use its own `Apps/EchoDraft Mobile Inbox` folder rather than the rest of OneDrive. MSAL owns the token cache; EchoDraft never stores or logs tokens or account names.
 
-Prerequisites: an Android 12 or newer phone, plus Android Studio with the Android SDK installed on the PC.
+## Build (no phone required)
+
+Prerequisites: Android Studio with the Android SDK installed on the PC. Android 12 or newer is required only when installing.
 
 From the repository root in Windows PowerShell:
 
@@ -12,43 +14,55 @@ From the repository root in Windows PowerShell:
 npm run android:build
 ```
 
-The checked debug APK is written to:
+The helper uses Android Studio's bundled Java runtime, runs Android unit tests and lint, and writes the checked debug APK to:
 
 ```text
 android\app\build\outputs\apk\debug\app-debug.apk
 ```
 
-The helper automatically uses Android Studio's bundled Java runtime and the SDK in the normal Windows location. It runs Android unit tests and lint before assembling the APK.
+An unconfigured checkout can still build and run tests. Installation requires the private Microsoft values below so an unusable build cannot be installed accidentally.
 
-## Install later
+## Private Microsoft setup
 
-The phone does not need to be connected while building. When ready:
+This is one-time setup for this user and this PC's Android debug-signing key. No client secret is created.
+
+1. Create a single-tenant Microsoft Entra public-client app named **EchoDraft Mobile Inbox**.
+2. Add an Android platform with package name `com.echodraft.mobile` and the Base64 SHA-1 signature hash of this PC's debug certificate.
+3. Add delegated Microsoft Graph permission `Files.ReadWrite.AppFolder` and grant/accept consent for the intended account.
+4. Put the public identifiers in ignored `android/local.properties` entries:
+
+```properties
+echodraft.msalClientId=<application-client-id>
+echodraft.msalTenantId=<directory-tenant-id>
+echodraft.msalSignatureHash=<raw-base64-sha1-signature>
+```
+
+Keep any existing `sdk.dir` entry. The file is ignored by Git and must never be committed. The client ID, tenant ID, and signature hash are not passwords, but keeping this user-specific configuration local avoids publishing account metadata. See Microsoft's [MSAL Android configuration](https://learn.microsoft.com/en-us/entra/msal/android/msal-configuration) and [OneDrive app-folder guidance](https://learn.microsoft.com/en-us/graph/onedrive-sharepoint-appfolder).
+
+## Install
 
 1. On the phone, enable Developer options and USB debugging.
-2. Connect it by USB and accept the phone's debugging authorization prompt.
+2. Connect it by USB, unlock it, and accept the debugging authorization prompt.
 3. Run `npm run android:install` from the repository root.
 
-If Windows does not list the connected phone, install its OEM USB/ADB driver and reconnect it before retrying.
-
-The install command refuses to choose between multiple phones and does not contain or save a device identifier. It uses Android's normal debug signing for a private local install; no Play Store or release-signing setup is needed.
+The install command validates that the three private Microsoft values exist, refuses to choose between multiple phones, and never contains or saves a device identifier. It uses Android's normal debug signing for this private local install; no Play Store or release-signing setup is needed.
 
 ## One-time app setup
 
-1. Open **EchoDraft Mobile** and allow microphone access. Allow notifications so the active-recording control is visible.
-2. Tap **Choose shared inbox** and select the phone-side cloud folder reserved for EchoDraft memos. For example, choose a folder exposed by the signed-in OneDrive document provider.
-3. In desktop EchoDraft, open **Control Panel → To Do → Choose folder** and select that folder's local synced PC copy.
+1. Open **EchoDraft Mobile** and tap **Connect OneDrive**. Complete Microsoft sign-in and consent. EchoDraft creates/opens `Apps/EchoDraft Mobile Inbox` automatically.
+2. Allow microphone access. Allow notifications so the active-recording control is visible.
+3. Wait for OneDrive on the PC to sync the app folder. In desktop EchoDraft, open **Control Panel → To Do → Choose folder** and select its local copy, normally `OneDrive - <organisation>\Apps\EchoDraft Mobile Inbox`.
 4. To add the widget, long-press an empty area of the Android home screen, choose **Widgets**, then add **EchoDraft Mobile**. The in-app **Add home-screen widget** button can also request this when the launcher supports it.
 
-The selected folder itself is the inbox root; do not select its parent on either device. If Android loses access because the folder is moved, deleted, or its permission is revoked, open the app and choose it again.
+If sign-in expires, open the app and tap **Reconnect OneDrive**. The widget uses only cached local readiness state; it never performs authentication or network work in a broadcast callback.
 
-## Use
+## Use and failure behavior
 
-- Tap **Record memo** in the widget or app, then tap **Stop and send**.
-- The app keeps a finalized local copy if publishing fails. Tap **Retry pending memos** after restoring folder or sync access.
-- Desktop EchoDraft processes each ready memo with its currently selected transcription provider, model, and cleanup setting. Results appear in **To Do**, where their generated titles and text are searchable and they can be copied and marked actioned.
+- Tap **Record** in the widget or app, then tap **Stop**.
+- EchoDraft writes and verifies audio before publishing the ready manifest. Create uploads fail on name conflicts, and final audio and manifest identities, sizes, and bytes are rechecked together before the private phone copy can be removed.
+- A failed sign-in, network request, conflict, or verification leaves the finalized memo on the phone. Tap **Retry pending uploads** after restoring access.
+- Desktop EchoDraft uses its currently selected transcription provider, model, cleanup setting, and title contract. Results appear in **To Do**, where generated titles and text are searchable and items can be copied and marked actioned.
 
-When a mobile operation fails, EchoDraft keeps a privacy-safe rolling diagnostic locally and makes a best-effort copy named `echodraft-mobile-diagnostics.jsonl` in the selected shared folder. If OneDrive or the folder is unavailable, the local copy is retried when the app next opens, a folder is selected, or a memo upload/retry finishes. Diagnostic storage and provider work runs on application-scoped workers and never gates recording or memo completion. The file contains at most the latest 20 failures (64 KiB total): stable event codes, app/API versions, exception types, and EchoDraft source locations. It never includes exception messages, dictation text, audio, folder paths or URIs, credentials, or phone/device identifiers. Desktop EchoDraft ignores this support file.
+When a mobile operation fails, EchoDraft keeps a content-free rolling diagnostic locally and makes a best-effort copy named `echodraft-mobile-diagnostics.jsonl` in the OneDrive app folder. If OneDrive is unavailable, the local copy is retried when the app opens or a memo upload/retry finishes. Local storage and Graph publication run on separate application workers and never gate recording completion. The file contains at most the latest 20 failures (64 KiB total): stable event codes, app/API versions, exception types, pending counts, and EchoDraft source locations. A strict allowlist rejects exception messages, dictation text, audio, paths/URIs, credentials, account details, and phone/device identifiers. Desktop EchoDraft ignores this support file.
 
-Recordings are capped at 32 MB. The Android app does not paste text or perform local transcription.
-
-If Android reaches its hard recording limit but cannot produce a valid M4A container, EchoDraft never publishes it as ready. It retains the raw result privately under the app's no-backup storage for manual recovery instead of risking a corrupt To Do item.
+Recordings are capped at 32 MB. The Android app does not paste text or perform local transcription. If Android reaches the hard recording limit but cannot produce a valid M4A container, EchoDraft never publishes it as ready and retains the raw result privately for manual recovery.

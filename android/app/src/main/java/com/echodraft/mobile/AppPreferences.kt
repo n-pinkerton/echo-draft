@@ -2,6 +2,7 @@ package com.echodraft.mobile
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -31,10 +32,14 @@ class AppPreferences(context: Context) {
     val sharedPreferences: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    var treeUri: Uri?
-        get() = sharedPreferences.getString(KEY_TREE_URI, null)?.let(Uri::parse)
+    init {
+        migrateLegacySaf(context.applicationContext)
+    }
+
+    var oneDriveConnected: Boolean
+        get() = sharedPreferences.getBoolean(KEY_ONEDRIVE_CONNECTED, false)
         set(value) {
-            sharedPreferences.edit().putString(KEY_TREE_URI, value?.toString()).apply()
+            sharedPreferences.edit().putBoolean(KEY_ONEDRIVE_CONNECTED, value).apply()
         }
 
     fun state(): State {
@@ -59,9 +64,57 @@ class AppPreferences(context: Context) {
     fun hasMicrophonePermission(context: Context): Boolean =
         context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
+    private fun migrateLegacySaf(context: Context) {
+        if (
+            sharedPreferences.contains(KEY_LEGACY_SAF_CLEANUP_PENDING) &&
+            !sharedPreferences.getBoolean(KEY_LEGACY_SAF_CLEANUP_PENDING, true)
+        ) {
+            return
+        }
+
+        val legacyUri = runCatching { sharedPreferences.getString(LEGACY_TREE_URI, null) }.getOrNull()
+        val permissionReleased = legacyUri == null || runCatching {
+            val uri = Uri.parse(legacyUri)
+            val permission = context.contentResolver.persistedUriPermissions.firstOrNull {
+                it.uri == uri
+            }
+            if (permission != null) {
+                var flags = 0
+                if (permission.isReadPermission) {
+                    flags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
+                if (permission.isWritePermission) {
+                    flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                }
+                if (flags != 0) context.contentResolver.releasePersistableUriPermission(uri, flags)
+            }
+        }.isSuccess
+        val recoveryCleared = runCatching {
+            context.getSharedPreferences(LEGACY_RECOVERY_PREFERENCES, Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        }.getOrDefault(false)
+
+        if (permissionReleased && recoveryCleared) {
+            val completed = sharedPreferences.edit()
+                .remove(LEGACY_TREE_URI)
+                .putBoolean(KEY_LEGACY_SAF_CLEANUP_PENDING, false)
+                .commit()
+            if (!completed) {
+                sharedPreferences.edit().putBoolean(KEY_LEGACY_SAF_CLEANUP_PENDING, true).apply()
+            }
+        } else {
+            sharedPreferences.edit().putBoolean(KEY_LEGACY_SAF_CLEANUP_PENDING, true).apply()
+        }
+    }
+
     companion object {
         private const val PREFERENCES_NAME = "echo_draft_mobile"
-        private const val KEY_TREE_URI = "inbox_tree_uri"
+        private const val KEY_ONEDRIVE_CONNECTED = "onedrive_connected"
+        private const val LEGACY_TREE_URI = "inbox_tree_uri"
+        private const val LEGACY_RECOVERY_PREFERENCES = "mobile_publication_recovery"
+        private const val KEY_LEGACY_SAF_CLEANUP_PENDING = "legacy_saf_cleanup_pending"
         private const val KEY_PHASE = "recording_phase"
         private const val KEY_MESSAGE = "status_message"
         private const val KEY_PENDING_COUNT = "pending_count"
