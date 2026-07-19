@@ -23,8 +23,12 @@ import {
 import { createStageUpdater } from "./audioRecording/stageUpdater";
 import { createTranscriptionCompleteHandler } from "./audioRecording/transcriptionCompleteHandler";
 import {
+  canShowMobileInboxTerminal,
   enqueueMobileInboxItem,
+  getMobileInboxExternalId,
   getMobileInboxRequestId,
+  getMobileInboxTerminalProgress,
+  mobileInboxRequestOwnsSession,
   reportMobileInboxFailure,
 } from "./audioRecording/mobileInbox";
 
@@ -71,6 +75,7 @@ export const useAudioRecording = (toast, options = {}) => {
   const recordingOperationQueueRef = useRef(null);
   const deliveryCommitCountRef = useRef(0);
   const pendingMobileInboxRequestsRef = useRef(new Map());
+  const mobileInboxRequestBySessionIdRef = useRef(new Map());
   const pipelineToast = useMemo(
     () => createPipelineToastNotifier(toast, recordingSessionIdRef),
     [toast]
@@ -256,7 +261,8 @@ export const useAudioRecording = (toast, options = {}) => {
     const audioManager = audioManagerRef.current;
     const cancelledContext =
       audioManager?.activeProcessingContext || audioManager?.streamingContext || null;
-    const isMobileInboxJob = Boolean(getMobileInboxRequestId(cancelledContext));
+    const mobileInboxRequestId = getMobileInboxRequestId(cancelledContext);
+    const isMobileInboxJob = Boolean(mobileInboxRequestId);
     const cancelled = audioManager?.cancelProcessing() || false;
     if (!cancelled) {
       return false;
@@ -265,28 +271,63 @@ export const useAudioRecording = (toast, options = {}) => {
       typeof cancelledContext?.sessionId === "string" && cancelledContext.sessionId.trim()
         ? cancelledContext.sessionId.trim()
         : null;
-    if (cancelledSessionId) {
+    const cancellationOwnsJob = mobileInboxRequestOwnsSession(
+      mobileInboxRequestBySessionIdRef,
+      cancelledSessionId,
+      mobileInboxRequestId,
+      cancelledSessionId ? jobsBySessionIdRef.current.get(cancelledSessionId) : null
+    );
+    if (cancelledSessionId && cancellationOwnsJob) {
       sessionsByIdRef.current.delete(cancelledSessionId);
       removeJob(cancelledSessionId);
       if (activeSessionRef.current?.sessionId === cancelledSessionId) {
         activeSessionRef.current = null;
       }
     }
-    if (isMobileInboxJob) {
-      void completeMobileInboxRequest(cancelledContext, { success: false })?.catch?.(() => {});
-    }
     const preservedCount = Math.max(
       0,
       Number(audioManager?.getState?.()?.queuedProcessingJobs) || 0
     );
-    updateStage("cancelled", {
-      message: preservedCount
-        ? `Current dictation cancelled; ${preservedCount} queued ${
-            preservedCount === 1 ? "dictation" : "dictations"
-          } preserved.`
-        : "Processing cancelled",
-      canCancel: false,
-    });
+    if (isMobileInboxJob) {
+      const settlement = completeMobileInboxRequest(cancelledContext, { success: false });
+      void Promise.resolve(settlement)
+        .catch(() => null)
+        .then(() => {
+          const currentJob = cancelledSessionId
+            ? jobsBySessionIdRef.current.get(cancelledSessionId)
+            : null;
+          if (
+            !mobileInboxRequestOwnsSession(
+              mobileInboxRequestBySessionIdRef,
+              cancelledSessionId,
+              mobileInboxRequestId,
+              currentJob
+            ) ||
+            !canShowMobileInboxTerminal({
+              recordingSessionId: recordingSessionIdRef.current,
+              progressSessionId: latestProgressRef.current?.sessionId,
+              mobileSessionId: cancelledSessionId,
+            })
+          ) {
+            return;
+          }
+          const terminalProgress = getMobileInboxTerminalProgress(false);
+          updateStage(terminalProgress.stage, {
+            ...terminalProgress,
+            outputMode: "mobile-todo",
+            ...(cancelledSessionId ? { sessionId: cancelledSessionId } : {}),
+          });
+        });
+    } else {
+      updateStage("cancelled", {
+        message: preservedCount
+          ? `Current dictation cancelled; ${preservedCount} queued ${
+              preservedCount === 1 ? "dictation" : "dictations"
+            } preserved.`
+          : "Processing cancelled",
+        canCancel: false,
+      });
+    }
     void playCancelCue();
     return true;
   }, [completeMobileInboxRequest, removeJob, updateStage]);
@@ -302,6 +343,8 @@ export const useAudioRecording = (toast, options = {}) => {
   );
 
   useEffect(() => {
+    const pendingMobileInboxRequests = pendingMobileInboxRequestsRef.current;
+    const mobileInboxRequestBySessionId = mobileInboxRequestBySessionIdRef.current;
     audioManagerRef.current = new AudioManager();
 
     const isE2E =
@@ -318,6 +361,8 @@ export const useAudioRecording = (toast, options = {}) => {
       activeSessionRef,
       audioManagerRef,
       jobsBySessionIdRef,
+      latestProgressRef,
+      mobileInboxRequestBySessionIdRef,
       normalizeTriggerPayload,
       recordingSessionIdRef,
       removeJob,
@@ -340,6 +385,7 @@ export const useAudioRecording = (toast, options = {}) => {
         audioManagerRef,
         jobsBySessionIdRef,
         latestProgressRef,
+        mobileInboxRequestBySessionIdRef,
         sessionsByIdRef,
         recordingSessionIdRef,
         removeJob,
@@ -354,13 +400,49 @@ export const useAudioRecording = (toast, options = {}) => {
         upsertJob,
         onTranscriptionComplete: handleTranscriptionComplete,
         onProcessingError: (error) => {
-          if (!getMobileInboxRequestId(error?.context)) return false;
-          void completeMobileInboxRequest(error.context, { success: false })?.catch?.(() => {});
+          const mobileInboxRequestId = getMobileInboxRequestId(error?.context);
+          if (!mobileInboxRequestId) return false;
           const sessionId = error?.context?.sessionId;
-          if (typeof sessionId === "string") {
+          const errorOwnsJob = mobileInboxRequestOwnsSession(
+            mobileInboxRequestBySessionIdRef,
+            sessionId,
+            mobileInboxRequestId,
+            typeof sessionId === "string" ? jobsBySessionIdRef.current.get(sessionId) : null
+          );
+          if (typeof sessionId === "string" && errorOwnsJob) {
             sessionsByIdRef.current.delete(sessionId);
             removeJob(sessionId);
           }
+          const settlement = completeMobileInboxRequest(error.context, { success: false });
+          void Promise.resolve(settlement)
+            .catch(() => null)
+            .then(() => {
+              const currentJob =
+                typeof sessionId === "string"
+                  ? jobsBySessionIdRef.current.get(sessionId)
+                  : null;
+              if (
+                !mobileInboxRequestOwnsSession(
+                  mobileInboxRequestBySessionIdRef,
+                  sessionId,
+                  mobileInboxRequestId,
+                  currentJob
+                ) ||
+                !canShowMobileInboxTerminal({
+                  recordingSessionId: recordingSessionIdRef.current,
+                  progressSessionId: latestProgressRef.current?.sessionId,
+                  mobileSessionId: typeof sessionId === "string" ? sessionId : null,
+                })
+              ) {
+                return;
+              }
+              const terminalProgress = getMobileInboxTerminalProgress(false);
+              updateStage(terminalProgress.stage, {
+                ...terminalProgress,
+                outputMode: error?.context?.outputMode || "mobile-todo",
+                ...(typeof sessionId === "string" ? { sessionId } : {}),
+              });
+            });
           return true;
         },
         playErrorCue,
@@ -413,6 +495,13 @@ export const useAudioRecording = (toast, options = {}) => {
     const disposeNoAudio = window.electronAPI.onNoAudioDetected?.(handleNoAudioDetected);
 
     const disposeMobileInbox = window.electronAPI.onMobileInboxProcess?.((payload) => {
+      const mobileInboxRequestId = getMobileInboxRequestId(payload);
+      const mobileInboxSessionId = getMobileInboxExternalId(payload);
+      if (mobileInboxRequestId && mobileInboxSessionId) {
+        // Keep the latest request for the renderer lifetime so a timed-out
+        // attempt cannot reclaim ownership after its retry has completed.
+        mobileInboxRequestBySessionId.set(mobileInboxSessionId, mobileInboxRequestId);
+      }
       try {
         const context = enqueueMobileInboxItem({
           audioManager: audioManagerRef.current,
@@ -426,6 +515,21 @@ export const useAudioRecording = (toast, options = {}) => {
         });
       } catch {
         reportMobileInboxFailure(window.electronAPI, payload);
+        const sessionId = getMobileInboxExternalId(payload);
+        if (
+          canShowMobileInboxTerminal({
+            recordingSessionId: recordingSessionIdRef.current,
+            progressSessionId: latestProgressRef.current?.sessionId,
+            mobileSessionId: sessionId,
+          })
+        ) {
+          const terminalProgress = getMobileInboxTerminalProgress(false);
+          updateStage(terminalProgress.stage, {
+            ...terminalProgress,
+            outputMode: "mobile-todo",
+            ...(sessionId ? { sessionId } : {}),
+          });
+        }
       }
     });
     void window.electronAPI.mobileInboxRendererReady?.().catch(() => {});
@@ -439,8 +543,9 @@ export const useAudioRecording = (toast, options = {}) => {
       disposeMobileInbox?.();
       disposeE2E?.();
       clearProgressResetTimer();
-      const pendingMobileRequests = [...pendingMobileInboxRequestsRef.current.values()];
-      pendingMobileInboxRequestsRef.current.clear();
+      const pendingMobileRequests = [...pendingMobileInboxRequests.values()];
+      pendingMobileInboxRequests.clear();
+      mobileInboxRequestBySessionId.clear();
       for (const pending of pendingMobileRequests) {
         reportMobileInboxFailure(window.electronAPI, pending.context);
       }

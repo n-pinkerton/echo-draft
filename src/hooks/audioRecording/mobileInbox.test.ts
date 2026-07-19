@@ -34,6 +34,10 @@ describe("mobile inbox renderer bridge", () => {
       { source: "android" },
       context
     );
+    expect(upsertJob).toHaveBeenCalledWith(
+      ID,
+      expect.objectContaining({ mobileInboxRequestId: ID, outputMode: "mobile-todo" })
+    );
   });
 
   it("rejects unsupported or oversized payloads", () => {

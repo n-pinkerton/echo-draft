@@ -116,6 +116,7 @@ describe("createTranscriptionCompleteHandler", () => {
     const safePaste = vi.fn();
     const writeClipboard = vi.fn();
     const removeJob = vi.fn();
+    const updateStage = vi.fn();
     const handler = createTranscriptionCompleteHandler({
       activeSessionRef: { current: null },
       audioManagerRef: {
@@ -133,7 +134,7 @@ describe("createTranscriptionCompleteHandler", () => {
       setProgress: vi.fn(),
       setTranscript: vi.fn(),
       toast: vi.fn(),
-      updateStage: vi.fn(),
+      updateStage,
       upsertJob: vi.fn(),
       electronAPI: { completeMobileInboxItem, writeClipboard },
     });
@@ -167,6 +168,70 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(safePaste).not.toHaveBeenCalled();
     expect(writeClipboard).not.toHaveBeenCalled();
     expect(removeJob).toHaveBeenCalledWith(sessionId);
+    expect(updateStage).toHaveBeenCalledWith(
+      "done",
+      expect.objectContaining({
+        stageLabel: "Mobile memo processed",
+        message: "Processing complete.",
+        outputMode: "mobile-todo",
+        sessionId,
+        jobId: 3,
+        canCancel: false,
+      })
+    );
+  });
+
+  it("does not let a delayed mobile acknowledgement replace newer progress", async () => {
+    const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const requestId = "5f8d2d0e-3792-48cc-b8df-bf651c365a17";
+    const retryRequestId = "75ac1d19-3f45-4b1e-b4f2-5cad2d7d420f";
+    const acknowledgement = deferred<{ success: boolean }>();
+    const latestProgressRef = { current: { sessionId, stage: "cleaning" } };
+    const mobileInboxRequestBySessionIdRef = {
+      current: new Map([[sessionId, requestId]]),
+    };
+    const jobsBySessionId = new Map([
+      [sessionId, { jobId: 3, mobileInboxRequestId: requestId }],
+    ]);
+    const updateStage = vi.fn();
+    const removeJob = vi.fn();
+    const handler = createTranscriptionCompleteHandler({
+      activeSessionRef: { current: null },
+      audioManagerRef: { current: {} },
+      jobsBySessionIdRef: { current: jobsBySessionId },
+      latestProgressRef,
+      mobileInboxRequestBySessionIdRef,
+      normalizeTriggerPayload: (payload: any) => payload,
+      recordingSessionIdRef: { current: null },
+      removeJob,
+      sessionsByIdRef: { current: new Map() },
+      setProgress: vi.fn(),
+      setTranscript: vi.fn(),
+      toast: vi.fn(),
+      updateStage,
+      upsertJob: vi.fn(),
+      electronAPI: { completeMobileInboxItem: vi.fn(() => acknowledgement.promise) },
+    });
+
+    const completion = handler({
+      success: true,
+      text: "Processed memo",
+      source: "openai",
+      context: {
+        sessionId,
+        jobId: 3,
+        outputMode: "mobile-todo",
+        mobileInboxRequestId: requestId,
+      },
+    });
+    mobileInboxRequestBySessionIdRef.current.set(sessionId, retryRequestId);
+    jobsBySessionId.delete(sessionId);
+    latestProgressRef.current = { sessionId, stage: "queued" };
+    acknowledgement.resolve({ success: true });
+    await completion;
+
+    expect(removeJob).not.toHaveBeenCalled();
+    expect(updateStage).not.toHaveBeenCalled();
   });
 
   it("handles clipboard mode: writes clipboard, saves history, updates stage", async () => {

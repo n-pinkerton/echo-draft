@@ -5,8 +5,11 @@ import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 import { countWords } from "./textMetrics";
 import { normalizeCleanupTitle } from "../../config/cleanupOutputContract.cjs";
 import {
+  canShowMobileInboxTerminal,
   createMobileInboxCompletion,
   getMobileInboxRequestId,
+  getMobileInboxTerminalProgress,
+  mobileInboxRequestOwnsSession,
 } from "./mobileInbox";
 
 const CLIPBOARD_PROTECTION_FAILURE_CODES = new Set([
@@ -75,6 +78,8 @@ export const createTranscriptionCompleteHandler = (deps) => {
     activeSessionRef,
     audioManagerRef,
     jobsBySessionIdRef,
+    latestProgressRef,
+    mobileInboxRequestBySessionIdRef,
     normalizeTriggerPayload,
     recordingSessionIdRef,
     removeJob,
@@ -138,21 +143,64 @@ export const createTranscriptionCompleteHandler = (deps) => {
     }
 
     if (mobileInboxRequestId) {
+      const completion = createMobileInboxCompletion(
+        result,
+        mobileInboxRequestOwnsSession(
+          mobileInboxRequestBySessionIdRef,
+          resolvedSessionId,
+          mobileInboxRequestId,
+          job
+        )
+          ? job
+          : null
+      );
+      let completionAccepted = false;
+      deliveryCommitCountRef.current += 1;
       try {
-        const completion = createMobileInboxCompletion(result, job);
+        let response;
         if (completeMobileInboxRequest) {
-          await completeMobileInboxRequest(result.context, completion);
+          response = await completeMobileInboxRequest(result.context, completion);
         } else {
-          await electronAPI?.completeMobileInboxItem?.(mobileInboxRequestId, completion);
+          response = await electronAPI?.completeMobileInboxItem?.(mobileInboxRequestId, completion);
         }
+        completionAccepted = response?.success === true;
       } catch (error) {
         logger.warn(
           "Failed to report mobile inbox completion",
           { error: error?.message || String(error) },
           "transcription"
         );
+      } finally {
+        deliveryCommitCountRef.current = Math.max(0, deliveryCommitCountRef.current - 1);
       }
-      if (resolvedSessionId) removeJob(resolvedSessionId);
+      const currentJob = resolvedSessionId
+        ? jobsBySessionIdRef.current.get(resolvedSessionId)
+        : null;
+      const ownsCurrentJob = mobileInboxRequestOwnsSession(
+        mobileInboxRequestBySessionIdRef,
+        resolvedSessionId,
+        mobileInboxRequestId,
+        currentJob
+      );
+      if (resolvedSessionId && ownsCurrentJob) removeJob(resolvedSessionId);
+      if (
+        ownsCurrentJob &&
+        canShowMobileInboxTerminal({
+          recordingSessionId: recordingSessionIdRef.current,
+          progressSessionId: latestProgressRef?.current?.sessionId,
+          mobileSessionId: resolvedSessionId,
+        })
+      ) {
+        const terminalProgress = getMobileInboxTerminalProgress(
+          completion.success === true && completionAccepted
+        );
+        updateStage(terminalProgress.stage, {
+          ...terminalProgress,
+          outputMode: "mobile-todo",
+          sessionId: session.sessionId,
+          ...(jobId !== null ? { jobId } : {}),
+        });
+      }
       return;
     }
 

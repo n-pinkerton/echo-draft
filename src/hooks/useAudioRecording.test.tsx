@@ -25,6 +25,14 @@ vi.mock("../utils/dictationCues", () => ({
 
 import { createPipelineToastNotifier, useAudioRecording } from "./useAudioRecording";
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+};
+
 describe("pipeline toast announcement ownership", () => {
   it("announces stacked success and failure while a newer recording owns the foreground", () => {
     const toast = vi.fn();
@@ -181,6 +189,16 @@ describe("useAudioRecording stacked hotkey routing", () => {
     expect((window as any).electronAPI.completeMobileInboxItem).toHaveBeenCalledWith(requestId, {
       success: false,
     });
+    await waitFor(() =>
+      expect(result.current.progress).toEqual(
+        expect.objectContaining({
+          stage: "error",
+          stageLabel: "Mobile memo will retry",
+          outputMode: "mobile-todo",
+          sessionId: externalId,
+        })
+      )
+    );
 
     unmount();
   });
@@ -215,7 +233,7 @@ describe("useAudioRecording stacked hotkey routing", () => {
     const requestId = "550e8400-e29b-41d4-a716-446655440000";
     const externalId = "5f8d2d0e-3792-48cc-b8df-bf651c365a17";
     const toast = vi.fn();
-    const { unmount } = renderHook(() => useAudioRecording(toast));
+    const { result, unmount } = renderHook(() => useAudioRecording(toast));
     await waitFor(() => expect(mocks.callbacks).toBeTruthy());
 
     act(() => {
@@ -246,6 +264,15 @@ describe("useAudioRecording stacked hotkey routing", () => {
       requestId,
       expect.objectContaining({ success: true, title: "Call Taylor" })
     );
+    expect(result.current.progress).toEqual(
+      expect.objectContaining({
+        stage: "done",
+        stageLabel: "Mobile memo processed",
+        message: "Processing complete.",
+        outputMode: "mobile-todo",
+        sessionId: externalId,
+      })
+    );
 
     unmount();
 
@@ -258,7 +285,7 @@ describe("useAudioRecording stacked hotkey routing", () => {
     const completeMobileInboxItem = (window as any).electronAPI.completeMobileInboxItem;
     completeMobileInboxItem.mockRejectedValueOnce(new Error("Invalid completion text"));
     const toast = vi.fn();
-    const { unmount } = renderHook(() => useAudioRecording(toast));
+    const { result, unmount } = renderHook(() => useAudioRecording(toast));
     await waitFor(() => expect(mocks.callbacks).toBeTruthy());
 
     act(() => {
@@ -284,10 +311,167 @@ describe("useAudioRecording stacked hotkey routing", () => {
 
     expect(completeMobileInboxItem).toHaveBeenCalledTimes(2);
     expect(completeMobileInboxItem).toHaveBeenLastCalledWith(requestId, { success: false });
+    expect(result.current.progress).toEqual(
+      expect.objectContaining({
+        stage: "error",
+        stageLabel: "Mobile memo will retry",
+        outputMode: "mobile-todo",
+        sessionId: externalId,
+      })
+    );
 
     unmount();
 
     expect(completeMobileInboxItem).toHaveBeenCalledTimes(2);
+  });
+
+  it("replaces stale mobile progress with a retry state after processing fails", async () => {
+    const requestId = "550e8400-e29b-41d4-a716-446655440000";
+    const externalId = "5f8d2d0e-3792-48cc-b8df-bf651c365a17";
+    const toast = vi.fn();
+    const { result, unmount } = renderHook(() => useAudioRecording(toast));
+    await waitFor(() => expect(mocks.callbacks).toBeTruthy());
+
+    act(() => {
+      mocks.mobileInboxHandler?.({
+        requestId,
+        externalId,
+        mimeType: "audio/mp4",
+        createdAt: "2026-07-18T01:00:00.000Z",
+        data: new Uint8Array([1, 2, 3]),
+      });
+    });
+    const context = mocks.manager.enqueueProcessingJob.mock.calls[0][2];
+
+    act(() => {
+      mocks.callbacks.onProgress({ stage: "cleaning", context });
+      mocks.callbacks.onError({ description: "Provider unavailable", context });
+    });
+
+    expect((window as any).electronAPI.completeMobileInboxItem).toHaveBeenCalledWith(requestId, {
+      success: false,
+    });
+    await waitFor(() =>
+      expect(result.current.progress).toEqual(
+        expect.objectContaining({
+          stage: "error",
+          stageLabel: "Mobile memo will retry",
+          message: "Processing did not finish; EchoDraft will retry automatically.",
+          outputMode: "mobile-todo",
+          sessionId: externalId,
+        })
+      )
+    );
+    expect(toast).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
+  it("does not let a delayed failed attempt replace a completed retry for the same memo", async () => {
+    const firstRequestId = "550e8400-e29b-41d4-a716-446655440000";
+    const retryRequestId = "75ac1d19-3f45-4b1e-b4f2-5cad2d7d420f";
+    const externalId = "5f8d2d0e-3792-48cc-b8df-bf651c365a17";
+    const firstAcknowledgement = deferred<{ success: boolean }>();
+    const completeMobileInboxItem = (window as any).electronAPI.completeMobileInboxItem;
+    completeMobileInboxItem.mockImplementation((requestId: string) =>
+      requestId === firstRequestId
+        ? firstAcknowledgement.promise
+        : Promise.resolve({ success: true })
+    );
+    const toast = vi.fn();
+    const { result, unmount } = renderHook(() => useAudioRecording(toast));
+    await waitFor(() => expect(mocks.mobileInboxHandler).toBeTypeOf("function"));
+
+    act(() => {
+      mocks.mobileInboxHandler?.({
+        requestId: firstRequestId,
+        externalId,
+        mimeType: "audio/mp4",
+        createdAt: "2026-07-18T01:00:00.000Z",
+        data: new Uint8Array([1, 2, 3]),
+      });
+    });
+    const firstContext = mocks.manager.enqueueProcessingJob.mock.calls[0][2];
+    act(() => {
+      mocks.callbacks.onProgress({ stage: "cleaning", context: firstContext });
+      mocks.callbacks.onError({ description: "Provider unavailable", context: firstContext });
+      mocks.mobileInboxHandler?.({
+        requestId: retryRequestId,
+        externalId,
+        mimeType: "audio/mp4",
+        createdAt: "2026-07-18T01:00:00.000Z",
+        data: new Uint8Array([1, 2, 3]),
+      });
+    });
+    const retryContext = mocks.manager.enqueueProcessingJob.mock.calls[1][2];
+
+    await act(async () => {
+      await mocks.callbacks.onTranscriptionComplete({
+        success: true,
+        text: "Retry completed",
+        source: "openai",
+        context: retryContext,
+      });
+    });
+    expect(result.current.progress).toEqual(
+      expect.objectContaining({
+        stage: "done",
+        stageLabel: "Mobile memo processed",
+        sessionId: externalId,
+      })
+    );
+
+    await act(async () => {
+      firstAcknowledgement.resolve({ success: true });
+      await firstAcknowledgement.promise;
+      await Promise.resolve();
+    });
+
+    expect(result.current.progress).toEqual(
+      expect.objectContaining({
+        stage: "done",
+        stageLabel: "Mobile memo processed",
+        sessionId: externalId,
+      })
+    );
+
+    unmount();
+  });
+
+  it("shows a retry terminal when a mobile memo cannot be enqueued", async () => {
+    const requestId = "550e8400-e29b-41d4-a716-446655440000";
+    const externalId = "5f8d2d0e-3792-48cc-b8df-bf651c365a17";
+    mocks.manager.enqueueProcessingJob.mockImplementationOnce(() => {
+      throw new Error("Queue unavailable");
+    });
+    const toast = vi.fn();
+    const { result, unmount } = renderHook(() => useAudioRecording(toast));
+    await waitFor(() => expect(mocks.mobileInboxHandler).toBeTypeOf("function"));
+
+    act(() => {
+      mocks.mobileInboxHandler?.({
+        requestId,
+        externalId,
+        mimeType: "audio/mp4",
+        createdAt: "2026-07-18T01:00:00.000Z",
+        data: new Uint8Array([1, 2, 3]),
+      });
+    });
+
+    expect((window as any).electronAPI.completeMobileInboxItem).toHaveBeenCalledWith(requestId, {
+      success: false,
+    });
+    expect(result.current.progress).toEqual(
+      expect.objectContaining({
+        stage: "error",
+        stageLabel: "Mobile memo will retry",
+        outputMode: "mobile-todo",
+        sessionId: externalId,
+      })
+    );
+    expect(toast).not.toHaveBeenCalled();
+
+    unmount();
   });
 
   it("retains a mobile request for cleanup when both completion attempts reject", async () => {

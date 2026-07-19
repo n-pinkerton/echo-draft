@@ -2,6 +2,7 @@ import logger from "../../utils/logger";
 import { getRendererLogLevel } from "../../utils/branding";
 import { countWords } from "./textMetrics";
 import { STAGE_META } from "./stages";
+import { getMobileInboxRequestId, mobileInboxRequestOwnsSession } from "./mobileInbox";
 
 export const createAudioManagerCallbacks = (deps) => {
   const {
@@ -9,6 +10,7 @@ export const createAudioManagerCallbacks = (deps) => {
     audioManagerRef,
     jobsBySessionIdRef,
     latestProgressRef,
+    mobileInboxRequestBySessionIdRef,
     sessionsByIdRef,
     recordingSessionIdRef,
     removeJob,
@@ -120,6 +122,21 @@ export const createAudioManagerCallbacks = (deps) => {
 
       const contextSessionId =
         typeof event?.context?.sessionId === "string" ? event.context.sessionId : null;
+      const mobileInboxRequestId = getMobileInboxRequestId(event?.context);
+      const currentJob = contextSessionId
+        ? jobsBySessionIdRef?.current?.get?.(contextSessionId)
+        : null;
+      if (
+        mobileInboxRequestId &&
+        !mobileInboxRequestOwnsSession(
+          mobileInboxRequestBySessionIdRef,
+          contextSessionId,
+          mobileInboxRequestId,
+          currentJob
+        )
+      ) {
+        return;
+      }
       const jobIdFromEvent =
         typeof event?.jobId === "number" && Number.isFinite(event.jobId) ? event.jobId : null;
 
@@ -136,6 +153,9 @@ export const createAudioManagerCallbacks = (deps) => {
                   : "processing";
 
         const jobPatch = { status: nextStatus };
+        if (mobileInboxRequestId) {
+          jobPatch.mobileInboxRequestId = mobileInboxRequestId;
+        }
         if (jobIdFromEvent !== null) {
           jobPatch.jobId = jobIdFromEvent;
         }
@@ -178,6 +198,17 @@ export const createAudioManagerCallbacks = (deps) => {
 
         if (contextSessionId && (event.stage === "error" || event.stage === "cancelled")) {
           setTimeout(() => {
+            if (
+              mobileInboxRequestId &&
+              !mobileInboxRequestOwnsSession(
+                mobileInboxRequestBySessionIdRef,
+                contextSessionId,
+                mobileInboxRequestId,
+                jobsBySessionIdRef?.current?.get?.(contextSessionId)
+              )
+            ) {
+              return;
+            }
             removeJob(contextSessionId);
             const state = audioManagerRef.current?.getState?.();
             const latestProgress = latestProgressRef?.current;

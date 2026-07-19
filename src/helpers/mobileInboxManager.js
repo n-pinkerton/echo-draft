@@ -9,6 +9,7 @@ const { MobileInboxFileStore } = require("./mobileInboxFileStore");
 const CONFIG_FILE_NAME = "mobile-inbox.json";
 const POLL_INTERVAL_MS = 5_000;
 const RETRY_DELAY_MS = 15_000;
+const PROCESSING_TIMEOUT_MS = 15 * 60 * 1_000;
 const MAX_SETTLING_ATTEMPTS = 5;
 const SETTLING_WINDOW_MS = 2 * 60 * 1_000;
 const EVIDENCELESS_RETRY_DELAY_MS = 10 * 60 * 1_000;
@@ -54,6 +55,7 @@ class MobileInboxManager {
       });
     this.pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
     this.retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS;
+    this.processingTimeoutMs = options.processingTimeoutMs ?? PROCESSING_TIMEOUT_MS;
     this.maxSettlingAttempts = options.maxSettlingAttempts ?? MAX_SETTLING_ATTEMPTS;
     this.settlingWindowMs = options.settlingWindowMs ?? SETTLING_WINDOW_MS;
     this.evidencelessRetryDelayMs =
@@ -164,11 +166,19 @@ class MobileInboxManager {
   }
 
   _rejectPending(message) {
-    for (const pending of this.pendingRequests.values()) {
-      pending.reject(new TemporaryMobileInboxError(message));
+    for (const requestId of [...this.pendingRequests.keys()]) {
+      const pending = this._takePendingRequest(requestId);
+      pending?.reject(new TemporaryMobileInboxError(message));
     }
-    this.pendingRequests.clear();
-    this.pendingRequestByExternalId.clear();
+  }
+
+  _takePendingRequest(requestId) {
+    const pending = this.pendingRequests.get(requestId);
+    if (!pending) return null;
+    this.pendingRequests.delete(requestId);
+    this.pendingRequestByExternalId.delete(pending.externalId);
+    if (pending.timeout) clearTimeout(pending.timeout);
+    return pending;
   }
 
   async scanNow() {
@@ -441,8 +451,14 @@ class MobileInboxManager {
 
     const requestId = this.crypto.randomUUID();
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(requestId, { externalId: manifest.externalId, resolve, reject });
+      const pending = { externalId: manifest.externalId, resolve, reject, timeout: null };
+      this.pendingRequests.set(requestId, pending);
       this.pendingRequestByExternalId.set(manifest.externalId, requestId);
+      pending.timeout = setTimeout(() => {
+        const expired = this._takePendingRequest(requestId);
+        expired?.reject(new TemporaryMobileInboxError("Mobile processing timed out"));
+      }, this.processingTimeoutMs);
+      pending.timeout.unref?.();
       try {
         mainWindow.webContents.send("mobile-inbox-process", {
           requestId,
@@ -452,18 +468,15 @@ class MobileInboxManager {
           data: buffer,
         });
       } catch (error) {
-        this.pendingRequests.delete(requestId);
-        this.pendingRequestByExternalId.delete(manifest.externalId);
-        reject(new TemporaryMobileInboxError(error?.message || "Mobile dispatch failed"));
+        const failed = this._takePendingRequest(requestId);
+        failed?.reject(new TemporaryMobileInboxError(error?.message || "Mobile dispatch failed"));
       }
     });
   }
 
   completeRequest(requestId, result) {
-    const pending = this.pendingRequests.get(requestId);
+    const pending = this._takePendingRequest(requestId);
     if (!pending) return { success: false, stale: true };
-    this.pendingRequests.delete(requestId);
-    this.pendingRequestByExternalId.delete(pending.externalId);
     pending.resolve(result);
     return { success: true };
   }

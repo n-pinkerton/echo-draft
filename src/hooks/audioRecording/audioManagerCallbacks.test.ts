@@ -402,6 +402,114 @@ describe("createAudioManagerCallbacks", () => {
     );
   });
 
+  it("ignores late progress from a timed-out mobile attempt after its retry owns the job", () => {
+    const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const oldRequestId = "5f8d2d0e-3792-48cc-b8df-bf651c365a17";
+    const retryRequestId = "75ac1d19-3f45-4b1e-b4f2-5cad2d7d420f";
+    const updateStage = vi.fn();
+    const upsertJob = vi.fn();
+    const callbacks = createAudioManagerCallbacks({
+      activeSessionRef: { current: null },
+      audioManagerRef: { current: null },
+      jobsBySessionIdRef: {
+        current: new Map([
+          [sessionId, { sessionId, mobileInboxRequestId: retryRequestId, status: "queued" }],
+        ]),
+      },
+      latestProgressRef: { current: { sessionId, stage: "queued" } },
+      sessionsByIdRef: { current: new Map() },
+      recordingSessionIdRef: { current: null },
+      removeJob: vi.fn(),
+      setIsProcessing: vi.fn(),
+      setIsRecording: vi.fn(),
+      setIsStreaming: vi.fn(),
+      setPartialTranscript: vi.fn(),
+      setProgress: vi.fn(),
+      toast: vi.fn(),
+      updateStage,
+      upsertJob,
+      onTranscriptionComplete: vi.fn(),
+      playErrorCue: vi.fn(),
+      playStopCue: vi.fn(),
+    });
+
+    callbacks.onProgress({
+      stage: "cleaning",
+      context: {
+        sessionId,
+        outputMode: "mobile-todo",
+        mobileInboxRequestId: oldRequestId,
+      },
+    });
+
+    expect(upsertJob).not.toHaveBeenCalled();
+    expect(updateStage).not.toHaveBeenCalled();
+  });
+
+  it("does not let an old mobile terminal timer remove its retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+      const oldRequestId = "5f8d2d0e-3792-48cc-b8df-bf651c365a17";
+      const retryRequestId = "75ac1d19-3f45-4b1e-b4f2-5cad2d7d420f";
+      const jobsBySessionIdRef = {
+        current: new Map([
+          [sessionId, { sessionId, mobileInboxRequestId: oldRequestId, status: "processing" }],
+        ]),
+      };
+      const mobileInboxRequestBySessionIdRef = {
+        current: new Map([[sessionId, oldRequestId]]),
+      };
+      const removeJob = vi.fn((targetSessionId: string) => {
+        jobsBySessionIdRef.current.delete(targetSessionId);
+      });
+      const callbacks = createAudioManagerCallbacks({
+        activeSessionRef: { current: null },
+        audioManagerRef: {
+          current: { getState: () => ({ isRecording: false, isProcessing: true }) },
+        },
+        jobsBySessionIdRef,
+        latestProgressRef: { current: { sessionId, stage: "error" } },
+        mobileInboxRequestBySessionIdRef,
+        sessionsByIdRef: { current: new Map() },
+        recordingSessionIdRef: { current: null },
+        removeJob,
+        resetProgress: vi.fn(),
+        setIsProcessing: vi.fn(),
+        setIsRecording: vi.fn(),
+        setIsStreaming: vi.fn(),
+        setPartialTranscript: vi.fn(),
+        setProgress: vi.fn(),
+        toast: vi.fn(),
+        updateStage: vi.fn(),
+        upsertJob: vi.fn(),
+        onTranscriptionComplete: vi.fn(),
+        playErrorCue: vi.fn(),
+        playStopCue: vi.fn(),
+      });
+
+      callbacks.onProgress({
+        stage: "error",
+        context: { sessionId, mobileInboxRequestId: oldRequestId },
+      });
+      mobileInboxRequestBySessionIdRef.current.set(sessionId, retryRequestId);
+      jobsBySessionIdRef.current.set(sessionId, {
+        sessionId,
+        mobileInboxRequestId: retryRequestId,
+        status: "processing",
+      });
+
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(removeJob).not.toHaveBeenCalled();
+      expect(jobsBySessionIdRef.current.get(sessionId)).toEqual(
+        expect.objectContaining({ mobileInboxRequestId: retryRequestId })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores late partial text from an earlier streaming job during a newer recording", () => {
     const setPartialTranscript = vi.fn();
     const setProgress = vi.fn();

@@ -418,6 +418,43 @@ describe("MobileInboxManager", () => {
     });
   });
 
+  it("times out an unresponsive renderer request and permits retry", async () => {
+    const { inboxPath, userDataPath } = await createWorkspace();
+    const item = await writeReadyItem(inboxPath);
+    const { databaseManager, manager, send } = createManager(userDataPath, {
+      processingTimeoutMs: 10,
+      retryDelayMs: 0,
+    });
+    let timedOutRequestId = "";
+    send
+      .mockImplementationOnce((_channel, payload) => {
+        timedOutRequestId = payload.requestId;
+      })
+      .mockImplementationOnce((_channel, payload) => {
+        queueMicrotask(() =>
+          manager.completeRequest(payload.requestId, {
+            success: true,
+            text: "Retried after timeout",
+          })
+        );
+      });
+    await manager.setInboxPath(inboxPath);
+
+    await manager.scanNow();
+    expect(manager.getStatus().state).toBe("retrying");
+    expect(manager.completeRequest(timedOutRequestId, { success: true, text: "Late" })).toEqual({
+      success: false,
+      stale: true,
+    });
+
+    await manager.scanNow();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(databaseManager.saveTodo).toHaveBeenCalledOnce();
+    await expect(fs.promises.stat(path.join(inboxPath, item.manifestFile))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("binds teardown to the current renderer generation when the main window is recreated", async () => {
     const { inboxPath, userDataPath } = await createWorkspace();
     const item = await writeReadyItem(inboxPath);

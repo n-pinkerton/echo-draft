@@ -46,7 +46,8 @@ export default function DictationStatusIndicator({
       : "Cancel from the EchoDraft tray menu"
     : message || (stage === "done" ? "Text delivered" : "");
   const normalizedWaitingCount = Math.max(0, Math.floor(queuedWaitingCount));
-  const destinationLabel = outputMode === "clipboard" ? "Clipboard" : "Insert";
+  const destinationLabel =
+    outputMode === "clipboard" ? "Clipboard" : outputMode === "mobile-todo" ? "To Do" : "Insert";
   const activeContext = TerminalIcon
     ? []
     : [destinationLabel, ...(normalizedWaitingCount ? [`${normalizedWaitingCount} waiting`] : [])];

@@ -27,6 +27,19 @@ describe("DictationStatusIndicator", () => {
     expect(indicator.querySelector("svg")).toHaveClass("animate-spin");
   });
 
+  it("identifies mobile processing as a To Do memo", () => {
+    render(
+      <DictationStatusIndicator
+        stage="cleaning"
+        stageLabel="Cleaning up"
+        outputMode="mobile-todo"
+      />
+    );
+
+    expect(screen.queryByText("To Do · Insert")).not.toBeInTheDocument();
+    expect(screen.getByText("To Do")).toBeInTheDocument();
+  });
+
   it.each([
     {
       stage: "done",

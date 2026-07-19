@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Visible Processing Progress**: Keeps the floating dictation indicator visible after recording stops, shows transcription and cleanup stages, and hides it after completion.
 
+### Fixed
+
+- **Mobile Processing Status**: Replaces stale mobile transcription or cleanup progress with explicit processed or automatic-retry states and bounds unresponsive renderer work so the inbox can retry it.
+
 ## [1.4.18] - 2026-07-16
 
 ### Fixed
