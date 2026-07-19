@@ -71,10 +71,11 @@ object EchoDraftWidgetUi {
             WidgetStatusMode.PROCESSING -> context.getString(R.string.status_saving)
             WidgetStatusMode.ERROR -> context.getString(R.string.widget_status_error)
             WidgetStatusMode.PENDING -> context.getString(R.string.widget_status_pending, state.pendingCount)
-            WidgetStatusMode.LAST_UPLOAD -> "${lastUploadParts!!.first}\n${lastUploadParts.second}"
+            WidgetStatusMode.LAST_UPLOAD -> "${lastUploadParts!!.first} ${lastUploadParts.second}"
             WidgetStatusMode.READY -> context.getString(R.string.status_ready)
         }
         views.setTextViewText(R.id.widget_status, statusText)
+        views.setInt(R.id.widget_action, "setColorFilter", context.getColor(R.color.echo_blue))
         val stateDescription = if (state.pendingCount > 0) {
             "${state.message} · ${state.pendingCount} pending"
         } else {
@@ -101,6 +102,11 @@ object EchoDraftWidgetUi {
         val action = when (actionMode) {
             WidgetActionMode.STOP -> {
                 views.setImageViewResource(R.id.widget_action, R.drawable.ic_stop_notification)
+                views.setInt(
+                    R.id.widget_action,
+                    "setColorFilter",
+                    context.getColor(R.color.echo_recording),
+                )
                 views.setContentDescription(R.id.widget_action, context.getString(R.string.widget_stop))
                 PendingIntent.getForegroundService(
                     context,

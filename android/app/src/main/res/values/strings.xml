@@ -23,12 +23,13 @@
     <string name="status_setup">Open the app to finish setup</string>
     <string name="status_recording">Recording…</string>
     <string name="status_saving">Saving memo…</string>
+    <string name="widget_title">EchoDraft</string>
     <string name="widget_record">Record</string>
     <string name="widget_stop">Stop</string>
     <string name="widget_setup">Set up</string>
     <string name="widget_processing">Processing memo</string>
     <string name="widget_last_uploaded">Last upload: %1$s</string>
-    <string name="widget_status_setup">Tap mic\nto set up</string>
+    <string name="widget_status_setup">Tap mic to set up</string>
     <string name="widget_status_starting">Starting…</string>
     <string name="widget_status_error">Needs attention</string>
     <string name="widget_status_pending">%1$d pending</string>
