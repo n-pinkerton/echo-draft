@@ -42,6 +42,12 @@ class AppPreferences(context: Context) {
             sharedPreferences.edit().putBoolean(KEY_ONEDRIVE_CONNECTED, value).apply()
         }
 
+    var lastUploadedAtMillis: Long
+        get() = sharedPreferences.getLong(KEY_LAST_UPLOADED_AT_MILLIS, 0L).coerceAtLeast(0L)
+        set(value) {
+            sharedPreferences.edit().putLong(KEY_LAST_UPLOADED_AT_MILLIS, value.coerceAtLeast(0L)).apply()
+        }
+
     fun state(): State {
         val phase = runCatching {
             Phase.valueOf(sharedPreferences.getString(KEY_PHASE, Phase.IDLE.name)!!)
@@ -112,6 +118,7 @@ class AppPreferences(context: Context) {
     companion object {
         private const val PREFERENCES_NAME = "echo_draft_mobile"
         private const val KEY_ONEDRIVE_CONNECTED = "onedrive_connected"
+        private const val KEY_LAST_UPLOADED_AT_MILLIS = "last_uploaded_at_millis"
         private const val LEGACY_TREE_URI = "inbox_tree_uri"
         private const val LEGACY_RECOVERY_PREFERENCES = "mobile_publication_recovery"
         private const val KEY_LEGACY_SAF_CLEANUP_PENDING = "legacy_saf_cleanup_pending"

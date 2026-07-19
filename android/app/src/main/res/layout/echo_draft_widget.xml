@@ -5,40 +5,45 @@
     android:background="@drawable/widget_background"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:padding="14dp">
+    android:padding="4dp">
 
-    <LinearLayout
+    <TextView
+        android:id="@+id/widget_status"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:orientation="vertical">
+        android:ellipsize="end"
+        android:gravity="center_vertical"
+        android:maxLines="2"
+        android:text="@string/status_ready"
+        android:textColor="@color/echo_muted"
+        android:textSize="10sp" />
 
-        <TextView
-            android:id="@+id/widget_title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/widget_title"
-            android:textColor="@color/echo_text"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/widget_status"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="3dp"
-            android:maxLines="2"
-            android:text="@string/status_ready"
-            android:textColor="@color/echo_muted"
-            android:textSize="12sp" />
-    </LinearLayout>
-
-    <Button
-        android:id="@+id/widget_action"
-        android:layout_width="wrap_content"
+    <FrameLayout
+        android:layout_width="48dp"
         android:layout_height="48dp"
-        android:layout_marginStart="10dp"
-        android:minWidth="80dp"
-        android:text="@string/widget_record"
-        android:textStyle="bold" />
+        android:layout_marginStart="2dp">
+
+        <ImageButton
+            android:id="@+id/widget_action"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/widget_action_background"
+            android:contentDescription="@string/widget_record"
+            android:padding="12dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_mic_notification"
+            android:tint="@color/echo_blue" />
+
+        <ProgressBar
+            android:id="@+id/widget_progress"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="center"
+            android:contentDescription="@string/widget_processing"
+            android:indeterminate="true"
+            android:indeterminateTint="@color/echo_blue"
+            android:visibility="gone" />
+    </FrameLayout>
 </LinearLayout>

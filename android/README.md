@@ -52,7 +52,7 @@ The install command validates that the three private Microsoft values exist, ref
 1. Open **EchoDraft Mobile** and tap **Connect OneDrive**. Complete Microsoft sign-in and consent. EchoDraft creates/opens `Apps/EchoDraft Mobile Inbox` automatically.
 2. Tap **Start recording** once. When Android asks in context, allow microphone access; also allow notifications so the active-recording control is visible. EchoDraft then starts that recording, so dictate a short test memo and tap **Stop recording**. The widget remains in **Set up** mode until both OneDrive is connected and microphone access is granted.
 3. Wait for OneDrive on the PC to sync the app folder. In desktop EchoDraft, open **Control Panel → To Do → Choose folder** and select its local copy, normally `OneDrive - <organisation>\Apps\EchoDraft Mobile Inbox`.
-4. To add the widget, long-press an empty area of the Android home screen, choose **Widgets**, then add **EchoDraft Mobile**. The in-app **Add home-screen widget** button can also request this when the launcher supports it.
+4. To add the compact 2×1 widget, long-press an empty area of the Android home screen, choose **Widgets**, then add **EchoDraft Mobile**. The in-app **Add home-screen widget** button can also request this when the launcher supports it.
 
 If sign-in expires, open the app and tap **Reconnect OneDrive**. The widget uses only cached local readiness state; it never performs authentication or network work in a broadcast callback.
 
@@ -61,6 +61,7 @@ If the app says OneDrive is connected but the widget still says **Set up**, open
 ## Use and failure behavior
 
 - Tap **Record** in the widget or app, then tap **Stop**.
+- While EchoDraft saves and uploads a memo, the widget replaces its action button with a progress spinner. After a successful upload, its small status line shows the last upload date and time to the minute.
 - EchoDraft writes and verifies audio before publishing the ready manifest. Create uploads fail on name conflicts, and final audio and manifest identities, sizes, and bytes are rechecked together before the private phone copy can be removed.
 - A failed sign-in, network request, conflict, or verification leaves the finalized memo on the phone. Tap **Retry pending uploads** after restoring access.
 - Desktop EchoDraft uses its currently selected transcription provider, model, cleanup setting, and title contract. Results appear in **To Do**, where generated titles and text are searchable and items can be copied and marked actioned.

@@ -6,7 +6,11 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.text.format.DateFormat
+import android.text.format.DateUtils
+import android.view.View
 import android.widget.RemoteViews
+import java.util.Date
 
 class EchoDraftWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(
@@ -46,18 +50,59 @@ object EchoDraftWidgetUi {
 
         // Broadcast receivers use only local cached state; authentication and Graph stay off this path.
         val setupReady = preferences.oneDriveConnected && preferences.hasMicrophonePermission(context)
+        val actionMode = widgetActionMode(state.phase, setupReady)
         val views = RemoteViews(context.packageName, R.layout.echo_draft_widget)
-        views.setTextViewText(R.id.widget_title, context.getString(R.string.widget_title))
-        views.setTextViewText(
-            R.id.widget_status,
-            if (state.pendingCount > 0) "${state.message} · ${state.pendingCount} pending" else state.message,
+        val lastUploadedAt = preferences.lastUploadedAtMillis
+        val statusMode = widgetStatusMode(
+            state.phase,
+            setupReady,
+            state.pendingCount,
+            hasLastUpload = lastUploadedAt > 0L,
         )
+        val lastUploadParts = if (statusMode == WidgetStatusMode.LAST_UPLOAD) {
+            formatLastUploadedAt(context, lastUploadedAt)
+        } else {
+            null
+        }
+        val statusText = when (statusMode) {
+            WidgetStatusMode.SETUP -> context.getString(R.string.widget_status_setup)
+            WidgetStatusMode.STARTING -> context.getString(R.string.widget_status_starting)
+            WidgetStatusMode.RECORDING -> context.getString(R.string.status_recording)
+            WidgetStatusMode.PROCESSING -> context.getString(R.string.status_saving)
+            WidgetStatusMode.ERROR -> context.getString(R.string.widget_status_error)
+            WidgetStatusMode.PENDING -> context.getString(R.string.widget_status_pending, state.pendingCount)
+            WidgetStatusMode.LAST_UPLOAD -> "${lastUploadParts!!.first}\n${lastUploadParts.second}"
+            WidgetStatusMode.READY -> context.getString(R.string.status_ready)
+        }
+        views.setTextViewText(R.id.widget_status, statusText)
+        val stateDescription = if (state.pendingCount > 0) {
+            "${state.message} · ${state.pendingCount} pending"
+        } else {
+            state.message
+        }
+        views.setContentDescription(
+            R.id.widget_status,
+            when (statusMode) {
+                WidgetStatusMode.SETUP -> widgetSetupDescription(
+                    context.getString(R.string.status_setup),
+                    stateDescription,
+                    includeState = state.phase == AppPreferences.Phase.ERROR || state.pendingCount > 0,
+                )
+                WidgetStatusMode.LAST_UPLOAD -> context.getString(
+                    R.string.widget_last_uploaded,
+                    "${lastUploadParts!!.first} ${lastUploadParts.second}",
+                )
+                else -> stateDescription
+            },
+        )
+        views.setViewVisibility(R.id.widget_action, View.VISIBLE)
+        views.setViewVisibility(R.id.widget_progress, View.GONE)
 
-        val action: PendingIntent
-        when {
-            state.isRecording -> {
-                views.setTextViewText(R.id.widget_action, context.getString(R.string.widget_stop))
-                action = PendingIntent.getForegroundService(
+        val action = when (actionMode) {
+            WidgetActionMode.STOP -> {
+                views.setImageViewResource(R.id.widget_action, R.drawable.ic_stop_notification)
+                views.setContentDescription(R.id.widget_action, context.getString(R.string.widget_stop))
+                PendingIntent.getForegroundService(
                     context,
                     REQUEST_STOP,
                     Intent(context, RecorderService::class.java).setAction(RecorderService.ACTION_STOP),
@@ -65,14 +110,16 @@ object EchoDraftWidgetUi {
                 )
             }
 
-            state.phase == AppPreferences.Phase.PUBLISHING -> {
-                views.setTextViewText(R.id.widget_action, context.getString(R.string.widget_open))
-                action = openAppIntent(context)
+            WidgetActionMode.PROCESSING -> {
+                views.setViewVisibility(R.id.widget_action, View.GONE)
+                views.setViewVisibility(R.id.widget_progress, View.VISIBLE)
+                null
             }
 
-            setupReady -> {
-                views.setTextViewText(R.id.widget_action, context.getString(R.string.widget_record))
-                action = PendingIntent.getForegroundService(
+            WidgetActionMode.RECORD -> {
+                views.setImageViewResource(R.id.widget_action, R.drawable.ic_mic_notification)
+                views.setContentDescription(R.id.widget_action, context.getString(R.string.widget_record))
+                PendingIntent.getForegroundService(
                     context,
                     REQUEST_START,
                     Intent(context, RecorderService::class.java).setAction(RecorderService.ACTION_START),
@@ -80,14 +127,27 @@ object EchoDraftWidgetUi {
                 )
             }
 
-            else -> {
-                views.setTextViewText(R.id.widget_action, context.getString(R.string.widget_open))
-                views.setTextViewText(R.id.widget_status, context.getString(R.string.status_setup))
-                action = openAppIntent(context)
+            WidgetActionMode.SETUP -> {
+                views.setImageViewResource(R.id.widget_action, R.drawable.ic_mic_notification)
+                views.setContentDescription(R.id.widget_action, context.getString(R.string.widget_setup))
+                openAppIntent(context)
             }
         }
-        views.setOnClickPendingIntent(R.id.widget_action, action)
+        action?.let { views.setOnClickPendingIntent(R.id.widget_action, it) }
         manager.updateAppWidget(appWidgetId, views)
+    }
+
+    private fun formatLastUploadedAt(context: Context, timestampMillis: Long): Pair<String, String> {
+        val date = Date(timestampMillis)
+        val shortDate = DateUtils.formatDateTime(
+            context,
+            timestampMillis,
+            DateUtils.FORMAT_SHOW_DATE or
+                DateUtils.FORMAT_NO_YEAR or
+                DateUtils.FORMAT_NUMERIC_DATE,
+        )
+        val shortTime = DateFormat.getTimeFormat(context).format(date)
+        return shortDate to shortTime
     }
 
     private fun openAppIntent(context: Context): PendingIntent =
@@ -102,3 +162,68 @@ object EchoDraftWidgetUi {
     private const val REQUEST_STOP = 52
     private const val REQUEST_OPEN_APP = 53
 }
+
+internal enum class WidgetActionMode {
+    STOP,
+    PROCESSING,
+    RECORD,
+    SETUP,
+}
+
+internal fun widgetActionMode(
+    phase: AppPreferences.Phase,
+    setupReady: Boolean,
+): WidgetActionMode = when (phase) {
+    AppPreferences.Phase.STARTING,
+    AppPreferences.Phase.RECORDING,
+    -> WidgetActionMode.STOP
+
+    AppPreferences.Phase.STOPPING,
+    AppPreferences.Phase.PUBLISHING,
+    -> WidgetActionMode.PROCESSING
+
+    AppPreferences.Phase.IDLE,
+    AppPreferences.Phase.ERROR,
+    -> if (setupReady) WidgetActionMode.RECORD else WidgetActionMode.SETUP
+}
+
+internal enum class WidgetStatusMode {
+    SETUP,
+    STARTING,
+    RECORDING,
+    PROCESSING,
+    ERROR,
+    PENDING,
+    LAST_UPLOAD,
+    READY,
+}
+
+internal fun widgetStatusMode(
+    phase: AppPreferences.Phase,
+    setupReady: Boolean,
+    pendingCount: Int,
+    hasLastUpload: Boolean,
+): WidgetStatusMode {
+    if (widgetActionMode(phase, setupReady) == WidgetActionMode.SETUP) {
+        return WidgetStatusMode.SETUP
+    }
+    return when (phase) {
+        AppPreferences.Phase.STARTING -> WidgetStatusMode.STARTING
+        AppPreferences.Phase.RECORDING -> WidgetStatusMode.RECORDING
+        AppPreferences.Phase.STOPPING,
+        AppPreferences.Phase.PUBLISHING,
+        -> WidgetStatusMode.PROCESSING
+        AppPreferences.Phase.ERROR -> WidgetStatusMode.ERROR
+        AppPreferences.Phase.IDLE -> when {
+            pendingCount > 0 -> WidgetStatusMode.PENDING
+            hasLastUpload -> WidgetStatusMode.LAST_UPLOAD
+            else -> WidgetStatusMode.READY
+        }
+    }
+}
+
+internal fun widgetSetupDescription(
+    setupDescription: String,
+    stateDescription: String,
+    includeState: Boolean,
+): String = if (includeState) "$setupDescription. $stateDescription" else setupDescription

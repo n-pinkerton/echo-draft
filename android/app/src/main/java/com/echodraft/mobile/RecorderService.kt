@@ -319,6 +319,7 @@ class RecorderService : Service() {
                     if (!recording.file.delete()) {
                         error("Published private memo could not be retired")
                     }
+                    preferences.lastUploadedAtMillis = System.currentTimeMillis()
                 }
                 if (!retired) return
                 if (recording.externalId.toString() == currentMemoId) currentPublished = true
