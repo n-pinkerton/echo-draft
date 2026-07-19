@@ -5,12 +5,24 @@ import { describe, expect, it } from "vitest";
 import { ToastProvider } from "./Toast";
 import { useToast } from "./toastContext";
 
-function ToastHarness({ variant }: { variant: "default" | "destructive" }) {
+function ToastHarness({
+  variant,
+  announce,
+}: {
+  variant: "default" | "destructive";
+  announce?: boolean;
+}) {
   const { toast } = useToast();
 
   useEffect(() => {
-    toast({ title: "Update Error", description: "The update failed.", variant, duration: 0 });
-  }, [toast, variant]);
+    toast({
+      title: "Update Error",
+      description: "The update failed.",
+      variant,
+      announce,
+      duration: 0,
+    });
+  }, [announce, toast, variant]);
 
   return null;
 }
@@ -63,6 +75,18 @@ describe("Toast accessibility", () => {
       "items-end"
     );
     expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  });
+
+  it("keeps visual-only pipeline toasts out of live regions", async () => {
+    render(
+      <ToastProvider>
+        <ToastHarness variant="destructive" announce={false} />
+      </ToastProvider>
+    );
+
+    expect(await screen.findByText("Update Error")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("keeps dismiss controls on interactive control-panel toasts", async () => {

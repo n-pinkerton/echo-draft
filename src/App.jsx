@@ -5,6 +5,7 @@ import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useAuth } from "./hooks/useAuth";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import RecordingIndicator from "./components/ui/RecordingIndicator";
+import DictationStatusIndicator from "./components/ui/DictationStatusIndicator";
 import { DICTATION_FEEDBACK_STORAGE_KEYS } from "./utils/dictationCues";
 import { useWindowsPushToTalkStatus } from "./hooks/useWindowsPushToTalkStatus";
 
@@ -143,8 +144,14 @@ export default function App() {
 
   const isListening = progress?.stage === "listening";
   const shouldShowRecordingIndicator = recordingIndicatorEnabled && isListening;
+  const shouldShowProcessingStatus = !isListening && progress?.stage && progress.stage !== "idle";
+  const shouldShowDictationStatus =
+    shouldShowRecordingIndicator || Boolean(shouldShowProcessingStatus);
+  const processingAnnouncement = shouldShowProcessingStatus
+    ? [progress?.stageLabel || "Working", progress?.message].filter(Boolean).join(". ")
+    : "";
   const hasVisibleToast = toastCount > 0;
-  const shouldShowDictationWindow = shouldShowRecordingIndicator || hasVisibleToast;
+  const shouldShowDictationWindow = shouldShowDictationStatus || hasVisibleToast;
   const dictationWindowSize = hasVisibleToast
     ? toastViewportSize === "compact"
       ? "WITH_COMPACT_TOAST"
@@ -172,16 +179,36 @@ export default function App() {
     };
   }, []);
 
-  if (!shouldShowRecordingIndicator) {
-    return null;
-  }
-
   return (
-    <RecordingIndicator
-      recordedMs={progress?.recordedMs || 0}
-      longRecordingReminderEnabled={longRecordingReminderEnabled}
-      queuedAheadCount={queuedAheadCount}
-      outputMode={progress?.outputMode}
-    />
+    <>
+      <span
+        data-testid="dictation-status-announcer"
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {processingAnnouncement}
+      </span>
+      {shouldShowRecordingIndicator ? (
+        <RecordingIndicator
+          recordedMs={progress?.recordedMs || 0}
+          longRecordingReminderEnabled={longRecordingReminderEnabled}
+          queuedAheadCount={queuedAheadCount}
+          outputMode={progress?.outputMode}
+        />
+      ) : shouldShowDictationStatus ? (
+        <DictationStatusIndicator
+          stage={progress?.stage || "idle"}
+          stageLabel={progress?.stageLabel}
+          stageElapsedMs={progress?.stageElapsedMs}
+          message={progress?.message}
+          canCancel={progress?.canCancel === true}
+          isSlow={progress?.isSlow === true}
+          queuedWaitingCount={queuedWaitingCount}
+          outputMode={progress?.outputMode}
+        />
+      ) : null}
+    </>
   );
 }

@@ -209,6 +209,7 @@ const Toast: React.FC<
   variant = "default",
   size = "default",
   duration = 3500,
+  announce = true,
   isExiting,
   createdAt,
   interactive = true,
@@ -238,9 +239,9 @@ const Toast: React.FC<
 
   return (
     <div
-      role={variant === "destructive" ? "alert" : "status"}
-      aria-live={variant === "destructive" ? "assertive" : "polite"}
-      aria-atomic="true"
+      role={announce ? (variant === "destructive" ? "alert" : "status") : undefined}
+      aria-live={announce ? (variant === "destructive" ? "assertive" : "polite") : undefined}
+      aria-atomic={announce ? "true" : undefined}
       className={cn(
         interactive ? "pointer-events-auto" : "pointer-events-none",
         "relative flex items-start overflow-hidden",

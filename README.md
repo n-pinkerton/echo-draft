@@ -317,7 +317,7 @@ npm run build:linux  # Linux
 
 1. **Start the app** - EchoDraft loads a persistent system tray icon
 2. **Press your hotkey** (default: backtick `) - A rising cue confirms recording and a click-through `REC` timer remains visible while the microphone is live. After one minute it can highlight **Still recording** as a silent reminder.
-3. **Press your hotkey again** - A lower falling cue confirms recording has stopped and processing has begun
+3. **Press your hotkey again** - A lower falling cue confirms recording has stopped; the floating indicator then shows transcription and cleanup progress until the dictation is complete
 4. **Text appears** - Transcribed text is automatically pasted at your cursor location, followed by a distinct completion chime
 5. **Use tray actions** - Click the tray icon to start clipboard dictation, copy the last dictation, open the Control Panel, or quit
 

@@ -8,6 +8,7 @@ export interface ToastProps {
   variant?: "default" | "destructive" | "success";
   size?: "default" | "compact";
   duration?: number;
+  announce?: boolean;
   onClose?: () => void;
 }
 

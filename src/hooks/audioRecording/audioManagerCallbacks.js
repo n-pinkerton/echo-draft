@@ -7,9 +7,12 @@ export const createAudioManagerCallbacks = (deps) => {
   const {
     activeSessionRef,
     audioManagerRef,
+    jobsBySessionIdRef,
+    latestProgressRef,
     sessionsByIdRef,
     recordingSessionIdRef,
     removeJob,
+    resetProgress,
     setIsProcessing,
     setIsRecording,
     setIsStreaming,
@@ -174,7 +177,22 @@ export const createAudioManagerCallbacks = (deps) => {
         }
 
         if (contextSessionId && (event.stage === "error" || event.stage === "cancelled")) {
-          setTimeout(() => removeJob(contextSessionId), 3000);
+          setTimeout(() => {
+            removeJob(contextSessionId);
+            const state = audioManagerRef.current?.getState?.();
+            const latestProgress = latestProgressRef?.current;
+            const ownsTerminalProgress =
+              latestProgress?.sessionId === contextSessionId &&
+              (latestProgress.stage === "error" || latestProgress.stage === "cancelled");
+            if (
+              ownsTerminalProgress &&
+              !state?.isRecording &&
+              !state?.isProcessing &&
+              jobsBySessionIdRef?.current?.size === 0
+            ) {
+              resetProgress?.();
+            }
+          }, 3000);
         }
 
         logger.trace(

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Visible Processing Progress**: Keeps the floating dictation indicator visible after recording stops, shows transcription and cleanup stages, and hides it after completion.
+
 ## [1.4.18] - 2026-07-16
 
 ### Fixed

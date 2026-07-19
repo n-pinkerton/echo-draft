@@ -30,6 +30,13 @@ import {
 
 const SLOW_STAGE_THRESHOLD_MS = 10_000;
 
+export const createPipelineToastNotifier = (toast, recordingSessionIdRef) => (options) => {
+  toast({
+    ...options,
+    announce: Boolean(recordingSessionIdRef.current),
+  });
+};
+
 const getSlowStageMessage = (progress) => {
   if (progress.stage === "cleaning") {
     return "Cleanup is taking longer than usual";
@@ -64,6 +71,10 @@ export const useAudioRecording = (toast, options = {}) => {
   const recordingOperationQueueRef = useRef(null);
   const deliveryCommitCountRef = useRef(0);
   const pendingMobileInboxRequestsRef = useRef(new Map());
+  const pipelineToast = useMemo(
+    () => createPipelineToastNotifier(toast, recordingSessionIdRef),
+    [toast]
+  );
   if (!recordingOperationQueueRef.current) {
     recordingOperationQueueRef.current = createRecordingOperationQueue();
   }
@@ -313,7 +324,7 @@ export const useAudioRecording = (toast, options = {}) => {
       sessionsByIdRef,
       setProgress,
       setTranscript,
-      toast,
+      toast: pipelineToast,
       updateStage,
       upsertJob,
       playCompletionCue,
@@ -327,15 +338,18 @@ export const useAudioRecording = (toast, options = {}) => {
       createAudioManagerCallbacks({
         activeSessionRef,
         audioManagerRef,
+        jobsBySessionIdRef,
+        latestProgressRef,
         sessionsByIdRef,
         recordingSessionIdRef,
         removeJob,
+        resetProgress,
         setIsProcessing,
         setIsRecording,
         setIsStreaming,
         setPartialTranscript,
         setProgress,
-        toast,
+        toast: pipelineToast,
         updateStage,
         upsertJob,
         onTranscriptionComplete: handleTranscriptionComplete,
@@ -389,7 +403,7 @@ export const useAudioRecording = (toast, options = {}) => {
       if (getMobileInboxRequestId(audioManagerRef.current?.activeProcessingContext)) return;
       updateStage("error", { message: "No audio detected" });
       void playErrorCue();
-      toast({
+      pipelineToast({
         title: "No Audio Detected",
         description: "The recording contained no detectable audio. Please try again.",
         variant: "default",
@@ -441,9 +455,10 @@ export const useAudioRecording = (toast, options = {}) => {
     normalizeTriggerPayload,
     onToggle,
     removeJob,
+    resetProgress,
     routeStartDictation,
     stopRecording,
-    toast,
+    pipelineToast,
     routeToggleDictation,
     upsertJob,
     updateStage,

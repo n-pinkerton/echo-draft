@@ -17,6 +17,8 @@ vi.mock("../../utils/branding", () => ({
 }));
 
 import { createAudioManagerCallbacks } from "./audioManagerCallbacks";
+import { createStageUpdater } from "./stageUpdater";
+import { INITIAL_PROGRESS } from "./stages";
 
 describe("createAudioManagerCallbacks", () => {
   beforeEach(() => {
@@ -85,6 +87,177 @@ describe("createAudioManagerCallbacks", () => {
 
     callbacks.onProgress({ stage: "transcribing", recordingClosed: true });
     expect(playStopCue).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["error", "cancelled"])(
+    "resets terminal %s progress after the final job is removed",
+    async (terminalStage) => {
+      vi.useFakeTimers();
+      try {
+        let progress = { ...INITIAL_PROGRESS };
+        const latestProgressRef = { current: progress };
+        const jobsBySessionIdRef = {
+          current: new Map([["terminal-job", { sessionId: "terminal-job" }]]),
+        };
+        const audioManagerRef = {
+          current: {
+            getState: () => ({ isRecording: false, isProcessing: false }),
+          },
+        };
+        const progressResetTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
+        const clearProgressResetTimer = () => {
+          if (progressResetTimerRef.current) clearTimeout(progressResetTimerRef.current);
+          progressResetTimerRef.current = null;
+        };
+        const resetProgress = vi.fn(() => {
+          clearProgressResetTimer();
+          progress = { ...INITIAL_PROGRESS };
+          latestProgressRef.current = progress;
+        });
+        const updateStage = createStageUpdater({
+          audioManagerRef,
+          clearProgressResetTimer,
+          jobsBySessionIdRef,
+          latestProgressRef,
+          progressResetTimerRef,
+          recordingStartedAtRef: { current: null },
+          resetProgress,
+          sessionStartedAtRef: { current: null },
+          stageStartedAtRef: { current: null },
+          setProgress: (updater: any) => {
+            progress = typeof updater === "function" ? updater(progress) : updater;
+            latestProgressRef.current = progress;
+          },
+        });
+        const removeJob = vi.fn((sessionId: string) => {
+          jobsBySessionIdRef.current.delete(sessionId);
+        });
+        const callbacks = createAudioManagerCallbacks({
+          activeSessionRef: { current: null },
+          audioManagerRef,
+          jobsBySessionIdRef,
+          latestProgressRef,
+          sessionsByIdRef: { current: new Map() },
+          recordingSessionIdRef: { current: null },
+          removeJob,
+          resetProgress,
+          setIsProcessing: vi.fn(),
+          setIsRecording: vi.fn(),
+          setIsStreaming: vi.fn(),
+          setPartialTranscript: vi.fn(),
+          setProgress: vi.fn(),
+          toast: vi.fn(),
+          updateStage,
+          upsertJob: vi.fn(),
+          onTranscriptionComplete: vi.fn(),
+          playErrorCue: vi.fn(),
+          playStopCue: vi.fn(),
+        });
+
+        callbacks.onProgress({
+          stage: terminalStage,
+          stageLabel: terminalStage === "error" ? "Error" : "Cancelled",
+          context: { sessionId: "terminal-job" },
+        });
+
+        expect(progress.stage).toBe(terminalStage);
+        await vi.advanceTimersByTimeAsync(3000);
+
+        expect(removeJob).toHaveBeenCalledWith("terminal-job");
+        expect(jobsBySessionIdRef.current).toHaveLength(0);
+        expect(resetProgress).toHaveBeenCalledTimes(1);
+        expect(progress.stage).toBe("idle");
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it("does not let an older terminal timer reset a newer job's completion", async () => {
+    vi.useFakeTimers();
+    try {
+      let progress = { ...INITIAL_PROGRESS };
+      const latestProgressRef = { current: progress };
+      const jobsBySessionIdRef = {
+        current: new Map([["older-job", { sessionId: "older-job" }]]),
+      };
+      const audioManagerRef = {
+        current: {
+          getState: () => ({ isRecording: false, isProcessing: false }),
+        },
+      };
+      const progressResetTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
+      const clearProgressResetTimer = () => {
+        if (progressResetTimerRef.current) clearTimeout(progressResetTimerRef.current);
+        progressResetTimerRef.current = null;
+      };
+      const resetProgress = vi.fn(() => {
+        clearProgressResetTimer();
+        progress = { ...INITIAL_PROGRESS };
+        latestProgressRef.current = progress;
+      });
+      const updateStage = createStageUpdater({
+        audioManagerRef,
+        clearProgressResetTimer,
+        jobsBySessionIdRef,
+        latestProgressRef,
+        progressResetTimerRef,
+        recordingStartedAtRef: { current: null },
+        resetProgress,
+        sessionStartedAtRef: { current: null },
+        stageStartedAtRef: { current: null },
+        setProgress: (updater: any) => {
+          progress = typeof updater === "function" ? updater(progress) : updater;
+          latestProgressRef.current = progress;
+        },
+      });
+      const removeJob = vi.fn((sessionId: string) => {
+        jobsBySessionIdRef.current.delete(sessionId);
+      });
+      const callbacks = createAudioManagerCallbacks({
+        activeSessionRef: { current: null },
+        audioManagerRef,
+        jobsBySessionIdRef,
+        latestProgressRef,
+        sessionsByIdRef: { current: new Map() },
+        recordingSessionIdRef: { current: null },
+        removeJob,
+        resetProgress,
+        setIsProcessing: vi.fn(),
+        setIsRecording: vi.fn(),
+        setIsStreaming: vi.fn(),
+        setPartialTranscript: vi.fn(),
+        setProgress: vi.fn(),
+        toast: vi.fn(),
+        updateStage,
+        upsertJob: vi.fn(),
+        onTranscriptionComplete: vi.fn(),
+        playErrorCue: vi.fn(),
+        playStopCue: vi.fn(),
+      });
+
+      callbacks.onProgress({
+        stage: "error",
+        stageLabel: "Error",
+        context: { sessionId: "older-job" },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+
+      jobsBySessionIdRef.current.set("newer-job", { sessionId: "newer-job" });
+      updateStage("done", { sessionId: "newer-job", stageLabel: "Done" });
+      await vi.advanceTimersByTimeAsync(1500);
+      jobsBySessionIdRef.current.delete("newer-job");
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(progress.stage).toBe("done");
+      expect(resetProgress).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(resetProgress).toHaveBeenCalledTimes(1);
+      expect(progress.stage).toBe("idle");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps a newer active recording intact when an earlier queued job fails", () => {

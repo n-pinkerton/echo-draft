@@ -23,7 +23,59 @@ vi.mock("../utils/dictationCues", () => ({
   playStopCue: vi.fn(),
 }));
 
-import { useAudioRecording } from "./useAudioRecording";
+import { createPipelineToastNotifier, useAudioRecording } from "./useAudioRecording";
+
+describe("pipeline toast announcement ownership", () => {
+  it("announces stacked success and failure while a newer recording owns the foreground", () => {
+    const toast = vi.fn();
+    const recordingSessionIdRef = { current: "newer-recording" as string | null };
+    const notify = createPipelineToastNotifier(toast, recordingSessionIdRef);
+
+    notify({ title: "Ready to paste", variant: "success" });
+    notify({ title: "Earlier dictation failed", variant: "destructive" });
+
+    expect(toast).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ title: "Ready to paste", announce: true })
+    );
+    expect(toast).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ title: "Earlier dictation failed", announce: true })
+    );
+  });
+
+  it("leaves foreground pipeline announcements to the persistent status region", () => {
+    const toast = vi.fn();
+    const recordingSessionIdRef = { current: null as string | null };
+    const notify = createPipelineToastNotifier(toast, recordingSessionIdRef);
+
+    notify({ title: "Cleanup fallback used" });
+    notify({ title: "Ready to paste", variant: "success" });
+
+    expect(toast).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ title: "Cleanup fallback used", announce: false })
+    );
+    expect(toast).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ title: "Ready to paste", announce: false })
+    );
+  });
+
+  it("uses synchronous recording ownership without waiting for a React effect", () => {
+    const toast = vi.fn();
+    const recordingSessionIdRef = { current: null as string | null };
+    const notify = createPipelineToastNotifier(toast, recordingSessionIdRef);
+
+    notify({ title: "Foreground error", variant: "destructive" });
+    recordingSessionIdRef.current = "newer-recording";
+    notify({ title: "Older job ready", variant: "success" });
+    recordingSessionIdRef.current = null;
+    notify({ title: "Foreground complete", variant: "success" });
+
+    expect(toast.mock.calls.map(([options]) => options.announce)).toEqual([false, true, false]);
+  });
+});
 
 describe("useAudioRecording stacked hotkey routing", () => {
   beforeEach(() => {

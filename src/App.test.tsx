@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
     toastCount: 0,
     toastViewportSize: "default" as "default" | "compact",
   },
+  settings: {
+    recordingIndicatorEnabled: true,
+  },
 }));
 
 vi.mock("./hooks/useAudioRecording", () => ({
@@ -30,7 +33,11 @@ vi.mock("./hooks/useAuth", () => ({
   useAuth: () => ({ isSignedIn: false }),
 }));
 vi.mock("./hooks/useLocalStorage", () => ({
-  useLocalStorage: () => [true, vi.fn(), vi.fn()],
+  useLocalStorage: (key: string) => [
+    key === "recordingIndicatorEnabled" ? mocks.settings.recordingIndicatorEnabled : true,
+    vi.fn(),
+    vi.fn(),
+  ],
 }));
 vi.mock("./components/ui/toastContext", () => ({
   useToast: () => ({ toast: mocks.toast, ...mocks.toastState }),
@@ -54,6 +61,7 @@ describe("App recording indicator routing", () => {
       },
     };
     mocks.toastState = { toastCount: 0, toastViewportSize: "default" };
+    mocks.settings.recordingIndicatorEnabled = true;
     (window as any).electronAPI = {
       onHotkeyFallbackUsed: vi.fn(() => vi.fn()),
       onHotkeyRegistrationFailed: vi.fn(() => vi.fn()),
@@ -64,7 +72,7 @@ describe("App recording indicator routing", () => {
     };
   });
 
-  it("hides the floating overlay while processing and keeps status in the tray", () => {
+  it("keeps stage progress visible through completion and hides after returning to idle", () => {
     const { rerender } = render(<App />);
 
     expect(window.electronAPI.showRecordingIndicator).toHaveBeenCalledTimes(1);
@@ -86,8 +94,14 @@ describe("App recording indicator routing", () => {
     };
     rerender(<App />);
 
-    expect(window.electronAPI.hideWindow).toHaveBeenCalledTimes(1);
-    expect(screen.queryByTestId("dictation-status-indicator")).not.toBeInTheDocument();
+    expect(window.electronAPI.hideWindow).not.toHaveBeenCalled();
+    expect(screen.getByTestId("dictation-status-indicator")).toHaveAttribute(
+      "data-stage",
+      "transcribing"
+    );
+    expect(screen.getByText("0:12")).toBeInTheDocument();
+    expect(screen.getByText("Insert · Cancel from the EchoDraft tray menu")).toBeInTheDocument();
+    expect(screen.getByTestId("dictation-status-announcer")).toHaveTextContent("Transcribing");
     expect(window.electronAPI.updateTrayStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({
         stage: "transcribing",
@@ -95,6 +109,63 @@ describe("App recording indicator routing", () => {
         isProcessing: true,
       })
     );
+
+    mocks.recordingState = {
+      ...mocks.recordingState,
+      isProcessing: false,
+      progress: {
+        ...mocks.recordingState.progress,
+        stage: "done",
+        stageLabel: "Done",
+        message: "Text delivered",
+        canCancel: false,
+      },
+    };
+    rerender(<App />);
+
+    expect(window.electronAPI.hideWindow).not.toHaveBeenCalled();
+    expect(screen.getByTestId("dictation-status-indicator")).toHaveAttribute(
+      "data-stage",
+      "done"
+    );
+    expect(screen.getByText("Text delivered")).toBeInTheDocument();
+
+    mocks.recordingState = {
+      ...mocks.recordingState,
+      progress: {
+        stage: "idle",
+        stageLabel: "Ready",
+      },
+    };
+    rerender(<App />);
+
+    expect(window.electronAPI.hideWindow).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("dictation-status-indicator")).not.toBeInTheDocument();
+    expect(screen.getByTestId("dictation-status-announcer")).toBeEmptyDOMElement();
+  });
+
+  it("keeps processing feedback visible when the live recording timer is disabled", () => {
+    mocks.settings.recordingIndicatorEnabled = false;
+    mocks.recordingState = {
+      ...mocks.recordingState,
+      isRecording: false,
+      isProcessing: true,
+      progress: {
+        stage: "cleaning",
+        stageLabel: "Cleaning up",
+        stageElapsedMs: 4_000,
+        outputMode: "insert",
+      },
+    };
+
+    render(<App />);
+
+    expect(window.electronAPI.showRecordingIndicator).toHaveBeenCalledWith("RECORDING_INDICATOR");
+    expect(screen.getByTestId("dictation-status-indicator")).toHaveAttribute(
+      "data-stage",
+      "cleaning"
+    );
+    expect(screen.getByTestId("dictation-status-announcer")).toHaveTextContent("Cleaning up");
   });
 
   it("keeps the overlay transparent through the final hide frame", () => {
