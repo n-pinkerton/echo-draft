@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
         QUALITY_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        QUALITY_DEFAULT_BASE_REF: origin/${{ github.event.repository.default_branch }}
     permissions:
       contents: read
     steps:

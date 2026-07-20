@@ -6,9 +6,17 @@ function runGit(root, args) {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" });
 }
 
-function resolveBase(root, requestedBase) {
+function resolveBase(root, requestedBase, defaultBaseRef = process.env.QUALITY_DEFAULT_BASE_REF || "origin/main") {
   const candidate = String(requestedBase || "").trim();
-  if (/^0+$/.test(candidate)) return EMPTY_TREE;
+  if (/^0+$/.test(candidate)) {
+    try {
+      const mergeBase = runGit(root, ["merge-base", "HEAD", defaultBaseRef]).trim();
+      if (mergeBase) return mergeBase;
+    } catch {
+      // Fall through for an orphan history or a checkout without its default branch.
+    }
+    return EMPTY_TREE;
+  }
   if (candidate) {
     try {
       runGit(root, ["rev-parse", "--verify", `${candidate}^{commit}`]);
