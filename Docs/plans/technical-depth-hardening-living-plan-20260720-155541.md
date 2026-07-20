@@ -142,6 +142,7 @@ candidate identities.
 - [x] Phase B OpenAI transcription seam independently gated and committed as `f7bc951b99d140f960d42bd98ef47f3f1ec2e2a8`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; policy tests passed 13/13, unchanged `openAiTranscriber` facade tests passed 35/35, `npm run quality:changed-lint` passed with 0 errors/18 historical warnings, `npm run quality:file-policy` passed, strict app/test typechecks passed, and `git diff --check` passed. Processor physical lines fell from 1,374 to 985; effects remain in the processor while candidate scoring, agreement, timing aggregation, and transport policy are directly testable. Self-review covered facade/caller identity and protected retry/cancellation/fallback paths.
 - [x] Phase C completed-transcription delivery seam independently gated and committed as `c80a7788f02714f98e7f5a4f08378bc84ca0cc7d`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; delivery policy tests passed 13/13, unchanged handler tests passed 34/34, `npm run quality:changed-lint` passed with 0 errors/9 historical warnings, `npm run quality:file-policy` passed, strict app/test typechecks passed, and `git diff --check` passed. Handler physical lines fell from 818 to 783; protected clipboard/paste/history/cancellation effects remain ordered in the facade while outcome classification is directly testable.
 - [x] Integrated review cleared candidate `94c4b50c3d25a35afd88bbb079e7693d2d72b1b6..078c64ee85a4259c619060a19bca5591ac98a669` on the clean branch. Reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; the first-push zero-SHA repair was committed as `078c64ee85a4259c619060a19bca5591ac98a669`. Resolver evidence: all-zero base selected merge-base `6f8ad7ce352522b716f52fc4fdcf80ee7b0d742e` with `origin/main`; changed lint, file policy, direct node policy tests 19/19, and `git diff --check` passed. Final gates and alternating timings remain pending.
+- [x] Final heavy gates and alternating timing completed on Windows 11 x64, Node `v24.18.0`, npm `10.9.0`. `npm ci` passed (957 packages; the recorded 42 audit findings remain out of scope), `npm run lint` passed with 0 errors/607 historical warnings, `npm run typecheck` and `npm run typecheck:test` passed, `npm run build:renderer` and `npm run build:win -- --publish never` passed. The default full suite reproduced only the known pre-existing `telemetryFileLogger` sustained-rate timeout; the extended 30-second targeted run passed 7/7. With lock SHA `A5EBC8682D261CEAD19685B5C4DC7EC65449865454846084574EA0F96CAD12DB`, compact-output timing used one warm-up each and alternating baseline/candidate timed runs: baseline `94c4b50c3d25a35afd88bbb079e7693d2d72b1b6` = 54.01s, 53.39s, 58.01s (median 54.01s; 230/231 files and 2125/2129 tests passed); candidate `97d3fa080d93d556183ca7949547c1bae5f7827f` = 59.60s, 59.05s, 58.07s (median 59.05s; 234/235 files and 2170/2174 tests passed). Every run had the same known timeout; differing test sets and a 5.04s/9.33% median delta support no causal speed claim. Setup artifact: `dist\\EchoDraft Setup 1.4.18.exe`, 120,897,760 bytes, SHA-256 `EF5E19C7C8DEC07DFE246FCC0E2389CD036F29DFB3B337D847BA118F7DA62A58`, Authenticode `NotSigned`.
 - [ ] Preflight/push exact origin branch; verify remote SHA and clean status.
 - [ ] Report `Action pending` or install/verify the exact authorized artifact before Complete.
 
@@ -206,6 +207,14 @@ record raw timing evidence at integration.
   zero `github.event.before` and retains empty-tree fallback only for orphan histories. Commit:
   `078c64ee85a4259c619060a19bca5591ac98a669`. Final heavy gates and timing evidence are still
   required.
+
+- Final gates — The renderer and native Windows packaging gates passed. The full suite consistently
+  reproduced the pre-existing telemetry logger timeout while all other observed files/tests passed;
+  an extended focused run passed the affected file. The repeated same-machine alternating matrix
+  was recorded with identical Node/npm/lock/output settings and did not justify a causal performance
+  claim because the candidate contains four additional test files and 45 additional tests. The
+  built Setup artifact is locally hashable but unsigned (`NotSigned`), so exact-artifact install
+  verification remains pending user approval. No release or updater claim is made.
 
 ## Assumptions
 
