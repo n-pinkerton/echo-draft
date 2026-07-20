@@ -139,7 +139,8 @@ candidate identities.
 - [x] Copy to `Docs\plans\technical-depth-hardening-living-plan-20260720-155541.md`; verified readable and byte-identical on 2026-07-20. Active path: `C:\Users\NigelPinkerton\Documents\ecodraft\Docs\plans\technical-depth-hardening-living-plan-20260720-155541.md`; copy SHA-256: `7DEA40A0DA9EF9E0B0CFD30921F6CD90ADCF0B1A7481A6CC9725FD54DA16D793`; pre-checkpoint active-ledger SHA-256: `0D51837A3B9CA7412AE006C1CE776F7586A324690EB85CCB6192E149F71CF4F3`.
 - [x] Bootstrap branch/ledger and record the quick baseline. Branch: `codex/technical-depth-hardening-20260720`; bootstrap commit: `bb1a3998425b864a661000747c7904ee86503925`. Baseline environment: Windows 11 x64, Node `v24.18.0`, npm `10.9.0`; `npm ci` succeeded in 120 seconds (including native postinstall). Quick `npm test -- --silent=passed-only` took 68.4 seconds wall-clock / Vitest 66.11 seconds, ran 231 files and 2,129 tests (3 skipped), with 230 files / 2,125 tests passing and one pre-existing timeout in `src/helpers/__tests__/telemetryFileLogger.test.ts` (`keeps sustained maximum-rate logging within per-file, directory, and retention caps`). Next action: diagnose only as needed by affected gates; do not broaden sprint scope.
 - [x] Phase A quality/test policy independently gated and committed as `0168f6845f8a5dce7eb318a82c9721e661442406`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; `npm run lint` passed with 0 errors and 606 historical warnings, `npm run typecheck` passed, `npm run typecheck:test` passed, `npm run quality:changed-lint` passed with 0 errors/11 historical warnings, `npm run quality:file-policy` passed, renderer-boundary/file-policy direct tests passed 19/19 across 2 files, and Node-only process/windows-handle tests passed 16/16. Candidate base was `94c4b50c3d25a35afd88bbb079e7693d2d72b1b6`; self-review included `git diff --check` and staged-diff inspection.
-- [ ] Independently gate and commit Phases B and C.
+- [x] Phase B OpenAI transcription seam independently gated and committed as `f7bc951b99d140f960d42bd98ef47f3f1ec2e2a8`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; policy tests passed 13/13, unchanged `openAiTranscriber` facade tests passed 35/35, `npm run quality:changed-lint` passed with 0 errors/18 historical warnings, `npm run quality:file-policy` passed, strict app/test typechecks passed, and `git diff --check` passed. Processor physical lines fell from 1,374 to 985; effects remain in the processor while candidate scoring, agreement, timing aggregation, and transport policy are directly testable. Self-review covered facade/caller identity and protected retry/cancellation/fallback paths.
+- [ ] Independently gate and commit Phase C.
 - [ ] Clear integration; run final gates and alternating timings.
 - [ ] Preflight/push exact origin branch; verify remote SHA and clean status.
 - [ ] Report `Action pending` or install/verify the exact authorized artifact before Complete.
@@ -179,6 +180,16 @@ record raw timing evidence at integration.
   historical warning debt and 42 out-of-scope audit findings; no protected runtime behavior was
   intentionally changed. Commit: `0168f6845f8a5dce7eb318a82c9721e661442406`. Follow-up: Phase B
   OpenAI seam remains next, with focused review before commit.
+
+- Phase B — Extracted `openAiTranscriptionPolicy.js` behind the unchanged
+  `processWithOpenAIAPI` facade. The module owns candidate scoring, prompt-echo/truncation and
+  assistant-style classification, attempt agreement/selection, timing combination, bounded proxy
+  timing/status policy, and disagreement construction; IPC, blob, retry, fallback, cancellation,
+  and logging effects remain in the orchestrator. Testability gain: 13 direct policy cases plus the
+  existing 35 facade cases exercise positive, negative, boundary, retry, cancellation, fallback,
+  prompt-echo, truncation, and timing behavior. Risk review found no semantic parity issue; the
+  1,374-to-985 processor reduction lowers policy/effect coupling without changing the public seam.
+  Commit: `f7bc951b99d140f960d42bd98ef47f3f1ec2e2a8`. Follow-up: Phase C delivery seam.
 
 ## Assumptions
 
