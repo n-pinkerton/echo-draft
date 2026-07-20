@@ -137,7 +137,7 @@ candidate identities.
 ## Progress
 
 - [x] Copy to `Docs\plans\technical-depth-hardening-living-plan-20260720-155541.md`; verified readable and byte-identical on 2026-07-20. Active path: `C:\Users\NigelPinkerton\Documents\ecodraft\Docs\plans\technical-depth-hardening-living-plan-20260720-155541.md`; SHA-256: `7DEA40A0DA9EF9E0B0CFD30921F6CD90ADCF0B1A7481A6CC9725FD54DA16D793`.
-- [ ] Bootstrap branch/ledger and record the quick baseline.
+- [x] Bootstrap branch/ledger and record the quick baseline. Branch: `codex/technical-depth-hardening-20260720`; bootstrap commit: `bb1a3998425b864a661000747c7904ee86503925`. Baseline environment: Windows 11 x64, Node `v24.18.0`, npm `10.9.0`; `npm ci` succeeded in 120 seconds (including native postinstall). Quick `npm test -- --silent=passed-only` took 68.4 seconds wall-clock / Vitest 66.11 seconds, ran 231 files and 2,129 tests (3 skipped), with 230 files / 2,125 tests passing and one pre-existing timeout in `src/helpers/__tests__/telemetryFileLogger.test.ts` (`keeps sustained maximum-rate logging within per-file, directory, and retention caps`). Next action: diagnose only as needed by affected gates; do not broaden sprint scope.
 - [ ] Independently gate and commit Phases A, B, and C.
 - [ ] Clear integration; run final gates and alternating timings.
 - [ ] Preflight/push exact origin branch; verify remote SHA and clean status.
@@ -146,6 +146,9 @@ candidate identities.
 ## Surprises & Discoveries
 
 Record concise sanitized evidence pointers. Out-of-scope discoveries become bounded follow-ups.
+
+- Baseline `npm ci` reported 42 audit findings (1 low, 13 moderate, 23 high, 5 critical); dependency/security migration is explicitly out of scope for this sprint and remains a follow-up.
+- Baseline full test run reproduced one telemetry logger timing timeout; all other observed files/tests passed. This is not in the named seams and is not a reason to change protected audio or delivery behavior.
 
 ## Decision Log
 
