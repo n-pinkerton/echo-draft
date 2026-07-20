@@ -136,9 +136,10 @@ candidate identities.
 
 ## Progress
 
-- [x] Copy to `Docs\plans\technical-depth-hardening-living-plan-20260720-155541.md`; verified readable and byte-identical on 2026-07-20. Active path: `C:\Users\NigelPinkerton\Documents\ecodraft\Docs\plans\technical-depth-hardening-living-plan-20260720-155541.md`; SHA-256: `7DEA40A0DA9EF9E0B0CFD30921F6CD90ADCF0B1A7481A6CC9725FD54DA16D793`.
+- [x] Copy to `Docs\plans\technical-depth-hardening-living-plan-20260720-155541.md`; verified readable and byte-identical on 2026-07-20. Active path: `C:\Users\NigelPinkerton\Documents\ecodraft\Docs\plans\technical-depth-hardening-living-plan-20260720-155541.md`; copy SHA-256: `7DEA40A0DA9EF9E0B0CFD30921F6CD90ADCF0B1A7481A6CC9725FD54DA16D793`; pre-checkpoint active-ledger SHA-256: `0D51837A3B9CA7412AE006C1CE776F7586A324690EB85CCB6192E149F71CF4F3`.
 - [x] Bootstrap branch/ledger and record the quick baseline. Branch: `codex/technical-depth-hardening-20260720`; bootstrap commit: `bb1a3998425b864a661000747c7904ee86503925`. Baseline environment: Windows 11 x64, Node `v24.18.0`, npm `10.9.0`; `npm ci` succeeded in 120 seconds (including native postinstall). Quick `npm test -- --silent=passed-only` took 68.4 seconds wall-clock / Vitest 66.11 seconds, ran 231 files and 2,129 tests (3 skipped), with 230 files / 2,125 tests passing and one pre-existing timeout in `src/helpers/__tests__/telemetryFileLogger.test.ts` (`keeps sustained maximum-rate logging within per-file, directory, and retention caps`). Next action: diagnose only as needed by affected gates; do not broaden sprint scope.
-- [ ] Independently gate and commit Phases A, B, and C.
+- [x] Phase A quality/test policy independently gated and committed as `0168f6845f8a5dce7eb318a82c9721e661442406`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; `npm run lint` passed with 0 errors and 606 historical warnings, `npm run typecheck` passed, `npm run typecheck:test` passed, `npm run quality:changed-lint` passed with 0 errors/11 historical warnings, `npm run quality:file-policy` passed, renderer-boundary/file-policy direct tests passed 19/19 across 2 files, and Node-only process/windows-handle tests passed 16/16. Candidate base was `94c4b50c3d25a35afd88bbb079e7693d2d72b1b6`; self-review included `git diff --check` and staged-diff inspection.
+- [ ] Independently gate and commit Phases B and C.
 - [ ] Clear integration; run final gates and alternating timings.
 - [ ] Preflight/push exact origin branch; verify remote SHA and clean status.
 - [ ] Report `Action pending` or install/verify the exact authorized artifact before Complete.
@@ -168,6 +169,16 @@ approval is `Action pending`, not Complete. Budget exhaustion is incomplete work
 
 Record per phase: changes, decisive evidence, testability gain, risks, commit SHA, and follow-ups;
 record raw timing evidence at integration.
+
+- Phase A — Added Node 24 quality workflow, strict app/test TypeScript partitions, explicit Vitest
+  node/jsdom classification, changed-production correctness and renderer-boundary gates, and a
+  lexical logical-LOC policy with direct fixtures. The bounded AudioManager caller now has an
+  explicit callback/result contract. Testability gain: policy behavior is directly table-tested;
+  new/changed hooks, imports, requires, aliases, dynamic imports, re-exports, file thresholds,
+  exemption schema, and Node test routing are executable checks. Residual risk is the recorded
+  historical warning debt and 42 out-of-scope audit findings; no protected runtime behavior was
+  intentionally changed. Commit: `0168f6845f8a5dce7eb318a82c9721e661442406`. Follow-up: Phase B
+  OpenAI seam remains next, with focused review before commit.
 
 ## Assumptions
 
