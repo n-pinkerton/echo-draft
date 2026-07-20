@@ -253,7 +253,7 @@ export function useUpdater() {
         if (window.electronAPI?.getUpdateInfo) {
           const info = await window.electronAPI.getUpdateInfo();
           if (info) {
-            updateGlobalState({ info });
+            updateGlobalState({ info: { ...info, releaseNotes: info.releaseNotes ?? undefined } });
           }
         }
       } catch (error) {

@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import type { ComponentProps } from "react";
 import type { default as TranscriptionModelPicker } from "../TranscriptionModelPicker";
 import type { TranscriptionSettings } from "../../hooks/useSettings";
-import type { LocalTranscriptionProvider } from "../../types/electron";
 
 type TranscriptionPickerProps = Omit<ComponentProps<typeof TranscriptionModelPicker>, "variant">;
 
@@ -63,7 +62,7 @@ export const useGuestTranscriptionPickerProps = (
         }
       },
       selectedLocalProvider: localTranscriptionProvider,
-      onLocalProviderSelect: (provider: LocalTranscriptionProvider) =>
+      onLocalProviderSelect: (provider) =>
         updateTranscriptionSettings({ localTranscriptionProvider: provider }),
       useLocalWhisper,
       onModeChange: (isLocal) => updateTranscriptionSettings({ useLocalWhisper: isLocal }),

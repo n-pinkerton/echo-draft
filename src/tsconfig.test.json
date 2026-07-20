@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": false
+  },
+  "include": ["vite-env.d.ts", "**/*.test.*", "test/**/*.ts", "**/__fixtures__/**/*.ts", "**/fixtures/**/*.ts", "**/__mocks__/**/*.ts", "**/mocks/**/*.ts"]
+}

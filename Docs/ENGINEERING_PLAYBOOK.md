@@ -88,3 +88,10 @@ Useful commands in this repo:
 - The change is verified with the right level of evidence.
 - Tests and docs are updated where needed.
 - Remaining risks or unverified areas are called out explicitly.
+
+## Required branch protection
+
+The `Quality` workflow is the required read-only quality signal for pull requests and feature
+branch pushes. Repository administrators should require its `quality` job before merging and
+require branches to be up to date; this repository change does not modify GitHub settings. Release
+and packaging workflows remain separate gates.

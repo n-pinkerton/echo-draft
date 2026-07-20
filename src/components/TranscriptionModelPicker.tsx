@@ -20,6 +20,7 @@ import LocalModePanel from "./transcriptionModelPicker/local/LocalModePanel";
 import { useParakeetModels } from "./transcriptionModelPicker/hooks/useParakeetModels";
 import { useWhisperModels } from "./transcriptionModelPicker/hooks/useWhisperModels";
 import { normalizeCustomEndpointOutcome, type CustomEndpointSetter } from "../types/customEndpoint";
+import type { LocalTranscriptionProvider } from "../types/electron";
 
 interface TranscriptionModelPickerProps {
   selectedCloudProvider: string;
@@ -29,7 +30,7 @@ interface TranscriptionModelPickerProps {
   selectedLocalModel: string;
   onLocalModelSelect: (modelId: string) => void;
   selectedLocalProvider?: string;
-  onLocalProviderSelect?: (providerId: string) => void;
+  onLocalProviderSelect?: (providerId: LocalTranscriptionProvider) => void;
   useLocalWhisper: boolean;
   onModeChange: (useLocal: boolean) => void;
   openaiApiKey: string;
@@ -217,6 +218,7 @@ export default function TranscriptionModelPicker({
     (providerId: string) => {
       const tab = LOCAL_PROVIDER_TABS.find((t) => t.id === providerId);
       if (tab?.disabled) return;
+      if (providerId !== "whisper" && providerId !== "nvidia") return;
       setInternalLocalProvider(providerId);
       onLocalProviderSelect?.(providerId);
     },

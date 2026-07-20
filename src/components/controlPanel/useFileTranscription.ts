@@ -21,6 +21,44 @@ type CleanupSummary = {
   metrics?: Record<string, unknown>;
 } | null;
 
+type FileTranscriptionProgress = {
+  provider?: string;
+  model?: string;
+  stage?: string;
+  stageLabel?: string;
+  message?: string;
+};
+
+type FileTranscriptionError = {
+  title?: string;
+  description?: string;
+  [key: string]: unknown;
+};
+
+type FileTranscriptionResult = {
+  success?: boolean;
+  text: string;
+  rawText?: string;
+  source?: string;
+  title?: string;
+  cleanup?: CleanupSummary;
+  timings?: Record<string, unknown>;
+};
+
+type FileAudioManagerCallbacks = {
+  onStateChange: (state: Record<string, unknown>) => void;
+  onProgress: (event: FileTranscriptionProgress) => void;
+  onPartialTranscript: () => void;
+  onError: (error: FileTranscriptionError) => void;
+  onTranscriptionComplete: (result: FileTranscriptionResult) => Promise<void>;
+};
+
+type FileAudioManager = {
+  cleanup: () => void;
+  setCallbacks: (callbacks: FileAudioManagerCallbacks) => void;
+  enqueueProcessingJob: (audioBlob: Blob, metadata: Record<string, unknown>, context: Record<string, unknown>) => void;
+};
+
 export function getFileTranscriptionCompletionToast(cleanup: CleanupSummary) {
   const fallback = Boolean(cleanup?.requested && cleanup.status === "fallback");
   if (!fallback) {
@@ -183,7 +221,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
     setFileTranscribeFileName(displayName);
     setIsFileTranscribing(true);
 
-    const manager = new AudioManager();
+    const manager = new AudioManager() as unknown as FileAudioManager;
     const providerRef = { current: null as null | string };
     const modelRef = { current: null as null | string };
     const lastStageRef = { current: null as null | string };
@@ -243,7 +281,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
       },
       onTranscriptionComplete: async (result) => {
         try {
-          if (!result?.success) {
+          if (!result?.success || typeof result.text !== "string") {
             throw new Error("Transcription failed");
           }
 
@@ -277,7 +315,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
             throw new Error("Saved transcription to history failed");
           }
 
-          toast(getFileTranscriptionCompletionToast(result.cleanup));
+          toast(getFileTranscriptionCompletionToast(result.cleanup ?? null));
 
           logger.info(
             "File transcription saved",

@@ -1,5 +1,9 @@
 const js = require("@eslint/js");
 const globals = require("globals");
+const {
+  baselineCorrectnessWarnings,
+  maintainabilityWarnings,
+} = require("./eslint/policy-rules.cjs");
 
 module.exports = [
   {
@@ -33,9 +37,11 @@ module.exports = [
       "no-constant-condition": ["error", { checkLoops: false }],
       "no-control-regex": "off",
       "no-useless-catch": "off",
-      "no-async-promise-executor": "off",
+      "no-useless-escape": "warn",
       "prefer-const": "off",
       "no-var": "off",
+      ...baselineCorrectnessWarnings,
+      ...maintainabilityWarnings,
     },
   },
 ];

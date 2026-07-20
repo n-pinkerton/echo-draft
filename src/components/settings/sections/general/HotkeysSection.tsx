@@ -86,7 +86,7 @@ export default function HotkeysSection(props: Props) {
   useEffect(() => {
     const checkHotkeyMode = async () => {
       try {
-        const info = await window.electronAPI?.getHotkeyModeInfo();
+        const info = await window.electronAPI?.getHotkeyModeInfo?.();
         if (info?.isUsingGnome) {
           setIsUsingGnomeHotkeys(true);
           setActivationMode("tap");

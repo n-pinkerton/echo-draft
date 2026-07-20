@@ -35,7 +35,9 @@ export default function DictationStatusIndicator({
   queuedWaitingCount = 0,
   outputMode = "insert",
 }: Props) {
-  const TerminalIcon = TERMINAL_ICON[stage as keyof typeof TERMINAL_ICON];
+  const TerminalIcon = Object.prototype.hasOwnProperty.call(TERMINAL_ICON, stage)
+    ? TERMINAL_ICON[stage as keyof typeof TERMINAL_ICON]
+    : undefined;
   const isSuccess = stage === "done";
   const isError = stage === "error";
   const isWarning = stage === "warning";
