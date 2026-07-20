@@ -140,7 +140,7 @@ candidate identities.
 - [x] Bootstrap branch/ledger and record the quick baseline. Branch: `codex/technical-depth-hardening-20260720`; bootstrap commit: `bb1a3998425b864a661000747c7904ee86503925`. Baseline environment: Windows 11 x64, Node `v24.18.0`, npm `10.9.0`; `npm ci` succeeded in 120 seconds (including native postinstall). Quick `npm test -- --silent=passed-only` took 68.4 seconds wall-clock / Vitest 66.11 seconds, ran 231 files and 2,129 tests (3 skipped), with 230 files / 2,125 tests passing and one pre-existing timeout in `src/helpers/__tests__/telemetryFileLogger.test.ts` (`keeps sustained maximum-rate logging within per-file, directory, and retention caps`). Next action: diagnose only as needed by affected gates; do not broaden sprint scope.
 - [x] Phase A quality/test policy independently gated and committed as `0168f6845f8a5dce7eb318a82c9721e661442406`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; `npm run lint` passed with 0 errors and 606 historical warnings, `npm run typecheck` passed, `npm run typecheck:test` passed, `npm run quality:changed-lint` passed with 0 errors/11 historical warnings, `npm run quality:file-policy` passed, renderer-boundary/file-policy direct tests passed 19/19 across 2 files, and Node-only process/windows-handle tests passed 16/16. Candidate base was `94c4b50c3d25a35afd88bbb079e7693d2d72b1b6`; self-review included `git diff --check` and staged-diff inspection.
 - [x] Phase B OpenAI transcription seam independently gated and committed as `f7bc951b99d140f960d42bd98ef47f3f1ec2e2a8`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; policy tests passed 13/13, unchanged `openAiTranscriber` facade tests passed 35/35, `npm run quality:changed-lint` passed with 0 errors/18 historical warnings, `npm run quality:file-policy` passed, strict app/test typechecks passed, and `git diff --check` passed. Processor physical lines fell from 1,374 to 985; effects remain in the processor while candidate scoring, agreement, timing aggregation, and transport policy are directly testable. Self-review covered facade/caller identity and protected retry/cancellation/fallback paths.
-- [ ] Independently gate and commit Phase C.
+- [x] Phase C completed-transcription delivery seam independently gated and committed as `c80a7788f02714f98e7f5a4f08378bc84ca0cc7d`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; delivery policy tests passed 13/13, unchanged handler tests passed 34/34, `npm run quality:changed-lint` passed with 0 errors/9 historical warnings, `npm run quality:file-policy` passed, strict app/test typechecks passed, and `git diff --check` passed. Handler physical lines fell from 818 to 783; protected clipboard/paste/history/cancellation effects remain ordered in the facade while outcome classification is directly testable.
 - [ ] Clear integration; run final gates and alternating timings.
 - [ ] Preflight/push exact origin branch; verify remote SHA and clean status.
 - [ ] Report `Action pending` or install/verify the exact authorized artifact before Complete.
@@ -190,6 +190,16 @@ record raw timing evidence at integration.
   prompt-echo, truncation, and timing behavior. Risk review found no semantic parity issue; the
   1,374-to-985 processor reduction lowers policy/effect coupling without changing the public seam.
   Commit: `f7bc951b99d140f960d42bd98ef47f3f1ec2e2a8`. Follow-up: Phase C delivery seam.
+
+- Phase C — Extracted `transcriptionDeliveryPolicy.js` behind the unchanged
+  `createTranscriptionCompleteHandler` facade. The module plans paste outcomes, preserves protected
+  clipboard reason/status precedence, and centralizes history/terminal delivery classification;
+  clipboard writes, paste calls, cancellation barriers, IPC, history persistence, cues, toasts, and
+  stage ordering remain in the executor. Testability gain: 13 direct policy cases plus 34 existing
+  handler cases cover success, failure, uncertainty, protected clipboard, changed/retained
+  clipboard, fallback, cancellation, history, and ordering. Risk review found no semantic parity
+  issue; handler physical lines fell 818 to 783 while the pure outcome contract became executable.
+  Commit: `c80a7788f02714f98e7f5a4f08378bc84ca0cc7d`. Follow-up: integrated review and final gates.
 
 ## Assumptions
 
