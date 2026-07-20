@@ -141,7 +141,7 @@ candidate identities.
 - [x] Phase A quality/test policy independently gated and committed as `0168f6845f8a5dce7eb318a82c9721e661442406`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; `npm run lint` passed with 0 errors and 606 historical warnings, `npm run typecheck` passed, `npm run typecheck:test` passed, `npm run quality:changed-lint` passed with 0 errors/11 historical warnings, `npm run quality:file-policy` passed, renderer-boundary/file-policy direct tests passed 19/19 across 2 files, and Node-only process/windows-handle tests passed 16/16. Candidate base was `94c4b50c3d25a35afd88bbb079e7693d2d72b1b6`; self-review included `git diff --check` and staged-diff inspection.
 - [x] Phase B OpenAI transcription seam independently gated and committed as `f7bc951b99d140f960d42bd98ef47f3f1ec2e2a8`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; policy tests passed 13/13, unchanged `openAiTranscriber` facade tests passed 35/35, `npm run quality:changed-lint` passed with 0 errors/18 historical warnings, `npm run quality:file-policy` passed, strict app/test typechecks passed, and `git diff --check` passed. Processor physical lines fell from 1,374 to 985; effects remain in the processor while candidate scoring, agreement, timing aggregation, and transport policy are directly testable. Self-review covered facade/caller identity and protected retry/cancellation/fallback paths.
 - [x] Phase C completed-transcription delivery seam independently gated and committed as `c80a7788f02714f98e7f5a4f08378bc84ca0cc7d`. Evidence: reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; delivery policy tests passed 13/13, unchanged handler tests passed 34/34, `npm run quality:changed-lint` passed with 0 errors/9 historical warnings, `npm run quality:file-policy` passed, strict app/test typechecks passed, and `git diff --check` passed. Handler physical lines fell from 818 to 783; protected clipboard/paste/history/cancellation effects remain ordered in the facade while outcome classification is directly testable.
-- [ ] Clear integration; run final gates and alternating timings.
+- [x] Integrated review cleared candidate `94c4b50c3d25a35afd88bbb079e7693d2d72b1b6..078c64ee85a4259c619060a19bca5591ac98a669` on the clean branch. Reviewer session `019f7de9-dae9-7a53-92bf-dfc25f702640`, profile `reviewer`, final `PROFILE_OK`/`CLEAR`; the first-push zero-SHA repair was committed as `078c64ee85a4259c619060a19bca5591ac98a669`. Resolver evidence: all-zero base selected merge-base `6f8ad7ce352522b716f52fc4fdcf80ee7b0d742e` with `origin/main`; changed lint, file policy, direct node policy tests 19/19, and `git diff --check` passed. Final gates and alternating timings remain pending.
 - [ ] Preflight/push exact origin branch; verify remote SHA and clean status.
 - [ ] Report `Action pending` or install/verify the exact authorized artifact before Complete.
 
@@ -200,6 +200,12 @@ record raw timing evidence at integration.
   clipboard, fallback, cancellation, history, and ordering. Risk review found no semantic parity
   issue; handler physical lines fell 818 to 783 while the pure outcome contract became executable.
   Commit: `c80a7788f02714f98e7f5a4f08378bc84ca0cc7d`. Follow-up: integrated review and final gates.
+
+- Integrated checkpoint — Integrated reviewer found no cross-phase application regression. The only
+  issue was first-push CI base selection; the workflow now uses the default-branch merge base for a
+  zero `github.event.before` and retains empty-tree fallback only for orphan histories. Commit:
+  `078c64ee85a4259c619060a19bca5591ac98a669`. Final heavy gates and timing evidence are still
+  required.
 
 ## Assumptions
 
