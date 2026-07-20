@@ -13,8 +13,8 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     env:
-        QUALITY_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        QUALITY_DEFAULT_BASE_REF: origin/${{ github.event.repository.default_branch }}
+      QUALITY_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+      QUALITY_DEFAULT_BASE_REF: origin/${{ github.event.repository.default_branch }}
     permissions:
       contents: read
     steps:
@@ -31,6 +31,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run typecheck:test
+      - run: npm run build:renderer
       - run: npm run quality:file-policy
       - run: npm run quality:changed-lint
       - run: npm test -- --silent=passed-only

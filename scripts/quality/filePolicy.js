@@ -1,18 +1,23 @@
 const path = require("node:path");
 
 const PRODUCTION_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx", ".cjs", ".mjs"]);
+const MAX_SUPPORTED_SOURCE_BYTES = 2 * 1024 * 1024;
 
 const isTestFile = (filePath) => /(^|[\\/])[^\\/]+\.test\.[^.]+$/.test(filePath);
 
-const isHandwrittenProductionFile = (filePath) => {
+const isSupportedSourceFile = (filePath) => {
   const normalized = filePath.replaceAll("\\", "/");
   return (
     PRODUCTION_EXTENSIONS.has(path.extname(normalized)) &&
-    !isTestFile(normalized) &&
     !normalized.includes("/dist/") &&
     !normalized.startsWith("dist/") &&
     !normalized.includes("/generated/")
   );
+};
+
+const isHandwrittenProductionFile = (filePath) => {
+  const normalized = filePath.replaceAll("\\", "/");
+  return isSupportedSourceFile(normalized) && !isTestFile(normalized);
 };
 
 const logicalLineCount = (source) => {
@@ -48,7 +53,10 @@ const logicalLineCount = (source) => {
       hasCode = true;
       if (escaped) escaped = false;
       else if (current === "\\") escaped = true;
-      else if ((state === "string" && current === stringDelimiter) || (state === "template" && current === "`")) {
+      else if (
+        (state === "string" && current === stringDelimiter) ||
+        (state === "template" && current === "`")
+      ) {
         state = "code";
         stringDelimiter = null;
       }
@@ -72,14 +80,15 @@ const logicalLineCount = (source) => {
   return count;
 };
 
-const evaluateFilePolicy = ({ filePath, logicalLines, isNew, previousLogicalLines = null, exempt = false }) => {
+const evaluateFilePolicy = ({
+  filePath,
+  logicalLines,
+  isNew,
+  previousLogicalLines = null,
+  exempt = false,
+}) => {
   const normalized = filePath.replaceAll("\\", "/");
-  const isSupportedSourceFile =
-    PRODUCTION_EXTENSIONS.has(path.extname(normalized)) &&
-    !normalized.includes("/dist/") &&
-    !normalized.startsWith("dist/") &&
-    !normalized.includes("/generated/");
-  if (exempt || !isSupportedSourceFile) return [];
+  if (exempt || !isSupportedSourceFile(normalized)) return [];
 
   const findings = [];
   if (isTestFile(normalized)) {
@@ -90,10 +99,21 @@ const evaluateFilePolicy = ({ filePath, logicalLines, isNew, previousLogicalLine
   if (isNew) {
     if (logicalLines > 500) findings.push({ level: "error", code: "new-production-file-size" });
     else if (logicalLines > 350) findings.push({ level: "warn", code: "new-production-file-size" });
-  } else if (logicalLines > 500 && previousLogicalLines !== null && logicalLines > previousLogicalLines) {
+  } else if (
+    logicalLines > 500 &&
+    previousLogicalLines !== null &&
+    logicalLines > previousLogicalLines
+  ) {
     findings.push({ level: "warn", code: "grandfathered-file-growth" });
   }
   return findings;
 };
 
-module.exports = { evaluateFilePolicy, isHandwrittenProductionFile, isTestFile, logicalLineCount };
+module.exports = {
+  evaluateFilePolicy,
+  isHandwrittenProductionFile,
+  isSupportedSourceFile,
+  isTestFile,
+  logicalLineCount,
+  MAX_SUPPORTED_SOURCE_BYTES,
+};

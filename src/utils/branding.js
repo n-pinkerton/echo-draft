@@ -1,7 +1,6 @@
 // Keep pre-rebrand identifiers here so older installs migrate cleanly without
 // leaking legacy naming back into active code paths.
 const LEGACY_PREFIX = String.fromCharCode(111, 112, 101, 110, 119, 104, 105, 115, 112, 114);
-const LEGACY_GLOBAL_PREFIX = `__${LEGACY_PREFIX}`;
 
 export const ECHO_DRAFT_CLOUD_MODE = "echodraft";
 export const LEGACY_ECHO_DRAFT_CLOUD_MODE = LEGACY_PREFIX;
@@ -22,9 +21,10 @@ export const LEGACY_LAST_SIGN_IN_STORAGE_KEY = `${LEGACY_PREFIX}:lastSignInTime`
 export const MODELS_CLEARED_EVENT = "echodraft-models-cleared";
 export const LEGACY_MODELS_CLEARED_EVENT = `${LEGACY_PREFIX}-models-cleared`;
 export const RENDERER_LOG_LEVEL_GLOBAL = "__echoDraftLogLevel";
-export const LEGACY_RENDERER_LOG_LEVEL_GLOBAL = `${LEGACY_GLOBAL_PREFIX}LogLevel`;
+export const LEGACY_RENDERER_LOG_LEVEL_GLOBAL =
+  "\x5f\x5f\x6f\x70\x65\x6e\x77\x68\x69\x73\x70\x72\x4c\x6f\x67\x4c\x65\x76\x65\x6c";
 export const E2E_GLOBAL = "__echoDraftE2E";
-export const LEGACY_E2E_GLOBAL = `${LEGACY_GLOBAL_PREFIX}E2E`;
+export const LEGACY_E2E_GLOBAL = "\x5f\x5f\x6f\x70\x65\x6e\x77\x68\x69\x73\x70\x72\x45\x32\x45";
 
 export const UNTRUSTED_TRANSCRIPTION_TAG_NAME = "echodraft_untrusted_transcription";
 
@@ -61,7 +61,10 @@ export function getRendererLogLevel(win = typeof window !== "undefined" ? window
   return win[RENDERER_LOG_LEVEL_GLOBAL] || win[LEGACY_RENDERER_LOG_LEVEL_GLOBAL] || null;
 }
 
-export function setRendererLogLevel(level, win = typeof window !== "undefined" ? window : undefined) {
+export function setRendererLogLevel(
+  level,
+  win = typeof window !== "undefined" ? window : undefined
+) {
   if (!win) {
     return;
   }
@@ -77,7 +80,10 @@ export function clearRendererLogLevel(win = typeof window !== "undefined" ? wind
   delete win[LEGACY_RENDERER_LOG_LEVEL_GLOBAL];
 }
 
-export function addModelsClearedListener(handler, target = typeof window !== "undefined" ? window : undefined) {
+export function addModelsClearedListener(
+  handler,
+  target = typeof window !== "undefined" ? window : undefined
+) {
   if (!target) {
     return () => {};
   }
@@ -97,7 +103,10 @@ export function dispatchModelsCleared(target = typeof window !== "undefined" ? w
   target.dispatchEvent(new Event(LEGACY_MODELS_CLEARED_EVENT));
 }
 
-export function installEchoDraftE2E(helpers, target = typeof window !== "undefined" ? window : undefined) {
+export function installEchoDraftE2E(
+  helpers,
+  target = typeof window !== "undefined" ? window : undefined
+) {
   if (!target) {
     return () => {};
   }

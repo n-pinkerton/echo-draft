@@ -868,6 +868,52 @@ describe("OpenAiTranscriber", () => {
     expect(payload).not.toHaveProperty("prompt");
   });
 
+  it("retries a likely dictionary prompt echo without dictionary prompting", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
+    localStorage.setItem("customDictionary", JSON.stringify(LARGE_DICTIONARY));
+
+    const transcriber = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+    const recoveredText = "Meeting starts tomorrow morning.";
+    (window as any).electronAPI.providerTranscriptionRequest = vi.fn(async (payload: any) => {
+      const text = payload.dictionaryEntries?.length
+        ? payload.dictionaryEntries.join(", ")
+        : recoveredText;
+      return {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      };
+    });
+
+    const result = await transcriber.processWithOpenAIAPI(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" }) as any,
+      {}
+    );
+
+    const requestMock = (window as any).electronAPI.providerTranscriptionRequest;
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    expect(requestMock.mock.calls[0][0].dictionaryEntries).toEqual(expect.any(Array));
+    expect(requestMock.mock.calls[0][0].dictionaryEntries.length).toBeGreaterThan(0);
+    expect(requestMock.mock.calls[1][0]).not.toHaveProperty("dictionaryEntries");
+    expect(result).toMatchObject({
+      success: true,
+      text: recoveredText,
+      rawText: recoveredText,
+      timings: {
+        transcriptionAttemptCount: 2,
+        transcriptionRetried: true,
+        transcriptionAttempts: [
+          expect.objectContaining({ label: "primary", outcome: "success" }),
+          expect.objectContaining({ label: "primary-noprompt", outcome: "success" }),
+        ],
+      },
+    });
+    expect(result.rawText).not.toBe(requestMock.mock.calls[0][0].dictionaryEntries.join(", "));
+  });
+
   it("retries non-streaming when an OpenAI stream closes before its completion marker", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");

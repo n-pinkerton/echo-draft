@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 const { CdpClient } = require("./cdpClient");
 
 class SilentWebSocket extends EventEmitter {
+  close = vi.fn();
+  terminate = vi.fn();
+
   send(_payload: string, callback: (error?: Error) => void) {
     callback();
   }
@@ -24,8 +27,6 @@ describe("Windows release gate CDP client", () => {
   it("rejects pending commands when the client closes", async () => {
     const client = new CdpClient("ws://example.invalid", { commandTimeoutMs: 5000 });
     const socket = new SilentWebSocket();
-    socket.close = vi.fn();
-    socket.terminate = vi.fn();
     client.ws = socket;
 
     const pending = client.send("Runtime.evaluate");

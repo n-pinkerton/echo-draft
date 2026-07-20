@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeCandidate,
+  applyCombinedTranscriptionTimings,
   choosePreferredResult,
   combineTranscriptionTimings,
   getAttemptAgreement,
   getRetryAfterMs,
+  isHardReject,
   isRetryableHttpStatus,
   normalizeProxyDurationMs,
 } from "./openAiTranscriptionPolicy";
@@ -65,6 +67,72 @@ describe("OpenAI transcription policy", () => {
     expect(selection).toMatchObject({ selected: null, selectedName: "disagreement" });
   });
 
+  it.each([
+    ["sparse output below the duration threshold", "yes please", 11.999, false, false],
+    ["low-rate output at the duration threshold", "yes please", 12, false, true],
+    ["output at exactly 0.2 words per second", "one two three", 15, false, false],
+    ["output below 0.2 words per second", "one two", 12, false, true],
+    ["corroborated output below 0.2 words per second", "one two", 12, true, false],
+  ])("classifies %s", (_name, text, durationSeconds, corroboratedByRetry, expected) => {
+    const analysis = analyzeCandidate(text, { durationSeconds });
+    expect(isHardReject(analysis, { durationSeconds, corroboratedByRetry })).toBe(expected);
+  });
+
+  it("applies the suspiciously-short reason only below 0.6 words per second", () => {
+    const atBoundary = analyzeCandidate("one two three four five six seven eight nine", {
+      durationSeconds: 15,
+    });
+    const belowBoundary = analyzeCandidate("one two three four five six seven eight", {
+      durationSeconds: 15,
+    });
+
+    expect(atBoundary.wordsPerSecond).toBe(0.6);
+    expect(atBoundary.reasons).not.toContain("suspiciously-short-for-duration");
+    expect(belowBoundary.wordsPerSecond).toBeLessThan(0.6);
+    expect(belowBoundary.wordsPerSecond).toBeGreaterThanOrEqual(0.2);
+    expect(belowBoundary.reasons).toContain("suspiciously-short-for-duration");
+    expect(isHardReject(belowBoundary, { durationSeconds: 15 })).toBe(false);
+  });
+
+  it.each([
+    ["both unknown-duration minimums", "go now", false],
+    ["below the minimum word count", "spoken", true],
+    ["below the minimum character count", "a bc", true],
+  ])("handles prompt echo recovery at %s", (_name, text, expected) => {
+    const analysis = analyzeCandidate(text, { promptEchoDetected: true });
+    expect(isHardReject(analysis, { promptEchoDetected: true, durationSeconds: null })).toBe(
+      expected
+    );
+  });
+
+  it("requires corroboration for a strict-prefix extension", () => {
+    const agreement = getAttemptAgreement(
+      "Please send the revised budget to Sam Friday",
+      "Please send the revised budget to Sam Friday and copy Alex before lunch"
+    );
+
+    expect(agreement).toMatchObject({
+      agreed: false,
+      strictPrefixExtension: true,
+      requiresCorroboration: true,
+    });
+  });
+
+  it("distinguishes corroborating agreement from material disagreement", () => {
+    expect(
+      getAttemptAgreement(
+        "Please send the revised budget to Sam Friday",
+        "Please send the revised budget to Sam Friday"
+      )
+    ).toMatchObject({ agreed: true, requiresCorroboration: false });
+    expect(
+      getAttemptAgreement(
+        "Please send the revised budget to Sam Friday",
+        "Garden tools need dry storage beside the bicycle"
+      )
+    ).toMatchObject({ agreed: false, requiresCorroboration: false });
+  });
+
   it("combines attempt and transport timing records in order", () => {
     expect(
       combineTranscriptionTimings([
@@ -93,6 +161,43 @@ describe("OpenAI transcription policy", () => {
       transcriptionAttempts: [
         { attempt: 1, label: "primary", outcome: "retry" },
         { attempt: 2, label: "retry", outcome: "success" },
+      ],
+    });
+  });
+
+  it("applies ordered attempt and transport evidence to the supplied timing object", () => {
+    const timings = { existingMetric: 7 };
+    const attempts = [
+      {
+        attemptLabel: "primary",
+        attemptOutcome: "retry",
+        timings: {
+          transcriptionProcessingDurationMs: 10,
+          transcriptionTransportAttempts: [{ requestId: "first", attempt: 1 }],
+        },
+      },
+      {
+        attemptLabel: "primary-noprompt",
+        attemptOutcome: "success",
+        timings: {
+          transcriptionProcessingDurationMs: 20,
+          transcriptionTransportAttempts: [{ requestId: "second", attempt: 1 }],
+        },
+      },
+    ];
+
+    expect(applyCombinedTranscriptionTimings(timings, attempts)).toBeUndefined();
+    expect(timings).toMatchObject({
+      existingMetric: 7,
+      transcriptionAttemptCount: 2,
+      transcriptionRequestIds: ["first", "second"],
+      transcriptionAttempts: [
+        { attempt: 1, label: "primary", outcome: "retry" },
+        { attempt: 2, label: "primary-noprompt", outcome: "success" },
+      ],
+      transcriptionTransportAttempts: [
+        { requestId: "first", transcriptionAttempt: 1, attemptLabel: "primary" },
+        { requestId: "second", transcriptionAttempt: 2, attemptLabel: "primary-noprompt" },
       ],
     });
   });

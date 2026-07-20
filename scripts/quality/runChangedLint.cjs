@@ -2,17 +2,6 @@ const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 const { changedFiles } = require("./changedFiles.cjs");
 
-const root = process.cwd();
-const eslintCli = path.join(root, "node_modules", "eslint", "bin", "eslint.js");
-const { files } = changedFiles(root, process.env.QUALITY_BASE_SHA);
-const productionFiles = files.filter((filePath) =>
-  /\.(?:js|jsx|ts|tsx|cjs|mjs)$/.test(filePath) &&
-  !/\.test\.[^.]+$/.test(filePath) &&
-  !filePath.includes("/dist/") &&
-  !filePath.startsWith("dist/")
-);
-const rootFiles = productionFiles.filter((filePath) => !filePath.startsWith("src/"));
-const srcFiles = productionFiles.filter((filePath) => filePath.startsWith("src/")).map((filePath) => filePath.slice(4));
 const rules = [
   "no-duplicate-case:error",
   "no-dupe-keys:error",
@@ -24,13 +13,53 @@ const rules = [
   "require-yield:error",
 ];
 
-const run = (cwd, files, extraRules = []) => {
-  if (!files.length) return;
-  execFileSync(process.execPath, [eslintCli, ...files, ...[...rules, ...extraRules].flatMap((rule) => ["--rule", rule])], {
-    cwd,
-    stdio: "inherit",
-  });
+const isProductionFile = (filePath) =>
+  /\.(?:js|jsx|ts|tsx|cjs|mjs)$/.test(filePath) &&
+  !/\.test\.[^.]+$/.test(filePath) &&
+  !filePath.includes("/dist/") &&
+  !filePath.startsWith("dist/");
+
+const classifyChangedLintFiles = (files) => {
+  const productionFiles = files.filter(isProductionFile);
+  const rootFiles = productionFiles.filter((filePath) => !filePath.startsWith("src/"));
+  const srcFiles = productionFiles
+    .filter((filePath) => filePath.startsWith("src/"))
+    .map((filePath) => filePath.slice(4));
+  return {
+    rootFiles,
+    srcCoreFiles: srcFiles.filter((filePath) => /\.(?:cjs|mjs)$/.test(filePath)),
+    srcReactFiles: srcFiles.filter((filePath) => /\.(?:js|jsx|ts|tsx)$/.test(filePath)),
+  };
 };
 
-run(root, rootFiles);
-run(path.join(root, "src"), srcFiles, ["react-hooks/rules-of-hooks:error"]);
+const runGroup = (execFile, eslintCli, cwd, files, extraRules = []) => {
+  if (!files.length) return;
+  execFile(
+    process.execPath,
+    [eslintCli, ...[...rules, ...extraRules].flatMap((rule) => ["--rule", rule]), "--", ...files],
+    {
+      cwd,
+      stdio: "inherit",
+    }
+  );
+};
+
+function runChangedLint({
+  root = process.cwd(),
+  requestedBase = process.env.QUALITY_BASE_SHA,
+  getChangedFiles = changedFiles,
+  execFile = execFileSync,
+} = {}) {
+  const eslintCli = path.join(root, "node_modules", "eslint", "bin", "eslint.js");
+  const { files } = getChangedFiles(root, requestedBase);
+  const { rootFiles, srcCoreFiles, srcReactFiles } = classifyChangedLintFiles(files);
+  runGroup(execFile, eslintCli, root, rootFiles);
+  runGroup(execFile, eslintCli, path.join(root, "src"), srcCoreFiles);
+  runGroup(execFile, eslintCli, path.join(root, "src"), srcReactFiles, [
+    "react-hooks/rules-of-hooks:error",
+  ]);
+}
+
+if (require.main === module) runChangedLint();
+
+module.exports = { classifyChangedLintFiles, runChangedLint };
