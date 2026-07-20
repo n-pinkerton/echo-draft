@@ -11,11 +11,11 @@ import {
   getMobileInboxTerminalProgress,
   mobileInboxRequestOwnsSession,
 } from "./mobileInbox";
-
-const CLIPBOARD_PROTECTION_FAILURE_CODES = new Set([
-  "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED",
-  "WINDOWS_CLIPBOARD_RESTORE_PENDING",
-]);
+import {
+  getHistoryStatus,
+  isDeliverySucceeded,
+  planPasteDeliveryOutcome,
+} from "./transcriptionDeliveryPolicy";
 
 export const getCleanupFallbackFeedback = (
   fallbackReason,
@@ -366,29 +366,14 @@ export const createTranscriptionCompleteHandler = (deps) => {
                 success: await audioManager.safePaste(result.text, pasteOptions),
                 errorCode: null,
               };
-        pasteSucceeded = pasteResult?.success === true;
-        const insertionMayHaveOccurred = Boolean(
-          !pasteSucceeded && pasteResult?.insertionMayHaveOccurred === true
-        );
-        const clipboardRestoreWarning = Boolean(
-          pasteSucceeded &&
-          pasteResult?.inserted === true &&
-          pasteResult?.clipboardRestored === false
-        );
-        const transcriptAlreadyInClipboard = pasteResult?.clipboardRetained === true;
-        const clipboardChangedAfterPaste = Boolean(
-          !pasteSucceeded &&
-            pasteResult?.clipboardWriteCommitted === true &&
-            !transcriptAlreadyInClipboard
-        );
-        if (clipboardRestoreWarning) {
-          deliveryReasonCode = pasteResult?.warningCode || "WINDOWS_CLIPBOARD_RESTORE_FAILED";
-        } else if (!pasteSucceeded) {
-          deliveryReasonCode = pasteResult?.errorCode || "AUTOMATIC_INSERTION_FAILED";
-        }
+        const pasteOutcome = planPasteDeliveryOutcome(pasteResult);
+        pasteSucceeded = pasteOutcome.pasteSucceeded;
+        const transcriptAlreadyInClipboard = pasteOutcome.transcriptAlreadyInClipboard;
+        const clipboardChangedAfterPaste = pasteOutcome.clipboardChangedAfterPaste;
+        deliveryReasonCode = pasteOutcome.deliveryReasonCode;
         assertDeliveryActive();
         pasteMs = Math.round(performance.now() - pasteStart);
-        if (clipboardRestoreWarning) {
+        if (pasteOutcome.deliveryStatus === "inserted_clipboard_warning") {
           deliveryStatus = "inserted_clipboard_warning";
           deliveryError =
             "Text was inserted, but the previous clipboard contents could not yet be restored.";
@@ -399,9 +384,9 @@ export const createTranscriptionCompleteHandler = (deps) => {
             variant: "default",
             duration: 6000,
           });
-        } else if (pasteSucceeded) {
+        } else if (pasteOutcome.deliveryStatus === "inserted") {
           deliveryStatus = "inserted";
-        } else if (insertionMayHaveOccurred) {
+        } else if (pasteOutcome.deliveryStatus === "insert_uncertain") {
           // A partial SendInput can include Ctrl-down and V-down, which may already
           // have pasted the text. Keep recovery available without inviting a second,
           // potentially duplicate paste.
@@ -419,7 +404,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
             variant: "default",
             duration: 7000,
           });
-        } else if (CLIPBOARD_PROTECTION_FAILURE_CODES.has(deliveryReasonCode)) {
+        } else if (pasteOutcome.deliveryStatus === "clipboard_protected") {
           // This failure is intentionally raised before the main process touches a clipboard
           // it cannot safely mutate. A generic clipboard fallback here would defeat that
           // protection, so retain the text on screen/history and offer explicit recovery.
@@ -438,7 +423,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
             variant: "default",
             duration: 6000,
           });
-        } else if (transcriptAlreadyInClipboard) {
+        } else if (pasteOutcome.deliveryStatus === "clipboard_fallback") {
           clipboardSucceeded = true;
           deliveryStatus = "clipboard_fallback";
           deliveryError = "Automatic insertion failed; text was kept in the clipboard.";
@@ -448,7 +433,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
             variant: "default",
             duration: 5000,
           });
-        } else if (clipboardChangedAfterPaste) {
+        } else if (pasteOutcome.deliveryStatus === "clipboard_changed") {
           deliveryStatus = "clipboard_changed";
           deliveryError =
             "Automatic insertion failed; EchoDraft preserved newer clipboard contents instead of overwriting them.";
@@ -596,17 +581,10 @@ export const createTranscriptionCompleteHandler = (deps) => {
       const provider = job?.provider || result.source || "";
       const model = job?.model || "";
       const dictationTitle = normalizeCleanupTitle(result.title);
-      const deliverySucceeded = [
-        "inserted",
-        "inserted_clipboard_warning",
-        "clipboard",
-        "clipboard_fallback",
-      ].includes(deliveryStatus);
+      const deliverySucceeded = isDeliverySucceeded(deliveryStatus);
       // A clipboard fallback preserves the user's text, but automatic delivery still
       // failed. Keep that distinction visible in history and diagnostic exports.
-      const historyStatus = ["inserted", "clipboard"].includes(deliveryStatus)
-        ? "success"
-        : "delivery_issue";
+      const historyStatus = getHistoryStatus(deliveryStatus);
 
       assertDeliveryActive();
       const saveResult = await audioManager.saveTranscription({
