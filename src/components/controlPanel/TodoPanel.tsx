@@ -9,7 +9,10 @@ import type { MobileInboxStatus } from "../../types/electronApi/mobileInbox";
 type Props = {
   items: TodoItem[];
   isLoading: boolean;
-  copyToClipboard: (text: string) => Promise<void>;
+  copyToClipboard: (
+    text: string,
+    options?: { title?: string; description?: string }
+  ) => Promise<void>;
   markActioned: (id: number) => Promise<void>;
   mobileInboxStatus?: MobileInboxStatus | null;
   isChoosingInboxFolder?: boolean;
@@ -96,7 +99,7 @@ export default function TodoPanel({
           </div>
         ) : null}
         <p className="text-[11px] text-muted-foreground">
-          Copy a mobile memo, then mark it as actioned when the follow-up is complete.
+          Copy a cleaned or raw mobile memo, then mark it as actioned when the follow-up is complete.
         </p>
         <Input
           data-testid="todo-search"
@@ -180,6 +183,23 @@ export default function TodoPanel({
                     <Copy size={12} className="mr-1" />
                     Copy
                   </Button>
+                  {typeof item.raw_text === "string" && item.raw_text.trim() ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        void copyToClipboard(item.raw_text as string, {
+                          title: "Raw Transcript Copied",
+                          description: "Raw transcript copied to clipboard.",
+                        })
+                      }
+                      aria-label={`Copy raw mobile memo ${itemNumber}`}
+                      className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                    >
+                      <Copy size={12} className="mr-1" />
+                      Copy raw
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="ghost"

@@ -73,6 +73,29 @@ describe("debugAudioCapture", () => {
     expect(totalBytes).toBeLessThanOrEqual(700);
   }, 20_000);
 
+  it("deduplicates a repeated capture key without replacing the original audio", async () => {
+    logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-logs-dedupe-"));
+    const audioBuffer = new Uint8Array([1, 2, 3, 4]).buffer;
+
+    const first = await saveDebugAudioCapture({
+      logsDir,
+      audioBuffer,
+      mimeType: "audio/mp4",
+      captureKey: "mobile-item:audio-hash",
+    });
+    const second = await saveDebugAudioCapture({
+      logsDir,
+      audioBuffer,
+      mimeType: "audio/mp4",
+      captureKey: "mobile-item:audio-hash",
+    });
+
+    expect(first.deduplicated).toBeUndefined();
+    expect(second.deduplicated).toBe(true);
+    expect(fs.readdirSync(path.join(logsDir, "audio"))).toHaveLength(2);
+    expect(fs.readFileSync(first.filePath)).toEqual(Buffer.from([1, 2, 3, 4]));
+  });
+
   it("rejects oversized payloads before writing files", async () => {
     logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "echodraft-logs-"));
     await expect(

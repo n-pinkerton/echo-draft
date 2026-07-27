@@ -12,6 +12,7 @@ import {
   isTranscriptionCancelled,
   throwIfTranscriptionCancelled,
 } from "../pipeline/cancellation";
+import { captureRawTranscription } from "./rawTranscription";
 
 /**
  * EchoDraft cloud transcription client used by AudioManager.
@@ -81,7 +82,8 @@ export class CloudTranscriber {
     throwIfTranscriptionCancelled(signal);
     timings.transcriptionProcessingDurationMs = Math.round(performance.now() - transcriptionStart);
 
-    const rawText = result.text;
+    const rawTranscript = captureRawTranscription(result.text);
+    const rawText = rawTranscript.text;
     let processedText = rawText;
 
     const override = this.getCleanupEnabledOverride?.() ?? null;

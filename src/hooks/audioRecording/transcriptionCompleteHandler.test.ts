@@ -348,6 +348,29 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(audioManagerRef.current.warmupStreamingConnection).toHaveBeenCalled();
   });
 
+  it("saves clean and raw normal-transcription fields independently", async () => {
+    const harness = createDeliveryHarness({ outputMode: "clipboard" });
+
+    await harness.run({
+      text: "Cleaned request for the next agent.",
+      rawText: "please clean up this request for the next agent",
+      cleanup: {
+        requested: true,
+        attempted: true,
+        applied: false,
+        status: "fallback",
+        fallbackReason: "provider_error",
+      },
+    });
+
+    expect(harness.saveTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Cleaned request for the next agent.",
+        rawText: "please clean up this request for the next agent",
+      })
+    );
+  });
+
   it("handles insert mode: pastes into target, saves history, updates stage", async () => {
     const activeSessionRef = { current: null as any };
     const sessionsByIdRef = {

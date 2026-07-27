@@ -10,6 +10,7 @@ import {
   isTranscriptionCancelled,
   throwIfTranscriptionCancelled,
 } from "../pipeline/cancellation";
+import { captureRawTranscription } from "./rawTranscription";
 
 /**
  * Local transcription via IPC to the main process (Whisper.cpp and Parakeet).
@@ -129,24 +130,56 @@ export class LocalTranscriber {
         timings.transcriptionProcessingDurationMs = Math.round(
           performance.now() - transcriptionStart
         );
-        let cleanedText = rawText;
+        const rawTranscript = captureRawTranscription(rawText);
+        const rawTextSnapshot = rawTranscript.text;
+        let cleanedText = rawTextSnapshot;
         let cleanup = null;
         let title = null;
 
         if (this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
           const reasoningStart = performance.now();
-          const cleanupResult = await this.applyReasoningCleanup(rawText, "local", runtime);
-          cleanedText = cleanupResult.text;
-          cleanup = cleanupResult.cleanup;
-          title = cleanupResult.title || null;
+          try {
+            const cleanupResult = await this.applyReasoningCleanup(
+              rawTextSnapshot,
+              "local",
+              runtime
+            );
+            cleanedText = cleanupResult.text;
+            cleanup = cleanupResult.cleanup;
+            title = cleanupResult.title || null;
+          } catch (cleanupError) {
+            if (isTranscriptionCancelled(cleanupError, signal)) {
+              throw createTranscriptionCancelledError();
+            }
+            // rawText is captured before cleanup and is the value that must be
+            // persisted if the cleanup attempt cannot complete.
+            cleanedText = rawTextSnapshot;
+            title = null;
+            cleanup = {
+              requested: true,
+              attempted: true,
+              applied: false,
+              status: "fallback",
+              fallbackReason:
+                cleanupError?.code === "CLEANUP_FIDELITY_REJECTED"
+                  ? "fidelity_rejected"
+                  : "provider_error",
+              retryCount: Number(cleanupError?.cleanupRetryCount) || 0,
+            };
+            this.logger?.warn?.(
+              "Cleanup failed; preserving the raw local transcription",
+              { errorCode: cleanupError?.code || "error" },
+              "reasoning"
+            );
+          }
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
         }
 
         return {
           success: true,
-          text: cleanedText || rawText,
-          rawText,
+          text: cleanedText || rawTextSnapshot,
+          rawText: rawTextSnapshot,
           source: "local",
           timings,
           ...(title ? { title } : {}),
@@ -222,28 +255,54 @@ export class LocalTranscriber {
 
       if (result.success && result.text) {
         const rawText = result.text;
-        let cleanedText = rawText;
+        const rawTranscript = captureRawTranscription(rawText);
+        const rawTextSnapshot = rawTranscript.text;
+        let cleanedText = rawTextSnapshot;
         let cleanup = null;
         let title = null;
 
         if (this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
           const reasoningStart = performance.now();
-          const cleanupResult = await this.applyReasoningCleanup(
-            rawText,
-            "local-parakeet",
-            runtime
-          );
-          cleanedText = cleanupResult.text;
-          cleanup = cleanupResult.cleanup;
-          title = cleanupResult.title || null;
+          try {
+            const cleanupResult = await this.applyReasoningCleanup(
+              rawTextSnapshot,
+              "local-parakeet",
+              runtime
+            );
+            cleanedText = cleanupResult.text;
+            cleanup = cleanupResult.cleanup;
+            title = cleanupResult.title || null;
+          } catch (cleanupError) {
+            if (isTranscriptionCancelled(cleanupError, signal)) {
+              throw createTranscriptionCancelledError();
+            }
+            cleanedText = rawTextSnapshot;
+            title = null;
+            cleanup = {
+              requested: true,
+              attempted: true,
+              applied: false,
+              status: "fallback",
+              fallbackReason:
+                cleanupError?.code === "CLEANUP_FIDELITY_REJECTED"
+                  ? "fidelity_rejected"
+                  : "provider_error",
+              retryCount: Number(cleanupError?.cleanupRetryCount) || 0,
+            };
+            this.logger?.warn?.(
+              "Cleanup failed; preserving the raw Parakeet transcription",
+              { errorCode: cleanupError?.code || "error" },
+              "reasoning"
+            );
+          }
           timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
         }
 
         return {
           success: true,
-          text: cleanedText || rawText,
-          rawText,
+          text: cleanedText || rawTextSnapshot,
+          rawText: rawTextSnapshot,
           source: "local-parakeet",
           timings,
           ...(title ? { title } : {}),

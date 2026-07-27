@@ -409,6 +409,7 @@ describe("useAudioRecording stacked hotkey routing", () => {
       await mocks.callbacks.onTranscriptionComplete({
         success: true,
         text: "Retry completed",
+        rawText: "retry completed",
         source: "openai",
         context: retryContext,
       });

@@ -3,13 +3,11 @@ import type { TodoItem, TranscriptionItem, TranscriptionMeta } from "../electron
 export interface ElectronAPIDatabase {
   // Database operations
   saveTranscription: (
-    payload:
-      | string
-      | {
-          text: string;
-          rawText?: string | null;
-          meta?: Record<string, any>;
-        }
+    payload: {
+      text: string;
+      rawText: string;
+      meta?: Record<string, any>;
+    }
   ) => Promise<{ id: number; success: boolean; transcription?: TranscriptionItem }>;
   getTranscriptions: (limit?: number) => Promise<TranscriptionItem[]>;
   getLatestTranscription?: () => Promise<TranscriptionItem | null>;

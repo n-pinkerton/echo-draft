@@ -46,6 +46,16 @@ class MobileInboxManager {
     this.path = options.pathImpl || path;
     this.crypto = options.cryptoImpl || crypto;
     this.logger = options.logger || debugLogger;
+    this.saveAudioCapture =
+      typeof options.saveAudioCapture === "function" ? options.saveAudioCapture : null;
+    this.withAudioCaptureLock =
+      typeof options.withAudioCaptureLock === "function"
+        ? options.withAudioCaptureLock
+        : async (operation) => operation();
+    this.isAudioCapturePurgeInProgress =
+      typeof options.isAudioCapturePurgeInProgress === "function"
+        ? options.isAudioCapturePurgeInProgress
+        : () => false;
     this.fileStore =
       options.fileStore ||
       new MobileInboxFileStore({
@@ -377,7 +387,9 @@ class MobileInboxManager {
 
       let audioEvidence = null;
       try {
-        audioEvidence = (await this._readAudio(root, manifest, manifestEvidence)).evidence;
+        const existingAudio = await this._readAudio(root, manifest, manifestEvidence);
+        audioEvidence = existingAudio.evidence;
+        await this._retainAudio(manifest, existingAudio.buffer);
       } catch (error) {
         if (!(error instanceof SettlingMobileInboxError) || !/audio-missing:/.test(error.signature)) {
           throw error;
@@ -392,9 +404,18 @@ class MobileInboxManager {
       manifest,
       manifestEvidence
     );
+    await this._retainAudio(manifest, buffer);
     const result = await this._dispatchToRenderer(manifest, buffer);
-    if (!result?.success || typeof result.text !== "string" || !result.text.trim()) {
-      throw new TemporaryMobileInboxError("Mobile transcription did not complete");
+    if (
+      !result?.success ||
+      typeof result.text !== "string" ||
+      !result.text.trim() ||
+      typeof result.rawText !== "string" ||
+      !result.rawText.trim()
+    ) {
+      throw new TemporaryMobileInboxError(
+        "Mobile transcription did not provide a raw transcript; the item will be retried"
+      );
     }
 
     const provider = normalizeMetadataToken(result.provider || result.source);
@@ -429,12 +450,42 @@ class MobileInboxManager {
     await this._removeCompletedInput(root, { manifestEvidence, audioEvidence });
   }
 
+  async _retainAudio(manifest, buffer) {
+    if (!this.saveAudioCapture) return;
+    try {
+      await this.withAudioCaptureLock(() => {
+        if (this.isAudioCapturePurgeInProgress()) {
+          throw new Error("Audio capture purge is in progress");
+        }
+        return this.saveAudioCapture({
+          audioBuffer: buffer,
+          mimeType: manifest.mimeType,
+          sessionId: manifest.externalId,
+          jobId: null,
+          outputMode: "mobile-todo",
+          durationSeconds: null,
+          stopReason: "mobile-upload",
+          stopSource: "android",
+          captureKey: `${manifest.externalId}:${manifest.audioSha256}`,
+        });
+      });
+    } catch (error) {
+      this.logger.error?.("Mobile source audio could not be retained", {
+        code: error?.code || error?.name || "capture_failed",
+      });
+      throw new TemporaryMobileInboxError(
+        "Mobile source audio could not be retained; the item will be retried"
+      );
+    }
+  }
+
   _notifyTodoAdded(todo) {
     const controlPanel = this.windowManager?.controlPanelWindow;
     if (!isLiveWindow(controlPanel)) return;
     controlPanel.webContents.send("todo-added", {
       id: todo.id,
       text: todo.text,
+      raw_text: todo.raw_text,
       title: todo.meta?.title || null,
       created_at: todo.created_at,
     });

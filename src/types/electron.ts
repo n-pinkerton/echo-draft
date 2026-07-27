@@ -80,6 +80,7 @@ export interface TranscriptionItem {
 export interface TodoItem {
   id: number;
   text: string;
+  raw_text?: string | null;
   created_at: string;
   title?: string | null;
 }

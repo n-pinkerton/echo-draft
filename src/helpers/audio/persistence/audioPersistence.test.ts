@@ -111,10 +111,11 @@ describe("audioPersistence", () => {
     const save = vi.fn(async () => ({ success: true, id: 123 }));
     (window as any).electronAPI = { saveTranscription: save };
 
-    await expect(saveTranscription({ text: "hi" } as any)).resolves.toEqual({
+    await expect(saveTranscription({ text: "hi", rawText: "raw hi" })).resolves.toEqual({
       success: true,
       id: 123,
     });
+    expect(save).toHaveBeenCalledWith({ text: "hi", rawText: "raw hi" });
   });
 
   it("saveTranscription returns error result on throw", async () => {
@@ -123,7 +124,17 @@ describe("audioPersistence", () => {
     });
     (window as any).electronAPI = { saveTranscription: save };
 
-    const result = await saveTranscription({ text: "hi" } as any);
+    const result = await saveTranscription({ text: "hi", rawText: "raw hi" });
     expect(result).toMatchObject({ success: false, error: expect.stringContaining("db fail") });
+  });
+
+  it("does not call ipc when raw text is missing", async () => {
+    const save = vi.fn(async () => ({ success: true, id: 123 }));
+    (window as any).electronAPI = { saveTranscription: save };
+
+    const result = await saveTranscription({ text: "cleaned" } as any);
+
+    expect(result).toMatchObject({ success: false, error: "Raw transcription is required" });
+    expect(save).not.toHaveBeenCalled();
   });
 });

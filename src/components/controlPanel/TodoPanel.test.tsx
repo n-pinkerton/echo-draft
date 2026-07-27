@@ -4,9 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { TodoItem } from "../../types/electron";
 import TodoPanel from "./TodoPanel";
 
-const makeItem = (id: number, text: string, title?: string): TodoItem => ({
+const makeItem = (id: number, text: string, title?: string, rawText?: string): TodoItem => ({
   id,
   text,
+  ...(rawText !== undefined ? { raw_text: rawText } : {}),
   title: title || null,
   created_at: "2026-07-18 01:00:00",
 });
@@ -52,6 +53,25 @@ describe("TodoPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Mark mobile memo 1 actioned" }));
     await waitFor(() => expect(markActioned).toHaveBeenCalledWith(1));
+  });
+
+  it("copies the stored raw transcript separately and does not invent one", async () => {
+    const copyToClipboard = vi.fn(async () => {});
+    render(
+      <TodoPanel
+        items={[makeItem(1, "Cleaned request", undefined, "clean request") , makeItem(2, "No raw copy")]}
+        isLoading={false}
+        copyToClipboard={copyToClipboard}
+        markActioned={vi.fn(async () => {})}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy raw mobile memo 1" }));
+    expect(copyToClipboard).toHaveBeenCalledWith(
+      "clean request",
+      expect.objectContaining({ title: "Raw Transcript Copied" })
+    );
+    expect(screen.queryByRole("button", { name: "Copy raw mobile memo 2" })).not.toBeInTheDocument();
   });
 
   it("labels mobile dictations and searches by title", () => {

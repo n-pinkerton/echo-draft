@@ -224,6 +224,8 @@ export async function startStreamingRecording(manager, context = null) {
     manager.streamingAudioBytesSent = 0;
     manager.streamingAudioFirstChunkAt = null;
     manager.streamingAudioLastChunkAt = null;
+    manager.streamingAudioCaptureChunks = [];
+    manager.streamingAudioSampleRate = audioContext.sampleRate || 48_000;
 
     // Forward audio as soon as the pipeline is connected.
     manager.streamingAudioForwarding = true;

@@ -377,6 +377,48 @@ describe("OpenAiTranscriber", () => {
     );
   });
 
+  it("returns the exact transcription-stage text when cleanup fails", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
+
+    const rawText = "Please prepare a plain English explanation for the next agent.";
+    const reasoningCleanupService = {
+      processTranscriptionWithOutcome: vi.fn(async () => {
+        throw new Error("cleanup provider unavailable");
+      }),
+    };
+    const transcriber = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+      shouldApplyReasoningCleanup: () => true,
+      getCleanupEnabledOverride: () => null,
+      reasoningCleanupService,
+    });
+    globalThis.fetch = vi.fn(async () => makeJsonResponse(rawText)) as any;
+
+    const result = await transcriber.processWithOpenAIAPI(
+      new Blob(["audio"], { type: "audio/webm" }) as any,
+      {}
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      text: rawText,
+      rawText,
+      cleanup: {
+        status: "fallback",
+        applied: false,
+        fallbackReason: "provider_error",
+      },
+    });
+    expect(result.rawText).toBe(rawText);
+    expect(reasoningCleanupService.processTranscriptionWithOutcome).toHaveBeenCalledWith(
+      rawText,
+      "openai",
+      null,
+      { signal: null }
+    );
+  });
+
   it("keeps the ordinary source label when a one-word safety-retry drift is discarded", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "whisper-1");

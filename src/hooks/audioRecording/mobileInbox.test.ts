@@ -75,4 +75,13 @@ describe("mobile inbox renderer bridge", () => {
       model: "gpt-4o-transcribe",
     });
   });
+
+  it("rejects a completion when the raw transcription is absent", () => {
+    expect(
+      createMobileInboxCompletion(
+        { success: true, text: "Cleaned memo", title: undefined },
+        { provider: "openai", model: "gpt-4o-transcribe" }
+      )
+    ).toEqual({ success: false });
+  });
 });

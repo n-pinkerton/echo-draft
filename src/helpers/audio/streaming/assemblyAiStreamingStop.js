@@ -13,6 +13,7 @@ import {
 } from "../pipeline/cancellation";
 import { cleanupStreamingListeners } from "./assemblyAiStreamingCleanup";
 import { cancelStreamingStartup } from "./assemblyAiStreamingStart";
+import { captureRawTranscription } from "../transcription/rawTranscription";
 
 const STREAMING_WORKLET_FLUSH_TIMEOUT_MS = 1000;
 const STREAMING_POST_FLUSH_GRACE_MS = 150;
@@ -178,6 +179,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
     signal
   );
   manager.streamingAudioForwarding = false;
+  await manager.saveStreamingAudioCapture?.(durationSeconds);
 
   // 4. ForceEndpoint finalizes any in-progress turn, then Terminate closes the session.
   //    The server MUST process ALL remaining audio and send ALL Turn messages before
@@ -292,7 +294,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
     "streaming"
   );
 
-  const rawText = finalText;
+  const rawText = finalText ? captureRawTranscription(finalText).text : "";
   let cleanup = null;
   let title = null;
 

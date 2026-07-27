@@ -54,6 +54,7 @@ describe("AudioManager.stopStreamingRecording", () => {
   beforeEach(() => {
     localStorage.clear();
     (window as any).electronAPI = {};
+    vi.spyOn(AudioManager.prototype, "saveAudioCapture").mockResolvedValue();
   });
 
   afterEach(() => {
@@ -175,6 +176,7 @@ describe("AudioManager.stopStreamingRecording", () => {
     manager.streamingSource = { disconnect: vi.fn() } as any;
     manager.streamingStream = { getTracks: () => [{ stop: vi.fn() }] } as any;
     manager.streamingFinalText = "hello";
+    manager.streamingContext = { sessionId: "stream-session", jobId: 1, outputMode: "clipboard" };
 
     port.onmessage = (event: any) => manager.streamingWorklet.handleMessage(event);
 
@@ -192,6 +194,15 @@ describe("AudioManager.stopStreamingRecording", () => {
 
     await vi.advanceTimersByTimeAsync(1000);
     await stopPromise;
+
+    expect(manager.saveAudioCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "audio/wav" }),
+      expect.objectContaining({
+        sessionId: "stream-session",
+        jobId: 1,
+        outputMode: "clipboard",
+      })
+    );
 
     manager.cleanup();
   });
@@ -238,6 +249,41 @@ describe("AudioManager.stopStreamingRecording", () => {
       1
     );
 
+    manager.cleanup();
+  });
+
+  it("retains PCM that arrives during the post-flush grace window", async () => {
+    vi.useFakeTimers();
+    (window as any).electronAPI = {
+      assemblyAiStreamingForceEndpoint: vi.fn(),
+      assemblyAiStreamingStop: vi.fn(async () => ({
+        success: true,
+        text: "grace-window dictation",
+        terminationConfirmed: true,
+      })),
+    };
+
+    const manager = new AudioManager();
+    manager.isStreaming = true;
+    manager.isRecording = true;
+    manager.streamingAudioForwarding = true;
+    manager.streamingFinalText = "grace-window dictation";
+    manager.streamingContext = { sessionId: "grace-session", jobId: 2, outputMode: "clipboard" };
+    const port = { onmessage: null as null | ((event: any) => void), postMessage: vi.fn() };
+    manager.streamingProcessor = { port, disconnect: vi.fn() } as any;
+    manager.streamingSource = { disconnect: vi.fn() } as any;
+    manager.streamingStream = { getTracks: () => [{ stop: vi.fn() }] } as any;
+    port.onmessage = (event: any) => manager.streamingWorklet.handleMessage(event);
+
+    const stopPromise = manager.stopStreamingRecording();
+    setTimeout(() => port.onmessage?.({ data: new ArrayBuffer(8) }), 1_050);
+    await vi.advanceTimersByTimeAsync(1_200);
+    await expect(stopPromise).resolves.toBe(true);
+
+    expect(manager.saveAudioCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "audio/wav", size: 52 }),
+      expect.objectContaining({ sessionId: "grace-session" })
+    );
     manager.cleanup();
   });
 
@@ -611,6 +657,7 @@ describe("AudioManager.stopStreamingRecording", () => {
       (window as any).electronAPI = {
         assemblyAiStreamingForceEndpoint: vi.fn(),
         assemblyAiStreamingStop: vi.fn(() => teardown.promise),
+        debugSaveAudio: vi.fn(async () => ({ success: true })),
       };
 
       const manager = new AudioManager() as any;
@@ -683,6 +730,7 @@ describe("AudioManager.stopStreamingRecording", () => {
       (window as any).electronAPI = {
         assemblyAiStreamingForceEndpoint: vi.fn(),
         assemblyAiStreamingStop: vi.fn(() => teardown.promise),
+        debugSaveAudio: vi.fn(async () => ({ success: true })),
       };
       localStorage.setItem("cloudTranscriptionMode", "echodraft");
       localStorage.setItem("isSignedIn", "true");

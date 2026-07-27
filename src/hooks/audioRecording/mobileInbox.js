@@ -136,10 +136,13 @@ export const enqueueMobileInboxItem = ({
 
 export const createMobileInboxCompletion = (result, job) => {
   if (result?.success !== true) return { success: false };
+  if (typeof result.rawText !== "string" || !result.rawText.trim()) {
+    return { success: false };
+  }
   return {
     success: true,
     text: result.text,
-    rawText: result.rawText || result.text,
+    rawText: result.rawText,
     title: result.title,
     source: result.source,
     provider: job?.provider || result.provider || result.source,

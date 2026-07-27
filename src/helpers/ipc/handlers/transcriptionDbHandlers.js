@@ -19,7 +19,10 @@ function registerTranscriptionDbHandlers(
     if (typeof text !== "string" || text.length < 1 || text.length > 1_000_000) {
       throw new Error("Invalid transcription payload");
     }
-    if (typeof rawText === "string" && rawText.length > 1_000_000) {
+    if (typeof rawText !== "string" || !rawText.trim()) {
+      throw new Error("Raw transcription is required");
+    }
+    if (rawText.length > 1_000_000) {
       throw new Error("Raw transcription is too large");
     }
     if (

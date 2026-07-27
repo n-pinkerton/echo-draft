@@ -38,11 +38,11 @@ OPENWHISPR_LOG_LEVEL=debug
 
 Tip: In-app, `Settings → Developer → Open Logs Folder` shows you the exact location used on your machine.
 
-## Debug audio captures (rolling)
+## Input audio captures (rolling)
 
-When debug logging is enabled, the app also saves the **last 10 microphone recordings** (rolling retention) under `logs/audio/` so truncated-transcription reports can be diagnosed by inspecting the actual captured audio.
+For every completed desktop or mobile dictation, EchoDraft saves the source audio under `logs/audio/` before transcription or mobile-inbox consumption. Retention is rolling: the app keeps the last 10 captures, subject to a 256 MiB total limit. This capture is independent of the debug logging toggle so a transcription problem can be investigated even when debug logging was off.
 
-These files can contain sensitive information. Only enable debug logging when you need it. Use **Delete Diagnostic Data** in the Developer settings to remove EchoDraft daily logs and captured recordings from every known app log location. The cleanup preserves unrelated files and refuses linked log roots. If debug mode remains on, EchoDraft starts a fresh log after cleanup.
+The audio files can contain sensitive information. Use **Delete Diagnostic Data** in the Developer settings to remove EchoDraft daily logs and captured recordings from every known app log location. The cleanup preserves unrelated files and refuses linked log roots. If a source-audio capture cannot be saved, EchoDraft does not consume the mobile inbox pair or enqueue the desktop recording for transcription.
 
 ## What gets logged (when enabled)
 
@@ -59,9 +59,9 @@ Examples of the high-value telemetry captured in debug mode:
 
 ## Sharing logs
 
-Debug logs can still contain sensitive settings and local paths, while debug audio captures contain the full recording. Share only with trusted support and redact as needed.
+Debug logs can still contain sensitive settings and local paths, while input audio captures contain the full recording. Share only with trusted support and redact as needed.
 
-Do not send captured audio unless it is needed and you intend to share the recording. After support work is complete, turn off debug mode and use **Delete Diagnostic Data**.
+Do not send captured audio unless it is needed and you intend to share the recording. After support work is complete, use **Delete Diagnostic Data**.
 
 ## Android companion failure diagnostics
 

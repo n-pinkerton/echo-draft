@@ -42,7 +42,9 @@ describe("AudioManager (non-streaming recording contract)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     localStorage.clear();
-    (window as any).electronAPI = {};
+    (window as any).electronAPI = {
+      debugSaveAudio: vi.fn(async () => ({ success: true })),
+    };
 
     (globalThis as any).MediaRecorder = FakeMediaRecorder;
   });

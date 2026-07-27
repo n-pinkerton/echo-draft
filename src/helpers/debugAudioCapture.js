@@ -437,6 +437,7 @@ const saveDebugAudioCapture = async ({
   durationSeconds,
   stopReason,
   stopSource,
+  captureKey,
   maxCaptures = DEFAULT_MAX_CAPTURES,
   maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
   maxAudioBytes = MAX_DEBUG_AUDIO_BYTES,
@@ -449,6 +450,7 @@ const saveDebugAudioCapture = async ({
   }
 
   const canonicalLogsDir = path.resolve(logsDir);
+  await fs.promises.mkdir(canonicalLogsDir, { recursive: true });
   await assertNoLinkedAncestors(canonicalLogsDir);
   const logsDirStat = await assertUnlinkedDirectory(canonicalLogsDir);
   const audioDir = path.join(canonicalLogsDir, AUDIO_SUBDIR);
@@ -462,6 +464,11 @@ const saveDebugAudioCapture = async ({
     await assertOpenDirectoryIdentity(audioDir, audioDirStat, audioDirHandle);
     if (process.platform === "win32") windowsAudioDirIdentity = toWindowsIdentity(audioDirStat);
 
+    const buffer = toBuffer(audioBuffer);
+    const audioSha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+    const captureKeyHash = captureKey
+      ? crypto.createHash("sha256").update(String(captureKey)).digest("hex").slice(0, 32)
+      : null;
     const ts = makeSafeTimestamp(new Date());
     const sessionToken = sanitizeToken(
       sessionId ? String(sessionId).slice(0, 12) : "",
@@ -470,17 +477,54 @@ const saveDebugAudioCapture = async ({
     const jobToken = sanitizeToken(jobId ?? "", "nojob");
     const rand = crypto.randomUUID().slice(0, 8);
     const ext = guessExtensionFromMimeType(mimeType);
-    const baseName = `${AUDIO_PREFIX}${ts}-s${sessionToken}-j${jobToken}-${rand}`;
+    const baseName = captureKeyHash
+      ? `${AUDIO_PREFIX}key-${captureKeyHash}`
+      : `${AUDIO_PREFIX}${ts}-s${sessionToken}-j${jobToken}-${rand}`;
     const audioPath = path.join(audioDir, `${baseName}.${ext}`);
     const metaPath = path.join(audioDir, `${baseName}.json`);
-    const buffer = toBuffer(audioBuffer);
+    if (captureKeyHash) {
+      const existingAudio = await statRegularFile(audioPath);
+      const existingMetadata = await statRegularFile(metaPath);
+      if (existingAudio && existingMetadata) {
+        try {
+          const savedMetadata = JSON.parse(await fs.promises.readFile(metaPath, "utf8"));
+          if (
+            savedMetadata?.captureKeyHash === captureKeyHash &&
+            savedMetadata?.audioSha256 === audioSha256
+          ) {
+            const retention = await enforceRetention(audioDir, maxCaptures, maxTotalBytes, {
+              root: audioDir,
+              expectedRootStat: audioDirStat,
+              rootHandle: audioDirHandle,
+              windowsRootIdentity: windowsAudioDirIdentity,
+            });
+            return {
+              audioDir,
+              filePath: audioPath,
+              bytes: buffer.length,
+              kept: retention.kept,
+              deleted: retention.deleted,
+              bytesKept: retention.bytesKept,
+              bytesDeleted: retention.bytesDeleted,
+              deduplicated: true,
+            };
+          }
+        } catch {
+          // An incomplete or invalid pair is not reusable; publication below
+          // will fail closed rather than overwrite it.
+        }
+        throw new Error("Audio capture key already refers to different audio");
+      }
+    }
     const metadata = JSON.stringify(
       {
-        type: "debug_audio_capture",
+        type: "audio_capture",
         ts: new Date().toISOString(),
         fileName: path.basename(audioPath),
         mimeType: mimeType || null,
         bytes: buffer.length,
+        audioSha256,
+        ...(captureKeyHash ? { captureKeyHash } : {}),
         sessionId: sessionId || null,
         jobId: jobId ?? null,
         outputMode: outputMode || null,

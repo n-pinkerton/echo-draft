@@ -191,7 +191,7 @@ export async function startNonStreamingRecording(manager, context = null) {
           "audio"
         );
 
-        void manager.saveDebugAudioCaptureIfEnabled(audioBlob, {
+        await manager.saveAudioCapture(audioBlob, {
           sessionId: recordingContext?.sessionId || null,
           jobId: recordingContext?.jobId ?? null,
           outputMode: recordingContext?.outputMode || null,

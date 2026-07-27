@@ -115,6 +115,7 @@ describe("mobile inbox IPC", () => {
       handler(harness.dictationEvent, REQUEST_ID, {
         success: true,
         text: "x".repeat(20_001),
+        rawText: "raw memo",
       })
     ).rejects.toThrow(/completion text/i);
     expect(harness.mobileInboxManager.completeRequest).not.toHaveBeenCalled();

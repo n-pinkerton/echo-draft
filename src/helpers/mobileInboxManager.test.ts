@@ -66,6 +66,7 @@ const createManager = (
       todo: {
         id: 7,
         text: payload.text,
+        raw_text: payload.rawText,
         meta: { ...payload.meta, ...(payload.title ? { title: payload.title } : {}) },
         created_at: "2026-07-18 02:04:00",
       },
@@ -117,7 +118,10 @@ describe("MobileInboxManager", () => {
   it("dispatches verified audio, saves the cleaned To Do, and removes its input pair", async () => {
     const { inboxPath, userDataPath } = await createWorkspace();
     const item = await writeReadyItem(inboxPath);
-    const { databaseManager, manager, send, windowManager } = createManager(userDataPath);
+    const saveAudioCapture = vi.fn(async () => ({ success: true }));
+    const { databaseManager, manager, send, windowManager } = createManager(userDataPath, {
+      saveAudioCapture,
+    });
     send.mockImplementation((_channel, payload) => {
       queueMicrotask(() =>
         manager.completeRequest(payload.requestId, {
@@ -142,6 +146,14 @@ describe("MobileInboxManager", () => {
         data: Buffer.from("mobile audio"),
       })
     );
+    expect(saveAudioCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audioBuffer: Buffer.from("mobile audio"),
+        mimeType: "audio/mp4",
+        sessionId: EXTERNAL_ID,
+        outputMode: "mobile-todo",
+      })
+    );
     expect(databaseManager.saveTodo).toHaveBeenCalledWith(
       expect.objectContaining({
         externalId: EXTERNAL_ID,
@@ -156,7 +168,10 @@ describe("MobileInboxManager", () => {
     );
     expect(windowManager.controlPanelWindow.webContents.send).toHaveBeenCalledWith(
       "todo-added",
-      expect.objectContaining({ title: "Call Taylor" })
+      expect.objectContaining({
+        title: "Call Taylor",
+        raw_text: "call taylor tomorrow",
+      })
     );
     await expect(fs.promises.stat(path.join(inboxPath, item.manifestFile))).rejects.toMatchObject({
       code: "ENOENT",
@@ -164,6 +179,54 @@ describe("MobileInboxManager", () => {
     await expect(fs.promises.stat(path.join(inboxPath, item.audioFile))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("keeps the verified mobile pair when source-audio retention fails", async () => {
+    const { inboxPath, userDataPath } = await createWorkspace();
+    const item = await writeReadyItem(inboxPath);
+    const saveAudioCapture = vi.fn(async () => {
+      throw new Error("disk full");
+    });
+    const { databaseManager, manager, send } = createManager(userDataPath, {
+      saveAudioCapture,
+      maxSettlingAttempts: 1,
+      retryDelayMs: 0,
+      settlingWindowMs: 0,
+    });
+    await manager.setInboxPath(inboxPath);
+
+    await manager.scanNow();
+
+    expect(saveAudioCapture).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect(databaseManager.saveTodo).not.toHaveBeenCalled();
+    await expect(fs.promises.stat(path.join(inboxPath, item.manifestFile))).resolves.toBeTruthy();
+    await expect(fs.promises.stat(path.join(inboxPath, item.audioFile))).resolves.toBeTruthy();
+  });
+
+  it("does not save or remove a mobile item when the renderer omits raw text", async () => {
+    const { inboxPath, userDataPath } = await createWorkspace();
+    const item = await writeReadyItem(inboxPath);
+    const { databaseManager, manager, send } = createManager(userDataPath, {
+      maxSettlingAttempts: 1,
+      retryDelayMs: 0,
+      settlingWindowMs: 0,
+    });
+    send.mockImplementation((_channel, payload) => {
+      queueMicrotask(() =>
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "cleaned text",
+        })
+      );
+    });
+    await manager.setInboxPath(inboxPath);
+
+    await manager.scanNow();
+
+    expect(databaseManager.saveTodo).not.toHaveBeenCalled();
+    await expect(fs.promises.stat(path.join(inboxPath, item.manifestFile))).resolves.toBeTruthy();
+    await expect(fs.promises.stat(path.join(inboxPath, item.audioFile))).resolves.toBeTruthy();
   });
 
   it("ignores the mobile diagnostic log and unrelated subfolders", async () => {
@@ -343,7 +406,11 @@ describe("MobileInboxManager", () => {
       })
       .mockImplementationOnce((_channel, payload) => {
         queueMicrotask(() =>
-          manager.completeRequest(payload.requestId, { success: true, text: "Retried memo" })
+          manager.completeRequest(payload.requestId, {
+            success: true,
+            text: "Retried memo",
+            rawText: "Retried memo",
+          })
         );
       });
     await manager.setInboxPath(inboxPath);
@@ -375,7 +442,11 @@ describe("MobileInboxManager", () => {
 
     send.mockImplementation((_channel, payload) => {
       queueMicrotask(() =>
-        manager.completeRequest(payload.requestId, { success: true, text: "Ready now" })
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "Ready now",
+          rawText: "Ready now",
+        })
       );
     });
     manager.markRendererReady();
@@ -407,7 +478,11 @@ describe("MobileInboxManager", () => {
 
     send.mockImplementationOnce((_channel, payload) => {
       queueMicrotask(() =>
-        manager.completeRequest(payload.requestId, { success: true, text: "Retried once" })
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "Retried once",
+          rawText: "Retried once",
+        })
       );
     });
     manager.markRendererReady();
@@ -435,6 +510,7 @@ describe("MobileInboxManager", () => {
           manager.completeRequest(payload.requestId, {
             success: true,
             text: "Retried after timeout",
+            rawText: "Retried after timeout",
           })
         );
       });
@@ -483,7 +559,11 @@ describe("MobileInboxManager", () => {
 
     secondWindow.webContents.send.mockImplementation((_channel, payload) => {
       queueMicrotask(() =>
-        manager.completeRequest(payload.requestId, { success: true, text: "New renderer" })
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "New renderer",
+          rawText: "New renderer",
+        })
       );
     });
     manager.markRendererReady();
@@ -503,7 +583,11 @@ describe("MobileInboxManager", () => {
     const { manager, send } = createManager(userDataPath, { retryDelayMs: 0 });
     send.mockImplementation((_channel, payload) => {
       queueMicrotask(() =>
-        manager.completeRequest(payload.requestId, { success: true, text: "Settled memo" })
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "Settled memo",
+          rawText: "Settled memo",
+        })
       );
     });
     await manager.setInboxPath(inboxPath);
@@ -556,7 +640,11 @@ describe("MobileInboxManager", () => {
     const scan = manager.scanNow();
     await vi.waitFor(() => expect(requestId).not.toBe(""));
     await manager.setInboxPath(secondInbox);
-    manager.completeRequest(requestId, { success: true, text: "First memo" });
+    manager.completeRequest(requestId, {
+      success: true,
+      text: "First memo",
+      rawText: "First memo",
+    });
     await scan;
 
     await expect(fs.promises.stat(path.join(first.inboxPath, firstItem.audioFile))).rejects.toMatchObject({
@@ -581,7 +669,11 @@ describe("MobileInboxManager", () => {
     const scan = manager.scanNow();
     await vi.waitFor(() => expect(requestId).not.toBe(""));
     await fs.promises.writeFile(path.join(inboxPath, item.audioFile), Buffer.from("mobile budio"));
-    manager.completeRequest(requestId, { success: true, text: "Saved safely" });
+    manager.completeRequest(requestId, {
+      success: true,
+      text: "Saved safely",
+      rawText: "Saved safely",
+    });
     await scan;
 
     expect(databaseManager.saveTodo).toHaveBeenCalledOnce();
@@ -604,7 +696,11 @@ describe("MobileInboxManager", () => {
     const manifestPath = path.join(inboxPath, item.manifestFile);
     const original = await fs.promises.readFile(manifestPath, "utf8");
     await fs.promises.writeFile(manifestPath, `${original} `);
-    manager.completeRequest(requestId, { success: true, text: "Saved safely" });
+    manager.completeRequest(requestId, {
+      success: true,
+      text: "Saved safely",
+      rawText: "Saved safely",
+    });
     await scan;
 
     expect(databaseManager.saveTodo).toHaveBeenCalledOnce();
@@ -640,7 +736,11 @@ describe("MobileInboxManager", () => {
     const { databaseManager, manager, send } = createManager(userDataPath, { fsImpl });
     send.mockImplementation((_channel, payload) => {
       queueMicrotask(() =>
-        manager.completeRequest(payload.requestId, { success: true, text: "Original memo" })
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "Original memo",
+          rawText: "Original memo",
+        })
       );
     });
     await manager.setInboxPath(inboxPath);
@@ -675,7 +775,13 @@ describe("MobileInboxManager", () => {
       return {
         success: true,
         created: true,
-        todo: { id: 7, text: payload.text, meta: payload.meta, created_at: "now" },
+        todo: {
+          id: 7,
+          text: payload.text,
+          raw_text: payload.rawText,
+          meta: payload.meta,
+          created_at: "now",
+        },
       };
     });
     databaseManager.getTodoByExternalId.mockImplementation(() =>
@@ -683,7 +789,11 @@ describe("MobileInboxManager", () => {
     );
     send.mockImplementation((_channel, payload) => {
       queueMicrotask(() =>
-        manager.completeRequest(payload.requestId, { success: true, text: "Saved memo" })
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "Saved memo",
+          rawText: "Saved memo",
+        })
       );
     });
     await manager.setInboxPath(inboxPath);
@@ -719,7 +829,11 @@ describe("MobileInboxManager", () => {
     const first = createManager(userDataPath, { fsImpl: firstFs, retryDelayMs: 0 });
     first.send.mockImplementation((_channel, payload) => {
       queueMicrotask(() =>
-        first.manager.completeRequest(payload.requestId, { success: true, text: "Saved memo" })
+        first.manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "Saved memo",
+          rawText: "Saved memo",
+        })
       );
     });
     await first.manager.setInboxPath(inboxPath);
@@ -768,7 +882,11 @@ describe("MobileInboxManager", () => {
     });
     send.mockImplementation((_channel, payload) => {
       queueMicrotask(() =>
-        manager.completeRequest(payload.requestId, { success: true, text: "Second memo" })
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "Second memo",
+          rawText: "Second memo",
+        })
       );
     });
     await manager.setInboxPath(inboxPath);

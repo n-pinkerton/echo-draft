@@ -34,6 +34,7 @@ import {
   applyCombinedTranscriptionTimings,
   choosePreferredResult,
 } from "./openAiTranscriptionPolicy";
+import { captureRawTranscription } from "./rawTranscription";
 const waitForRetryDelay = async (delayMs, signal) => {
   throwIfTranscriptionCancelled(signal);
   if (!delayMs || delayMs <= 0) return;
@@ -843,6 +844,8 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     }
 
     const finalRawText = typeof activeResult.rawText === "string" ? activeResult.rawText : "";
+    const rawTranscript = captureRawTranscription(finalRawText);
+    const rawTextSnapshot = rawTranscript.text;
     const finalAnalysis = analyzeCandidate(finalRawText, {
       durationSeconds,
       promptEchoDetected,
@@ -880,7 +883,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       timings.transcriptionStreamRecovery = true;
     }
 
-    let cleanedText = finalRawText;
+    let cleanedText = rawTextSnapshot;
     let source = activeResult.source || "openai";
     let cleanup = null;
     let title = null;
@@ -893,33 +896,62 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         canCancel: true,
       });
       const reasoningStart = performance.now();
-      const cleanupEnabledOverride = transcriber.getCleanupEnabledOverride?.() ?? null;
-      if (
-        typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome === "function"
-      ) {
-        const cleanupResult =
-          await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
-            finalRawText,
+      try {
+        const cleanupEnabledOverride = transcriber.getCleanupEnabledOverride?.() ?? null;
+        if (
+          typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome ===
+          "function"
+        ) {
+          const cleanupResult =
+            await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
+              rawTextSnapshot,
+              source,
+              cleanupEnabledOverride,
+              { signal: externalSignal }
+            );
+          cleanedText = cleanupResult.text;
+          cleanup = cleanupResult.cleanup;
+          title = cleanupResult.title || null;
+        } else {
+          cleanedText = await transcriber.reasoningCleanupService.processTranscription(
+            rawTextSnapshot,
             source,
             cleanupEnabledOverride,
             { signal: externalSignal }
           );
-        cleanedText = cleanupResult.text;
-        cleanup = cleanupResult.cleanup;
-        title = cleanupResult.title || null;
-      } else {
-        cleanedText = await transcriber.reasoningCleanupService.processTranscription(
-          finalRawText,
-          source,
-          cleanupEnabledOverride,
-          { signal: externalSignal }
-        );
+          cleanup = {
+            requested: true,
+            attempted: true,
+            applied: true,
+            status: cleanedText === rawTextSnapshot ? "unchanged" : "applied",
+          };
+        }
+      } catch (cleanupError) {
+        if (isTranscriptionCancelled(cleanupError, externalSignal)) {
+          throw createTranscriptionCancelledError();
+        }
+        // finalRawText is the immutable transcription-stage snapshot. Cleanup
+        // failures must never discard it or let processed text replace it.
+        cleanedText = rawTextSnapshot;
+        title = null;
         cleanup = {
           requested: true,
           attempted: true,
-          applied: true,
-          status: cleanedText === finalRawText ? "unchanged" : "applied",
+          applied: false,
+          status: "fallback",
+          fallbackReason:
+            cleanupError?.code === "CLEANUP_FIDELITY_REJECTED"
+              ? "fidelity_rejected"
+              : "provider_error",
+          model: null,
+          appliedModel: null,
+          retryCount: Number(cleanupError?.cleanupRetryCount) || 0,
         };
+        transcriber.logger?.warn?.(
+          "Cleanup failed; preserving the raw transcription",
+          { errorCode: cleanupError?.code || "error" },
+          "reasoning"
+        );
       }
       timings.reasoningProcessingDurationMs = Math.round(performance.now() - reasoningStart);
       throwIfTranscriptionCancelled(externalSignal);
@@ -930,8 +962,8 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
 
     return {
       success: true,
-      text: cleanedText || finalRawText,
-      rawText: finalRawText,
+      text: cleanedText || rawTextSnapshot,
+      rawText: rawTextSnapshot,
       source,
       timings,
       ...(title ? { title } : {}),
@@ -968,7 +1000,8 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           timings.localFallbackProcessingDurationMs = Math.round(
             performance.now() - localFallbackStartedAt
           );
-          const rawText = result.text;
+          const rawTranscript = captureRawTranscription(result.text);
+          const rawText = rawTranscript.text;
           try {
             if (
               typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome ===

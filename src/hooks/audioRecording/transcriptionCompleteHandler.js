@@ -217,7 +217,11 @@ export const createTranscriptionCompleteHandler = (deps) => {
       return;
     }
 
-    const rawText = result.rawText || result.text;
+    if (typeof result.rawText !== "string" || !result.rawText.trim()) {
+      throw new Error("Raw transcription was unavailable; cleaned text was not delivered or saved.");
+    }
+
+    const rawText = typeof result.rawText === "string" ? result.rawText : "";
     const rawWords = countWords(rawText);
     const cleanedWords = countWords(result.text);
     const cleanup = result?.cleanup && typeof result.cleanup === "object" ? result.cleanup : null;
@@ -589,7 +593,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
       assertDeliveryActive();
       const saveResult = await audioManager.saveTranscription({
         text: result.text,
-        rawText: result.rawText || result.text,
+        ...(typeof result.rawText === "string" ? { rawText: result.rawText } : {}),
         meta: {
           sessionId: session.sessionId,
           outputMode: session.outputMode,

@@ -13,7 +13,7 @@ vi.mock("../../services/ReasoningService", () => ({
 
 import AudioManager from "../audioManager.js";
 
-describe("AudioManager.saveDebugAudioCaptureIfEnabled", () => {
+describe("AudioManager.saveAudioCapture", () => {
   beforeEach(() => {
     localStorage.clear();
     (window as any).electronAPI = {};
@@ -24,10 +24,9 @@ describe("AudioManager.saveDebugAudioCaptureIfEnabled", () => {
     vi.restoreAllMocks();
   });
 
-  it("calls ipc when debug is enabled", async () => {
+  it("calls ipc for a completed recording", async () => {
     const manager = new AudioManager();
 
-    const getDebugState = vi.fn(async () => ({ enabled: true, logPath: null, logLevel: "debug" }));
     const debugSaveAudio = vi.fn(async () => ({
       success: true,
       bytes: 4,
@@ -35,13 +34,13 @@ describe("AudioManager.saveDebugAudioCaptureIfEnabled", () => {
       deleted: 0,
     }));
 
-    (window as any).electronAPI = { getDebugState, debugSaveAudio };
+    (window as any).electronAPI = { debugSaveAudio };
 
     const fakeBlob = {
       type: "audio/webm",
       arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3, 4]).buffer),
     };
-    await manager.saveDebugAudioCaptureIfEnabled(fakeBlob as any, {
+    await manager.saveAudioCapture(fakeBlob as any, {
       sessionId: "test-session",
       jobId: 123,
       outputMode: "clipboard",
@@ -50,7 +49,6 @@ describe("AudioManager.saveDebugAudioCaptureIfEnabled", () => {
       stopSource: "manual",
     });
 
-    expect(getDebugState).toHaveBeenCalledTimes(1);
     expect(debugSaveAudio).toHaveBeenCalledTimes(1);
     expect(debugSaveAudio).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -65,22 +63,20 @@ describe("AudioManager.saveDebugAudioCaptureIfEnabled", () => {
     manager.cleanup();
   });
 
-  it("is a no-op when debug is disabled", async () => {
+  it("does not skip capture when debug logging is disabled", async () => {
     const manager = new AudioManager();
 
-    const getDebugState = vi.fn(async () => ({ enabled: false, logPath: null, logLevel: "info" }));
     const debugSaveAudio = vi.fn(async () => ({ success: true }));
 
-    (window as any).electronAPI = { getDebugState, debugSaveAudio };
+    (window as any).electronAPI = { debugSaveAudio };
 
     const fakeBlob = {
       type: "audio/webm",
       arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
     };
-    await manager.saveDebugAudioCaptureIfEnabled(fakeBlob as any, { sessionId: "test-session" });
+    await manager.saveAudioCapture(fakeBlob as any, { sessionId: "test-session" });
 
-    expect(getDebugState).toHaveBeenCalledTimes(1);
-    expect(debugSaveAudio).not.toHaveBeenCalled();
+    expect(debugSaveAudio).toHaveBeenCalledTimes(1);
 
     manager.cleanup();
   });

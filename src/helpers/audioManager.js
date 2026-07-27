@@ -13,6 +13,7 @@ import {
 } from "./audio/streaming/assemblyAiStreamingController";
 import { cancelStreamingStartup as cancelStreamingStartupImpl } from "./audio/streaming/assemblyAiStreamingStart";
 import { StreamingWorkletManager } from "./audio/streaming/streamingWorkletManager";
+import { createPcmWavBlob } from "./audio/streaming/pcmWav";
 import {
   cancelNonStreamingRecording,
   startNonStreamingRecording,
@@ -30,7 +31,7 @@ import {
   emitProgress as emitAudioProgress,
   emitStateChange as emitAudioStateChange,
 } from "./audio/events/audioManagerEvents";
-import { saveDebugAudioCaptureIfEnabled as saveDebugAudioCapture } from "./audio/debug/debugAudioCaptureClient";
+import { saveAudioCapture } from "./audio/debug/debugAudioCaptureClient";
 import {
   safePaste as safePasteImpl,
   safePasteWithResult as safePasteWithResultImpl,
@@ -150,6 +151,8 @@ class AudioManager {
     this.streamingAudioBytesSent = 0;
     this.streamingAudioFirstChunkAt = null;
     this.streamingAudioLastChunkAt = null;
+    this.streamingAudioCaptureChunks = [];
+    this.streamingAudioSampleRate = 48_000;
     // Exposed for unit tests (regression guard for streaming flush handling).
     this.STREAMING_WORKLET_FLUSH_DONE_MESSAGE = STREAMING_WORKLET_FLUSH_DONE_MESSAGE;
     this.streamingContext = null;
@@ -169,6 +172,7 @@ class AudioManager {
       flushDoneMessage: STREAMING_WORKLET_FLUSH_DONE_MESSAGE,
       shouldForward: () => this.streamingAudioForwarding,
       onAudioChunk: (buffer) => {
+        this.streamingAudioCaptureChunks.push(buffer.slice(0));
         this.streamingAudioChunkCount += 1;
         this.streamingAudioBytesSent += buffer.byteLength;
         const now = Date.now();
@@ -236,8 +240,26 @@ class AudioManager {
     emitAudioProgress(this, event);
   }
 
-  async saveDebugAudioCaptureIfEnabled(audioBlob, payload = {}) {
-    await saveDebugAudioCapture(audioBlob, payload);
+  async saveAudioCapture(audioBlob, payload = {}) {
+    await saveAudioCapture(audioBlob, payload);
+  }
+
+  async saveStreamingAudioCapture(durationSeconds = null) {
+    const context = this.streamingContext;
+    const blob = createPcmWavBlob(
+      this.streamingAudioCaptureChunks,
+      this.streamingAudioSampleRate
+    );
+    if (!blob) return;
+    await this.saveAudioCapture(blob, {
+      sessionId: context?.sessionId,
+      jobId: context?.jobId ?? null,
+      outputMode: context?.outputMode,
+      durationSeconds,
+      stopReason: "streaming-stop",
+      stopSource: "streaming",
+    });
+    this.streamingAudioCaptureChunks = [];
   }
 
   getCleanupEnabledOverride() {

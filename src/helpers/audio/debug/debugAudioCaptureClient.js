@@ -1,41 +1,47 @@
 import logger from "../../../utils/logger";
 
-export async function saveDebugAudioCaptureIfEnabled(audioBlob, payload = {}) {
+const readBlobAsArrayBuffer = async (blob) => {
+  if (typeof blob?.arrayBuffer === "function") return await blob.arrayBuffer();
+  if (typeof FileReader === "undefined") throw new Error("Audio capture cannot read the recording");
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Audio capture cannot read the recording"));
+    reader.readAsArrayBuffer(blob);
+  });
+};
+
+export async function saveAudioCapture(audioBlob, payload = {}) {
+  const electronAPI = typeof window !== "undefined" ? window.electronAPI : null;
+  if (!electronAPI?.debugSaveAudio) {
+    throw new Error("Audio capture is unavailable");
+  }
+
   try {
-    const electronAPI = typeof window !== "undefined" ? window.electronAPI : null;
-    if (!electronAPI?.getDebugState || !electronAPI?.debugSaveAudio) {
-      return;
-    }
-
-    const debugState = await electronAPI.getDebugState().catch(() => null);
-    if (!debugState?.enabled) {
-      return;
-    }
-
-    const audioBuffer = await audioBlob.arrayBuffer();
+    const audioBuffer = await readBlobAsArrayBuffer(audioBlob);
     const result = await electronAPI.debugSaveAudio({
       audioBuffer,
       mimeType: audioBlob?.type || payload?.mimeType,
       ...payload,
     });
 
-    if (result?.success) {
-      logger.debug(
-        "Debug audio capture saved",
-        {
-          bytes: result.bytes,
-          kept: result.kept,
-          deleted: result.deleted,
-          bytesKept: result.bytesKept,
-        },
-        "audio"
-      );
-    } else if (result && result.skipped) {
-      logger.debug("Debug audio capture skipped", { reason: result.reason }, "audio");
-    } else if (result && result.error) {
-      logger.debug("Debug audio capture failed", { error: result.error }, "audio");
+    if (!result?.success) {
+      throw new Error(result?.error || result?.reason || "Audio capture could not be saved");
     }
+
+    logger.debug(
+      "Audio capture saved",
+      {
+        bytes: result.bytes,
+        kept: result.kept,
+        deleted: result.deleted,
+        bytesKept: result.bytesKept,
+      },
+      "audio"
+    );
+    return result;
   } catch (error) {
-    logger.debug("Debug audio capture failed", { error: error?.message || String(error) }, "audio");
+    logger.debug("Audio capture failed", { error: error?.message || String(error) }, "audio");
+    throw error;
   }
 }

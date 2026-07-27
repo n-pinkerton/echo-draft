@@ -22,12 +22,15 @@ function setupProductionPath({ env = process.env, platform = process.platform } 
 
 function bootstrapManagers() {
   setupProductionPath();
+  const path = require("path");
 
   const EnvironmentManager = require("../environment");
   const environmentManager = new EnvironmentManager();
   environmentManager.enforceDebugConsent();
 
   const debugLogger = require("../debugLogger");
+  const { saveDebugAudioCapture } = require("../debugAudioCapture");
+  const { audioCaptureMutex } = require("../audio/debug/audioCaptureCoordinator");
   debugLogger.refreshLogLevel();
   debugLogger.ensureFileLogging();
 
@@ -63,6 +66,16 @@ function bootstrapManagers() {
     databaseManager,
     windowManager,
     logger: debugLogger,
+    withAudioCaptureLock: (operation) => audioCaptureMutex.run(operation),
+    isAudioCapturePurgeInProgress: () => debugLogger.isArtifactPurgeInProgress?.() === true,
+    saveAudioCapture: (payload) =>
+      saveDebugAudioCapture({
+        logsDir:
+          debugLogger.getArtifactLogsDir?.() ||
+          debugLogger.getLogsDir?.() ||
+          path.join(app.getPath("userData"), "logs"),
+        ...payload,
+      }),
   });
   windowManager.setMainWindowCreatedHandler((window) => {
     mobileInboxManager.observeRendererWindow(window);

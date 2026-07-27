@@ -40,7 +40,7 @@ export const installE2EHelpers = (deps) => {
       return await onTranscriptionComplete({
         success: true,
         text,
-        rawText: rawText || text,
+        ...(rawText !== null ? { rawText } : {}),
         source: resultPatch.source || "e2e",
         timings: resultPatch.timings || {},
         limitReached: Boolean(resultPatch.limitReached),

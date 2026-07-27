@@ -1,14 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-import { saveDebugAudioCaptureIfEnabled } from "./debugAudioCaptureClient";
+import { saveAudioCapture } from "./debugAudioCaptureClient";
 
 describe("debugAudioCaptureClient", () => {
   beforeEach(() => {
     (window as any).electronAPI = {};
   });
 
-  it("calls ipc debugSaveAudio when debug is enabled", async () => {
-    const getDebugState = vi.fn(async () => ({ enabled: true, logPath: null, logLevel: "debug" }));
+  it("calls ipc debugSaveAudio for every completed recording", async () => {
     const debugSaveAudio = vi.fn(async () => ({
       success: true,
       bytes: 4,
@@ -16,16 +15,15 @@ describe("debugAudioCaptureClient", () => {
       deleted: 0,
     }));
 
-    (window as any).electronAPI = { getDebugState, debugSaveAudio };
+    (window as any).electronAPI = { debugSaveAudio };
 
     const fakeBlob = {
       type: "audio/webm",
       arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3, 4]).buffer),
     };
 
-    await saveDebugAudioCaptureIfEnabled(fakeBlob as any, { sessionId: "s1", jobId: 1 });
+    await saveAudioCapture(fakeBlob as any, { sessionId: "s1", jobId: 1 });
 
-    expect(getDebugState).toHaveBeenCalledTimes(1);
     expect(debugSaveAudio).toHaveBeenCalledTimes(1);
 
     expect(debugSaveAudio).toHaveBeenCalledWith(
@@ -38,20 +36,32 @@ describe("debugAudioCaptureClient", () => {
     );
   });
 
-  it("is a no-op when debug is disabled", async () => {
-    const getDebugState = vi.fn(async () => ({ enabled: false, logPath: null, logLevel: "info" }));
+  it("does not skip capture when debug logging is disabled", async () => {
     const debugSaveAudio = vi.fn(async () => ({ success: true }));
 
-    (window as any).electronAPI = { getDebugState, debugSaveAudio };
+    (window as any).electronAPI = { debugSaveAudio };
 
     const fakeBlob = {
       type: "audio/webm",
       arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
     };
 
-    await saveDebugAudioCaptureIfEnabled(fakeBlob as any, { sessionId: "s2" });
+    await saveAudioCapture(fakeBlob as any, { sessionId: "s2" });
 
-    expect(getDebugState).toHaveBeenCalledTimes(1);
-    expect(debugSaveAudio).not.toHaveBeenCalled();
+    expect(debugSaveAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the main process does not save the capture", async () => {
+    const debugSaveAudio = vi.fn(async () => ({ success: false, error: "capture unavailable" }));
+    (window as any).electronAPI = { debugSaveAudio };
+
+    const fakeBlob = {
+      type: "audio/webm",
+      arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
+    };
+
+    await expect(saveAudioCapture(fakeBlob as any, { sessionId: "s3" })).rejects.toThrow(
+      "capture unavailable"
+    );
   });
 });

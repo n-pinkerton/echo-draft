@@ -90,13 +90,9 @@ const createHarness = ({ enabled = false, dialogResponse = 0 } = {}) => {
       windowManager: {
         controlPanelWindow: senderWindow,
         mainWindow: dictationWindow,
-        isIssuedDictationSession: (sessionId: string) =>
-          sessionId === "session-1" || sessionId === "session-2",
+        isIssuedDictationSession: (sessionId: string) => /^session-\d+$/.test(sessionId),
         claimDebugAudioSession: (sessionId: string) => {
-          if (
-            (sessionId !== "session-1" && sessionId !== "session-2") ||
-            claimedDebugSessions.has(sessionId)
-          )
+          if (!/^session-\d+$/.test(sessionId) || claimedDebugSessions.has(sessionId))
             return false;
           claimedDebugSessions.add(sessionId);
           return true;
@@ -225,6 +221,36 @@ describe("debug logging IPC handlers", () => {
     expect(result).toMatchObject({ success: true, bytes: 4, kept: 1 });
     expect(result).not.toHaveProperty("filePath");
     expect(result).not.toHaveProperty("audioDir");
+  });
+
+  it("retains bounded audio even when debug logging is disabled", async () => {
+    const harness = createHarness({ enabled: false });
+    const result = await harness.handlers.get("debug-save-audio")?.(harness.dictationEvent, {
+      audioBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+      mimeType: "audio/webm",
+      sessionId: "session-1",
+      outputMode: "insert",
+    });
+
+    expect(harness.saveDebugAudioCapture).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ success: true, bytes: 4 });
+  });
+
+  it("does not reject ordinary dictation volume because of the old debug rate limit", async () => {
+    const harness = createHarness({ enabled: false });
+    const completeCaptures = await Promise.all(
+      Array.from({ length: 21 }, (_, index) =>
+        harness.handlers.get("debug-save-audio")?.(harness.dictationEvent, {
+          audioBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+          mimeType: "audio/webm",
+          sessionId: `session-${index + 1}`,
+          outputMode: "insert",
+        })
+      )
+    );
+
+    expect(completeCaptures.every((result) => result?.success === true)).toBe(true);
+    expect(harness.saveDebugAudioCapture).toHaveBeenCalledTimes(21);
   });
 
   it("serializes capture and purge from admission through confirmation and residual cleanup", async () => {

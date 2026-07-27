@@ -1,10 +1,8 @@
 const { requireTrustedRenderer } = require("../trustedRenderer");
+const { audioCaptureMutex, createAsyncMutex } = require("../../audio/debug/audioCaptureCoordinator");
 
 const MAX_DEBUG_AUDIO_BYTES = 64 * 1024 * 1024;
 const MAX_DEBUG_AUDIO_DURATION_SECONDS = 30 * 60;
-const DEBUG_CAPTURE_ADMISSION_WINDOW_MS = 10 * 60 * 1000;
-const MAX_DEBUG_CAPTURES_PER_WINDOW = 20;
-const MAX_DEBUG_CAPTURE_BYTES_PER_WINDOW = 256 * 1024 * 1024;
 const ALLOWED_DEBUG_AUDIO_MIME_TYPES = new Set([
   "audio/webm",
   "audio/ogg",
@@ -14,47 +12,11 @@ const ALLOWED_DEBUG_AUDIO_MIME_TYPES = new Set([
   "audio/x-wav",
 ]);
 
-function createAsyncMutex() {
-  let tail = Promise.resolve();
-  return {
-    async run(operation) {
-      let release;
-      const previous = tail;
-      tail = new Promise((resolve) => {
-        release = resolve;
-      });
-      await previous;
-      try {
-        return await operation();
-      } finally {
-        release();
-      }
-    },
-  };
-}
-
 function registerDebugLoggingHandlers(
   { ipcMain, app, path, shell, dialog, BrowserWindow, debugLogger, saveDebugAudioCapture },
   { environmentManager, windowManager }
 ) {
   let purgeRequestInProgress = false;
-  const artifactMutex = createAsyncMutex();
-  let debugCaptureAdmissions = [];
-
-  const admitDebugCapture = (bytes, now = Date.now()) => {
-    debugCaptureAdmissions = debugCaptureAdmissions.filter(
-      (entry) => now - entry.at < DEBUG_CAPTURE_ADMISSION_WINDOW_MS
-    );
-    const admittedBytes = debugCaptureAdmissions.reduce((sum, entry) => sum + entry.bytes, 0);
-    if (
-      debugCaptureAdmissions.length >= MAX_DEBUG_CAPTURES_PER_WINDOW ||
-      admittedBytes + bytes > MAX_DEBUG_CAPTURE_BYTES_PER_WINDOW
-    ) {
-      return false;
-    }
-    debugCaptureAdmissions.push({ at: now, bytes });
-    return true;
-  };
 
   const getTrustedControlPanelWindow = (event) => {
     try {
@@ -215,7 +177,7 @@ function registerDebugLoggingHandlers(
 
     purgeRequestInProgress = true;
     try {
-      return await artifactMutex.run(async () => {
+      return await audioCaptureMutex.run(async () => {
         if (typeof debugLogger.purgeArtifacts !== "function") {
           return { success: false, error: "Debug artifact cleanup is unavailable" };
         }
@@ -270,9 +232,6 @@ function registerDebugLoggingHandlers(
     if (debugLogger.isArtifactPurgeInProgress?.()) {
       return { success: false, skipped: true, reason: "purge-in-progress" };
     }
-    if (!debugLogger.isEnabled?.() || !debugLogger.isEnabled()) {
-      return { success: false, skipped: true, reason: "debug-disabled" };
-    }
 
     try {
       const audioBuffer = payload?.audioBuffer;
@@ -312,20 +271,13 @@ function registerDebugLoggingHandlers(
         return { success: false, error: "Debug audio duration is invalid" };
       }
 
-      return await artifactMutex.run(async () => {
-        if (!debugLogger.isEnabled?.() || !debugLogger.isEnabled()) {
-          return { success: false, skipped: true, reason: "debug-disabled" };
-        }
+      return await audioCaptureMutex.run(async () => {
         if (!windowManager?.isIssuedDictationSession?.(sessionId, outputMode)) {
           return { success: false, error: "Debug audio session is invalid or expired" };
         }
         if (!windowManager?.claimDebugAudioSession?.(sessionId, outputMode)) {
           return { success: false, error: "Debug audio session was already used" };
         }
-        if (!admitDebugCapture(byteLength)) {
-          return { success: false, skipped: true, reason: "capture-rate-limited" };
-        }
-
         const logsDir =
           debugLogger.getArtifactLogsDir?.() ||
           debugLogger.getLogsDir?.() ||

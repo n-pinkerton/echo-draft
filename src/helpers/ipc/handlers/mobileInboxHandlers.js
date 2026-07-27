@@ -27,7 +27,10 @@ const normalizeCompletionResult = (result) => {
     throw new Error("Invalid mobile inbox completion text");
   }
   const rawText = typeof result.rawText === "string" ? result.rawText : null;
-  if (rawText && rawText.length > MAX_TODO_TEXT_LENGTH) {
+  if (!rawText || !rawText.trim()) {
+    throw new Error("Mobile inbox raw transcription is required");
+  }
+  if (rawText.length > MAX_TODO_TEXT_LENGTH) {
     throw new Error("Mobile inbox raw text is too large");
   }
   const title = normalizeCleanupTitle(result.title);

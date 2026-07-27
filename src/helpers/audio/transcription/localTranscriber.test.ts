@@ -295,6 +295,49 @@ describe("LocalTranscriber", () => {
     expect(result.timings?.reasoningProcessingDurationMs).toEqual(expect.any(Number));
   });
 
+  it("returns the exact local Whisper output when cleanup fails", async () => {
+    const rawText = "Please prepare a plain English explanation for the next agent.";
+    (window as any).electronAPI.transcribeLocalWhisper.mockResolvedValue({
+      success: true,
+      text: rawText,
+    });
+    const processTranscriptionWithOutcome = vi.fn(async () => {
+      throw new Error("cleanup provider unavailable");
+    });
+    const transcriber = new LocalTranscriber({
+      logger: createLogger(),
+      shouldApplyReasoningCleanup: () => true,
+      reasoningCleanupService: { processTranscriptionWithOutcome },
+      openAiTranscriber: { processWithOpenAIAPI: vi.fn() },
+    });
+
+    const result = await transcriber.processWithLocalWhisper(
+      {
+        type: "audio/webm",
+        arrayBuffer: vi.fn(async () => new Uint8Array([1]).buffer),
+      } as any,
+      "base",
+      {}
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      text: rawText,
+      rawText,
+      cleanup: {
+        status: "fallback",
+        applied: false,
+        fallbackReason: "provider_error",
+      },
+    });
+    expect(processTranscriptionWithOutcome).toHaveBeenCalledWith(
+      rawText,
+      "local",
+      null,
+      {}
+    );
+  });
+
   it("propagates a cleanup title from local transcription", async () => {
     (window as any).electronAPI.transcribeLocalWhisper.mockResolvedValue({
       success: true,

@@ -1,4 +1,5 @@
 import logger from "../../../utils/logger";
+import { createTranscriptionPersistencePayload } from "../transcription/rawTranscription";
 
 export async function safePasteWithResult(_manager, text, options = {}) {
   try {
@@ -53,7 +54,9 @@ function normalizePasteFailureCode(code) {
 
 export async function saveTranscription(payload) {
   try {
-    return await window.electronAPI.saveTranscription(payload);
+    return await window.electronAPI.saveTranscription(
+      createTranscriptionPersistencePayload(payload)
+    );
   } catch (error) {
     return { success: false, error: error?.message || String(error) };
   }

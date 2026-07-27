@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import AudioManager from "../../helpers/audioManager";
+import { saveTranscription } from "../../helpers/audio/persistence/audioPersistence";
 import logger from "../../utils/logger";
 import { normalizeCleanupTitle } from "../../config/cleanupOutputContract.cjs";
 import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
@@ -290,9 +291,9 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
           const dictationTitle = normalizeCleanupTitle(result.title);
           const totalDurationMs = Math.max(0, Date.now() - startedAt);
 
-          const saveResult = await window.electronAPI.saveTranscription({
+          const saveResult = await saveTranscription({
             text: result.text,
-            rawText: result.rawText ?? result.text,
+            rawText: result.rawText,
             meta: {
               sessionId,
               outputMode: "file",
@@ -321,7 +322,7 @@ export function useFileTranscription(toast: ToastFn, useReasoningModel: boolean)
             "File transcription saved",
             {
               sessionId,
-              transcriptionId: saveResult.id ?? null,
+              transcriptionId: "id" in saveResult ? saveResult.id : null,
               provider,
               model,
               textLength: result.text?.length ?? null,
