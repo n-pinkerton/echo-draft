@@ -135,6 +135,38 @@ describe("ReasoningService (OpenAI)", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("uses the official OpenAI endpoint and max effort for the Codex prompt pass", async () => {
+    localStorage.setItem("reasoningProvider", "custom");
+    localStorage.setItem("cloudReasoningBaseUrl", "https://custom.example/v1");
+    const fetchMock = vi.fn(async (url: any, init: any) => {
+      expect(String(url)).toBe("https://api.openai.com/v1/responses");
+      const body = JSON.parse(init.body);
+      expect(body.model).toBe("gpt-5.6-luna");
+      expect(body.reasoning).toEqual({ effort: "max" });
+      expect(body.input[0].content).toContain("# Codex CLI Prompt Pass");
+      return {
+        ok: true,
+        json: async () => ({
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "Continue with the review." }],
+            },
+          ],
+        }),
+      } as any;
+    });
+    vi.stubGlobal("fetch", fetchMock as any);
+
+    await expect(
+      ReasoningService.processText("continue with the review", "gpt-5.6-luna", null, {
+        cleanupPromptMode: "codex-prompt",
+        reasoningEffort: "max",
+      })
+    ).resolves.toBe("Continue with the review.");
+  });
+
   it("aborts OpenAI cleanup without retrying and releases the processing lock", async () => {
     const controller = new AbortController();
     const fetchMock = vi.fn(

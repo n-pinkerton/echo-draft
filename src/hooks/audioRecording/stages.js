@@ -16,6 +16,10 @@ export const STAGE_META = {
 
 export const TERMINAL_STAGES = new Set(["done", "warning", "error", "cancelled"]);
 
+export const DONE_STATUS_VISIBLE_MS = 5000;
+export const DONE_STATUS_FADE_MS = 300;
+export const DEFAULT_TERMINAL_STATUS_RESET_MS = 3000;
+
 export const INITIAL_PROGRESS = {
   stage: "idle",
   stageLabel: STAGE_META.idle.label,

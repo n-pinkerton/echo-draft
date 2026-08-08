@@ -317,25 +317,27 @@ npm run build:linux  # Linux
 
 1. **Start the app** - EchoDraft loads a persistent system tray icon
 2. **Press your hotkey** (default: backtick `) - A rising cue confirms recording and a click-through `REC` timer remains visible while the microphone is live. After one minute it can highlight **Still recording** as a silent reminder.
-3. **Press your hotkey again** - A lower falling cue confirms recording has stopped; the floating indicator then shows transcription and cleanup progress until the dictation is complete
+3. **Press your hotkey again** - A lower falling cue confirms recording has stopped; the floating indicator then shows transcription and cleanup progress, keeps the completed status visible for five seconds, and fades away
 4. **Text appears** - Transcribed text is automatically pasted at your cursor location, followed by a distinct completion chime
 5. **Use tray actions** - Click the tray icon to start clipboard dictation, copy the last dictation, open the Control Panel, or quit
 
 You can press the hotkey again and record another dictation while earlier audio is processing. EchoDraft queues complete recordings in order. In insertion mode each result is inserted sequentially into its captured application target; in clipboard mode each result replaces the clipboard when that job completes. A failed job is reported without discarding later queued work.
 
+On Windows in tap mode, hold `Alt` while using either configured dictation hotkey to make a Codex prompt. With the current `F10` insertion and `F9` clipboard bindings, `Alt+F10` inserts the finished prompt and `Alt+F9` leaves it on the clipboard. Prompt mode uses the same recording and transcription pipeline, then rewrites only for clearer Codex CLI prompting with GPT-5.6 Luna at maximum reasoning effort. It preserves whether the dictation is a standalone request or a contextual follow-up; it does not invent missing context or implementation details. An OpenAI API key is required. History marks these results with a small terminal badge.
+
 ### Control Panel
 
-- **Access**: Click the tray icon, then choose **Open Control Panel**
+- **Access**: Click the tray icon, then choose **View Control Panel**. On Windows, EchoDraft opens it on the current virtual desktop and recreates the window only when Windows cannot safely reuse it there.
 - **Configure**: Choose between local and cloud processing
-- **History**: View, search, copy, and delete past transcriptions. When cleanup returns the complete title contract, EchoDraft shows the generated title and includes it in search.
-- **To Do**: Review pending mobile memos, search their generated titles or text, copy them, and mark them as actioned.
+- **History**: View, search, copy, and delete past transcriptions. When cleanup returns the complete title contract, EchoDraft shows the generated title and includes it in search. A terminal badge identifies Codex prompt dictations.
+- **To Do**: Review pending mobile memos, search their generated titles or text, copy them, and mark them as actioned. A terminal badge identifies Codex prompt dictations.
 - **Models**: Download and manage local Whisper models
 - **Storage Cleanup**: Remove downloaded Whisper models from cache to reclaim space
 - **Settings**: Configure API keys, customize hotkeys, select or test the microphone, preview or adjust dictation sounds, and manage permissions. If a selected microphone disconnects, EchoDraft shows the fallback and temporarily uses the system default.
 
 ### Mobile To Do inbox
 
-The private Android companion uses Microsoft sign-in and delegated `Files.ReadWrite.AppFolder` access to publish into its own `Apps/EchoDraft Mobile Inbox` OneDrive folder; it does not open a network port on the PC or require a custom backend. In **Control Panel → To Do**, choose the local PC copy of that folder after OneDrive syncs it. Phone recordings then follow the same transcription provider, model, cleanup setting, and generated-title contract currently selected in the desktop app; Android does not transcribe them locally.
+The private Android companion uses Microsoft sign-in and delegated `Files.ReadWrite.AppFolder` access to publish into its own `Apps/EchoDraft Mobile Inbox` OneDrive folder; it does not open a network port on the PC or require a custom backend. In **Control Panel → To Do**, choose the local PC copy of that folder after OneDrive syncs it. The compact 2×1 widget has a standard microphone and a violet microphone-with-terminal button for Codex prompt mode. Standard phone recordings follow the desktop app's selected transcription provider, model, cleanup setting, and generated-title contract. Prompt recordings use the same transcription path followed by GPT-5.6 Luna at maximum reasoning effort; Android does not transcribe either mode locally.
 
 Mobile results appear only in **To Do**. They do not paste automatically, replace the clipboard, or create a second History item. The floating desktop indicator identifies mobile work as **To Do**, then shows a brief processed or automatic-retry state when processing finishes instead of leaving stale progress visible. While the dictation renderer is ready, EchoDraft checks the selected sync folder every five seconds and removes an uploaded audio/manifest pair only after the cleaned memo has been saved idempotently to To Do. A bounded processing timeout releases an unresponsive renderer request for retry. The folder can therefore be empty during normal operation; completed memo pairs disappear after consumption. The Android companion is intended for private sideloading, not app-store distribution.
 
@@ -383,6 +385,14 @@ EchoDraft uses a fixed, model-specific cleanup policy built in the trusted main 
 - "Dear Sarah, thank you for your help"
 
 All dictated text is treated as untrusted content to edit. A dictated instruction is never permission to perform a task.
+
+**⌨️ Codex Prompt Dictation**:
+
+- Produces a ready-to-paste prompt without answering or executing it
+- Preserves the requested goal, scope, constraints, uncertainty, and level of detail
+- Preserves contextual follow-ups instead of reporting missing information, adding placeholders, or forcing them to stand alone
+- Does not guess files, commands, architecture, implementation details, acceptance criteria, or permissions that were not dictated
+- Uses GPT-5.6 Luna with maximum reasoning effort, independently of the regular cleanup model and effort settings
 
 ### Custom Dictionary
 

@@ -16,11 +16,16 @@ object MobileInboxProtocol {
         "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     )
 
+    enum class ProcessingMode(val wireValue: String) {
+        CODEX_PROMPT("codex-prompt"),
+    }
+
     data class Manifest(
         val externalId: UUID,
         val audioSha256: String,
         val sizeBytes: Long,
         val createdAt: Instant,
+        val processingMode: ProcessingMode? = null,
     ) {
         init {
             require(sizeBytes in 1..MAX_AUDIO_BYTES.toLong())
@@ -39,6 +44,7 @@ object MobileInboxProtocol {
                 "\"sizeBytes\":$sizeBytes," +
                 "\"createdAt\":\"$createdAt\"," +
                 "\"mimeType\":\"$AUDIO_MIME_TYPE\"" +
+                (processingMode?.let { ",\"processingMode\":\"${it.wireValue}\"" } ?: "") +
                 "}"
     }
 

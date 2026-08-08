@@ -34,6 +34,22 @@ describe("mobile inbox manifest contract", () => {
     });
   });
 
+  it("accepts only the optional Codex prompt processing mode", () => {
+    expect(
+      normalizeMobileInboxManifest(
+        { ...makeManifest(), processingMode: "codex-prompt" },
+        getMobileManifestFileName(EXTERNAL_ID)
+      )
+    ).toMatchObject({ processingMode: "codex-prompt" });
+
+    expect(() =>
+      normalizeMobileInboxManifest(
+        { ...makeManifest(), processingMode: "future-mode" },
+        getMobileManifestFileName(EXTERNAL_ID)
+      )
+    ).toThrow(/processing mode/i);
+  });
+
   it.each([
     ["missing manifest", null, getMobileManifestFileName(EXTERNAL_ID)],
     ["future protocol", { ...makeManifest(), version: 2 }, getMobileManifestFileName(EXTERNAL_ID)],

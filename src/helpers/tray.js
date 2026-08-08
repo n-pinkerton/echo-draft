@@ -99,6 +99,16 @@ class TrayManager {
       }
       this.attachControlPanelListeners(this.controlPanelWindow);
 
+      if (this.createControlPanelCallback) {
+        await this.createControlPanelCallback();
+        if (this.windowManager) {
+          this.controlPanelWindow =
+            this.windowManager.controlPanelWindow || this.controlPanelWindow;
+        }
+        this.attachControlPanelListeners(this.controlPanelWindow);
+        return;
+      }
+
       if (this.controlPanelWindow && !this.controlPanelWindow.isDestroyed()) {
         // Show dock icon on macOS when control panel opens
         if (process.platform === "darwin" && app.dock) {
@@ -111,21 +121,6 @@ class TrayManager {
           this.controlPanelWindow.show();
         }
         this.controlPanelWindow.focus();
-        return;
-      }
-
-      if (this.createControlPanelCallback) {
-        await this.createControlPanelCallback();
-        if (this.windowManager) {
-          this.controlPanelWindow =
-            this.windowManager.controlPanelWindow || this.controlPanelWindow;
-        }
-        this.attachControlPanelListeners(this.controlPanelWindow);
-
-        if (this.controlPanelWindow && !this.controlPanelWindow.isDestroyed()) {
-          this.controlPanelWindow.show();
-          this.controlPanelWindow.focus();
-        }
         return;
       }
 
@@ -685,7 +680,7 @@ class TrayManager {
         },
       },
       {
-        label: "Open Control Panel",
+        label: "View Control Panel",
         click: async () => {
           await this.showControlPanelFromTray();
         },

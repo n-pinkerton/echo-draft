@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
 import android.text.format.DateFormat
 import android.text.format.DateUtils
 import android.view.View
@@ -21,6 +22,16 @@ class EchoDraftWidgetProvider : AppWidgetProvider() {
         appWidgetIds.forEach { appWidgetId ->
             EchoDraftWidgetUi.update(context, appWidgetManager, appWidgetId)
         }
+    }
+
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: Bundle,
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        EchoDraftWidgetUi.update(context, appWidgetManager, appWidgetId)
     }
 }
 
@@ -51,6 +62,10 @@ object EchoDraftWidgetUi {
         // Broadcast receivers use only local cached state; authentication and Graph stay off this path.
         val setupReady = preferences.oneDriveConnected && preferences.hasMicrophonePermission(context)
         val actionMode = widgetActionMode(state.phase, setupReady)
+        val widthDp = manager.getAppWidgetOptions(appWidgetId).getInt(
+            AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,
+            MIN_WIDGET_WIDTH_DP,
+        )
         val views = RemoteViews(context.packageName, R.layout.echo_draft_widget)
         val lastUploadedAt = preferences.lastUploadedAtMillis
         val statusMode = widgetStatusMode(
@@ -76,6 +91,12 @@ object EchoDraftWidgetUi {
         }
         views.setTextViewText(R.id.widget_status, statusText)
         views.setInt(R.id.widget_action, "setColorFilter", context.getColor(R.color.echo_blue))
+        views.setImageViewResource(R.id.widget_prompt_action, R.drawable.ic_mic_prompt)
+        views.setInt(
+            R.id.widget_prompt_action,
+            "setColorFilter",
+            context.getColor(R.color.echo_prompt),
+        )
         val stateDescription = if (state.pendingCount > 0) {
             "${state.message} · ${state.pendingCount} pending"
         } else {
@@ -97,10 +118,17 @@ object EchoDraftWidgetUi {
             },
         )
         views.setViewVisibility(R.id.widget_action, View.VISIBLE)
+        views.setViewVisibility(R.id.widget_prompt_action, View.VISIBLE)
         views.setViewVisibility(R.id.widget_progress, View.GONE)
+        views.setViewVisibility(
+            R.id.widget_text,
+            if (widgetShowsStatus(actionMode, widthDp)) View.VISIBLE else View.GONE,
+        )
 
+        var promptAction: PendingIntent? = null
         val action = when (actionMode) {
             WidgetActionMode.STOP -> {
+                views.setViewVisibility(R.id.widget_prompt_action, View.GONE)
                 views.setImageViewResource(R.id.widget_action, R.drawable.ic_stop_notification)
                 views.setInt(
                     R.id.widget_action,
@@ -118,6 +146,7 @@ object EchoDraftWidgetUi {
 
             WidgetActionMode.PROCESSING -> {
                 views.setViewVisibility(R.id.widget_action, View.GONE)
+                views.setViewVisibility(R.id.widget_prompt_action, View.GONE)
                 views.setViewVisibility(R.id.widget_progress, View.VISIBLE)
                 null
             }
@@ -125,6 +154,18 @@ object EchoDraftWidgetUi {
             WidgetActionMode.RECORD -> {
                 views.setImageViewResource(R.id.widget_action, R.drawable.ic_mic_notification)
                 views.setContentDescription(R.id.widget_action, context.getString(R.string.widget_record))
+                views.setContentDescription(
+                    R.id.widget_prompt_action,
+                    context.getString(R.string.widget_record_prompt),
+                )
+                promptAction = PendingIntent.getForegroundService(
+                    context,
+                    REQUEST_START_PROMPT,
+                    Intent(context, RecorderService::class.java).setAction(
+                        RecorderService.ACTION_START_PROMPT,
+                    ),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
                 PendingIntent.getForegroundService(
                     context,
                     REQUEST_START,
@@ -136,10 +177,16 @@ object EchoDraftWidgetUi {
             WidgetActionMode.SETUP -> {
                 views.setImageViewResource(R.id.widget_action, R.drawable.ic_mic_notification)
                 views.setContentDescription(R.id.widget_action, context.getString(R.string.widget_setup))
+                views.setContentDescription(
+                    R.id.widget_prompt_action,
+                    context.getString(R.string.widget_prompt_setup),
+                )
+                promptAction = openAppIntent(context)
                 openAppIntent(context)
             }
         }
         action?.let { views.setOnClickPendingIntent(R.id.widget_action, it) }
+        promptAction?.let { views.setOnClickPendingIntent(R.id.widget_prompt_action, it) }
         manager.updateAppWidget(appWidgetId, views)
     }
 
@@ -167,6 +214,7 @@ object EchoDraftWidgetUi {
     private const val REQUEST_START = 51
     private const val REQUEST_STOP = 52
     private const val REQUEST_OPEN_APP = 53
+    private const val REQUEST_START_PROMPT = 54
 }
 
 internal enum class WidgetActionMode {
@@ -192,6 +240,14 @@ internal fun widgetActionMode(
     AppPreferences.Phase.ERROR,
     -> if (setupReady) WidgetActionMode.RECORD else WidgetActionMode.SETUP
 }
+
+internal const val MIN_WIDGET_WIDTH_DP = 109
+internal const val IDLE_STATUS_MIN_WIDTH_DP = 156
+
+internal fun widgetShowsStatus(actionMode: WidgetActionMode, widthDp: Int): Boolean =
+    actionMode == WidgetActionMode.STOP ||
+        actionMode == WidgetActionMode.PROCESSING ||
+        widthDp >= IDLE_STATUS_MIN_WIDTH_DP
 
 internal enum class WidgetStatusMode {
     SETUP,

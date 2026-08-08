@@ -68,8 +68,7 @@ class MobileInboxManager {
     this.processingTimeoutMs = options.processingTimeoutMs ?? PROCESSING_TIMEOUT_MS;
     this.maxSettlingAttempts = options.maxSettlingAttempts ?? MAX_SETTLING_ATTEMPTS;
     this.settlingWindowMs = options.settlingWindowMs ?? SETTLING_WINDOW_MS;
-    this.evidencelessRetryDelayMs =
-      options.evidencelessRetryDelayMs ?? EVIDENCELESS_RETRY_DELAY_MS;
+    this.evidencelessRetryDelayMs = options.evidencelessRetryDelayMs ?? EVIDENCELESS_RETRY_DELAY_MS;
     this.configPath = this.path.join(this.app.getPath("userData"), CONFIG_FILE_NAME);
     this.inboxPath = this._loadConfiguredPath();
     this.started = false;
@@ -193,12 +192,12 @@ class MobileInboxManager {
 
   async scanNow() {
     if (!this.inboxPath || !this.rendererReady) return;
-    if (this.scanPromise) return await this.scanPromise;
+    if (this.scanPromise) return this.scanPromise;
     const selectedPath = this.inboxPath;
     this.scanPromise = this._scanOnce(selectedPath).finally(() => {
       this.scanPromise = null;
     });
-    return await this.scanPromise;
+    return this.scanPromise;
   }
 
   async _scanOnce(selectedPath) {
@@ -294,8 +293,7 @@ class MobileInboxManager {
     this.settlingByItemKey.set(itemKey, next);
 
     const stableLongEnough = now - next.firstSeenAt >= this.settlingWindowMs;
-    const reachedSettlingLimit =
-      next.attempts >= this.maxSettlingAttempts && stableLongEnough;
+    const reachedSettlingLimit = next.attempts >= this.maxSettlingAttempts && stableLongEnough;
     const shouldQuarantine =
       Boolean(next.signature && next.manifestEvidence) && reachedSettlingLimit;
     if (shouldQuarantine) {
@@ -391,7 +389,10 @@ class MobileInboxManager {
         audioEvidence = existingAudio.evidence;
         await this._retainAudio(manifest, existingAudio.buffer);
       } catch (error) {
-        if (!(error instanceof SettlingMobileInboxError) || !/audio-missing:/.test(error.signature)) {
+        if (
+          !(error instanceof SettlingMobileInboxError) ||
+          !/audio-missing:/.test(error.signature)
+        ) {
           throw error;
         }
       }
@@ -427,6 +428,7 @@ class MobileInboxManager {
       rawText: result.rawText,
       meta: {
         source: "android",
+        ...(manifest.processingMode ? { processingMode: manifest.processingMode } : {}),
         ...(provider ? { provider } : {}),
         ...(model ? { model } : {}),
         ...(result.cleanup && typeof result.cleanup === "object"
@@ -487,6 +489,7 @@ class MobileInboxManager {
       text: todo.text,
       raw_text: todo.raw_text,
       title: todo.meta?.title || null,
+      ...(todo.meta?.processingMode === "codex-prompt" ? { processingMode: "codex-prompt" } : {}),
       created_at: todo.created_at,
     });
   }
@@ -516,6 +519,7 @@ class MobileInboxManager {
           externalId: manifest.externalId,
           mimeType: manifest.mimeType,
           createdAt: manifest.createdAt,
+          ...(manifest.processingMode ? { processingMode: manifest.processingMode } : {}),
           data: buffer,
         });
       } catch (error) {

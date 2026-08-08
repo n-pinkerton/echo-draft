@@ -1,7 +1,7 @@
 import { getSystemPrompt, type CleanupPromptMode } from "../config/prompts";
 import { getCustomDictionaryArray } from "../helpers/audio/transcription/customDictionary";
 
-export type CleanupReasoningEffort = "none" | "low" | "medium";
+export type CleanupReasoningEffort = "none" | "low" | "medium" | "max";
 
 export interface ReasoningConfig {
   maxTokens?: number;

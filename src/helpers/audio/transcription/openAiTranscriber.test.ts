@@ -1189,6 +1189,67 @@ describe("OpenAiTranscriber", () => {
     ]);
   });
 
+  it("preserves prompt mode when failed cloud transcription falls back to local Whisper", async () => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "whisper-1");
+    localStorage.setItem("allowLocalFallback", "true");
+    const transcribeLocalWhisper = vi.fn(async () => ({
+      success: true,
+      text: "continue with that review",
+    }));
+    (window as any).electronAPI.transcribeLocalWhisper = transcribeLocalWhisper;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      headers: { get: () => "application/json" },
+      text: async () => JSON.stringify({ error: { code: "temporarily_unavailable" } }),
+    })) as any;
+    const processTranscriptionWithOutcome = vi.fn(async () => ({
+      text: "Continue with that review.",
+      cleanup: {
+        requested: true,
+        attempted: true,
+        applied: true,
+        status: "applied",
+        model: "gpt-5.6-luna",
+        appliedModel: "gpt-5.6-luna",
+        modelSource: "prompt-mode",
+        provider: "openai",
+        retryCount: 0,
+      },
+    }));
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+      shouldApplyReasoningCleanup: () => false,
+      getCleanupEnabledOverride: () => false,
+      reasoningCleanupService: { processTranscriptionWithOutcome },
+    });
+
+    const result = await t.processWithOpenAIAPI(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" }) as any,
+      {},
+      { processingMode: "codex-prompt", transportRetryDelayMs: 0 }
+    );
+
+    expect(transcribeLocalWhisper).toHaveBeenCalledWith(
+      expect.any(ArrayBuffer),
+      expect.objectContaining({ model: "base" }),
+      expect.any(String)
+    );
+    expect(processTranscriptionWithOutcome).toHaveBeenCalledWith(
+      "continue with that review",
+      "local-fallback",
+      false,
+      expect.objectContaining({ processingMode: "codex-prompt" })
+    );
+    expect(result).toMatchObject({
+      text: "Continue with that review.",
+      rawText: "continue with that review",
+      source: "local-fallback-reasoned",
+      cleanup: { modelSource: "prompt-mode" },
+    });
+  });
+
   it("retains disagreeing cloud attempts when local fallback succeeds", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");

@@ -118,6 +118,9 @@ export const createAudioManagerCallbacks = (deps) => {
 
       if (event.recordingClosed === true) {
         void playStopCue?.();
+        if (!event.stage) {
+          return;
+        }
       }
 
       const contextSessionId =

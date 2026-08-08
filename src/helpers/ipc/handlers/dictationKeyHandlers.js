@@ -77,6 +77,9 @@ const validateAnthropicCleanupInput = (text, modelId, config = {}) => {
   if (!CLEANUP_PROMPT_MODES.has(mode)) {
     throw new Error("Anthropic cleanup mode is unsupported");
   }
+  if (mode === "codex-prompt") {
+    throw new Error("Codex prompt cleanup requires OpenAI");
+  }
   const language = requireLanguageCode(config.language, { allowAuto: true }, "cleanup language");
   const dictionaryEntries = validateCleanupDictionaryEntries(config.dictionaryEntries, "Anthropic");
   const systemPrompt = buildCleanupSystemPrompt(model, mode, language, dictionaryEntries);
@@ -126,6 +129,7 @@ function registerDictationKeyHandlers(
     const wrapped = validateWrappedCleanupInput(text, model);
     const mode = config.cleanupPromptMode || "standard";
     if (!CLEANUP_PROMPT_MODES.has(mode)) throw new Error("Local cleanup mode is unsupported");
+    if (mode === "codex-prompt") throw new Error("Codex prompt cleanup requires OpenAI");
     const language = requireLanguageCode(config.language, { allowAuto: true }, "cleanup language");
     const dictionaryEntries = validateCleanupDictionaryEntries(config.dictionaryEntries, "Local");
     if (

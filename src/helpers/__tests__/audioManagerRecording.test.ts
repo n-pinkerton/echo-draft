@@ -170,7 +170,7 @@ describe("AudioManager (non-streaming recording contract)", () => {
     manager.cleanup();
   });
 
-  it("labels a captured recording as queued when an earlier dictation is ahead", async () => {
+  it("announces recorder closure before labelling captured audio as queued", async () => {
     const manager = new AudioManager();
     const fakeTrack = {
       label: "Fake Mic",
@@ -208,12 +208,24 @@ describe("AudioManager (non-streaming recording contract)", () => {
 
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
-        stage: "queued",
-        stageLabel: "Queued",
-        message: "2 dictations ahead",
+        context: expect.objectContaining({ sessionId: "queued-recording" }),
         recordingClosed: true,
       })
     );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "queued",
+        stageLabel: "Queued",
+        message: "2 dictations ahead",
+      })
+    );
+
+    const closedIndex = onProgress.mock.calls.findIndex(
+      ([event]) => event?.recordingClosed === true
+    );
+    const queuedIndex = onProgress.mock.calls.findIndex(([event]) => event?.stage === "queued");
+    expect(closedIndex).toBeGreaterThanOrEqual(0);
+    expect(closedIndex).toBeLessThan(queuedIndex);
 
     manager.cleanup();
   });
@@ -273,6 +285,10 @@ describe("AudioManager (non-streaming recording contract)", () => {
     expect(onProgress).not.toHaveBeenCalledWith(expect.objectContaining({ recordingClosed: true }));
 
     const completedStop = DelayedStopMediaRecorder.latest?.completeStop();
+    expect(onProgress.mock.calls.filter(([event]) => event?.recordingClosed === true)).toHaveLength(
+      1
+    );
+    expect((manager as any).enqueueProcessingJob).not.toHaveBeenCalled();
     await vi.runAllTimersAsync();
     await completedStop;
     expect(onProgress.mock.calls.filter(([event]) => event?.recordingClosed === true)).toHaveLength(

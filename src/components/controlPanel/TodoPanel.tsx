@@ -1,5 +1,13 @@
 import { useMemo, useState } from "react";
-import { Check, ClipboardCheck, Copy, FolderOpen, Loader2, Smartphone } from "lucide-react";
+import {
+  Check,
+  ClipboardCheck,
+  Copy,
+  FolderOpen,
+  Loader2,
+  Smartphone,
+  SquareTerminal,
+} from "lucide-react";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -99,7 +107,8 @@ export default function TodoPanel({
           </div>
         ) : null}
         <p className="text-[11px] text-muted-foreground">
-          Copy a cleaned or raw mobile memo, then mark it as actioned when the follow-up is complete.
+          Copy a cleaned or raw mobile memo, then mark it as actioned when the follow-up is
+          complete.
         </p>
         <Input
           data-testid="todo-search"
@@ -160,6 +169,16 @@ export default function TodoPanel({
                     <Smartphone size={10} className="mr-1" />
                     Mobile
                   </span>
+                  {item.processingMode === "codex-prompt" ? (
+                    <span
+                      role="img"
+                      aria-label="Codex prompt"
+                      title="Codex prompt"
+                      className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-violet-500/10 text-violet-600 dark:text-violet-300"
+                    >
+                      <SquareTerminal size={11} aria-hidden="true" />
+                    </span>
+                  ) : null}
                 </div>
 
                 {item.title ? (

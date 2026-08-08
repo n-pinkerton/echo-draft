@@ -17,6 +17,9 @@ import {
 } from "../pipeline/cancellation";
 import { parseCleanupOutput } from "../../../config/cleanupOutputContract.cjs";
 
+export const CODEX_PROMPT_MODEL_ID = "gpt-5.6-luna";
+export const CODEX_PROMPT_REASONING_EFFORT = "max";
+
 const buildFidelityRepairPacket = (originalTranscript, rejectedCleanup, rejectionReasons) =>
   JSON.stringify({
     originalTranscript,
@@ -185,7 +188,7 @@ export class ReasoningCleanupService {
    * @param {string} text
    * @param {string} model
    * @param {string|null} agentName
-   * @param {{signal?: AbortSignal}} runtime
+   * @param {{signal?: AbortSignal, processingMode?: "codex-prompt"}} runtime
    * @returns {Promise<{text: string, title?: string, assessment: any, retryCount: number, appliedModel: string|null, retryDriftRecovered?: boolean, retryDriftEditType?: "substitution"|"insertion"|"deletion", initialFidelityReasons?: string[], retryFidelityReasons?: string[]}>}
    */
   async processWithReasoningModelResult(text, model, _agentName, runtime = {}) {
@@ -195,7 +198,10 @@ export class ReasoningCleanupService {
     });
 
     const startTime = Date.now();
-    const reasoningEffort = this._getReasoningEffort();
+    const isCodexPrompt = runtime?.processingMode === "codex-prompt";
+    const reasoningEffort = isCodexPrompt
+      ? CODEX_PROMPT_REASONING_EFFORT
+      : this._getReasoningEffort();
     const fidelityOptions = { preferredSpellings: this._getPreferredSpellings() };
     const preferredSourceCandidate = applyTrustedPreferredSpellingAliases(
       text,
@@ -235,7 +241,7 @@ export class ReasoningCleanupService {
       const preferredSpellings = fidelityOptions.preferredSpellings;
       const firstOutput = parseCleanupOutput(
         await this.reasoningService.processText(modelInputText, model, null, {
-          cleanupPromptMode: "preservation-first",
+          cleanupPromptMode: isCodexPrompt ? "codex-prompt" : "preservation-first",
           reasoningEffort,
           ...(signal ? { signal } : {}),
         }),
@@ -271,6 +277,12 @@ export class ReasoningCleanupService {
           appliedModel: model,
           ...(firstOutput.title ? { title: firstOutput.title } : {}),
         };
+      }
+
+      if (isCodexPrompt) {
+        // A normal fidelity-repair retry would deliberately undo the structural
+        // prompt editing this mode requested. Keep the recognizer text instead.
+        throw new CleanupFidelityError(firstAssessment);
       }
 
       this.logger?.logReasoning?.("REASONING_FIDELITY_RETRY", {
@@ -388,7 +400,7 @@ export class ReasoningCleanupService {
    * @param {string} text
    * @param {string} source
    * @param {boolean|null} cleanupEnabledOverride
-   * @param {{signal?: AbortSignal}} runtime
+   * @param {{signal?: AbortSignal, processingMode?: "codex-prompt"}} runtime
    * @returns {Promise<{text: string, cleanup: Record<string, any>}>}
    */
   async processTranscriptionWithOutcome(text, source, cleanupEnabledOverride, runtime = {}) {
@@ -403,16 +415,20 @@ export class ReasoningCleanupService {
       timestamp: new Date().toISOString(),
     });
 
+    const isCodexPrompt = runtime?.processingMode === "codex-prompt";
     const storedReasoningModel =
       typeof window !== "undefined" && window.localStorage
         ? localStorage.getItem("reasoningModel") || ""
         : "";
-    const reasoningProvider =
-      typeof window !== "undefined" && window.localStorage
+    const reasoningProvider = isCodexPrompt
+      ? "openai"
+      : typeof window !== "undefined" && window.localStorage
         ? localStorage.getItem("reasoningProvider") || "auto"
         : "auto";
-    const reasoningModel = normalizeCleanupModelId(storedReasoningModel, reasoningProvider);
-    const requested = this._isReasoningEnabled(cleanupEnabledOverride);
+    const reasoningModel = isCodexPrompt
+      ? CODEX_PROMPT_MODEL_ID
+      : normalizeCleanupModelId(storedReasoningModel, reasoningProvider);
+    const requested = isCodexPrompt || this._isReasoningEnabled(cleanupEnabledOverride);
     const baseOutcome = {
       requested,
       attempted: false,
@@ -420,7 +436,7 @@ export class ReasoningCleanupService {
       status: requested ? "fallback" : "disabled",
       fallbackReason: requested ? null : "disabled",
       model: reasoningModel || null,
-      ...(reasoningModel ? { modelSource: "selected" } : {}),
+      ...(reasoningModel ? { modelSource: isCodexPrompt ? "prompt-mode" : "selected" } : {}),
       appliedModel: null,
       provider: reasoningProvider || "auto",
       retryCount: 0,
@@ -428,6 +444,7 @@ export class ReasoningCleanupService {
 
     if (
       reasoningModel &&
+      !isCodexPrompt &&
       reasoningModel !== storedReasoningModel &&
       typeof window !== "undefined"
     ) {
@@ -451,7 +468,10 @@ export class ReasoningCleanupService {
       };
     }
 
-    const useReasoning = await this.isReasoningAvailable(cleanupEnabledOverride, reasoningProvider);
+    const useReasoning = await this.isReasoningAvailable(
+      isCodexPrompt ? true : cleanupEnabledOverride,
+      reasoningProvider
+    );
     throwIfTranscriptionCancelled(signal);
     this.logger?.logReasoning?.("REASONING_CHECK", {
       useReasoning,
@@ -579,7 +599,7 @@ export class ReasoningCleanupService {
           retryCount:
             Number.isInteger(error?.cleanupRetryCount) && error.cleanupRetryCount > 0
               ? error.cleanupRetryCount
-              : error?.code === "CLEANUP_FIDELITY_REJECTED"
+              : error?.code === "CLEANUP_FIDELITY_REJECTED" && !isCodexPrompt
                 ? 1
                 : 0,
           ...(Array.isArray(error?.assessment?.initialFidelityReasons)

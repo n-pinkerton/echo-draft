@@ -14,30 +14,48 @@ class PendingRecordingStore(
         val externalId: UUID,
         val createdAt: Instant,
         val temporaryFile: File,
+        val processingMode: MobileInboxProtocol.ProcessingMode? = null,
     )
 
     data class ReadyRecording(
         val externalId: UUID,
         val createdAt: Instant,
         val file: File,
+        val processingMode: MobileInboxProtocol.ProcessingMode? = null,
     )
 
-    fun createSession(externalId: UUID = UUID.randomUUID()): Session {
+    fun createSession(
+        externalId: UUID = UUID.randomUUID(),
+        processingMode: MobileInboxProtocol.ProcessingMode? = null,
+    ): Session {
         ensureDirectory()
-        val temporaryFile = File(directory, "${externalId.toString().lowercase()}.recording.m4a")
+        val modeSegment = processingMode?.let { ".${it.wireValue}" } ?: ""
+        val temporaryFile = File(
+            directory,
+            "${externalId.toString().lowercase()}$modeSegment.recording.m4a",
+        )
         check(temporaryFile.createNewFile()) { "Could not reserve a private recording file" }
-        return Session(externalId, clock.instant(), temporaryFile)
+        return Session(externalId, clock.instant(), temporaryFile, processingMode)
     }
 
     fun finalize(session: Session): ReadyRecording {
         check(session.temporaryFile.isFile && session.temporaryFile.length() > 0) {
             "The recording did not produce audio"
         }
-        val finalFile = File(directory, MobileInboxProtocol.audioFileName(session.externalId))
+        val modeSegment = session.processingMode?.let { ".${it.wireValue}" } ?: ""
+        val finalFile = File(
+            directory,
+            "${session.externalId.toString().lowercase()}$modeSegment.m4a",
+        )
         check(!finalFile.exists()) { "A pending recording already uses this ID" }
         check(session.temporaryFile.renameTo(finalFile)) { "Could not finalize the private recording" }
         finalFile.setLastModified(session.createdAt.toEpochMilli())
-        return ReadyRecording(session.externalId, session.createdAt, finalFile)
+        return ReadyRecording(
+            session.externalId,
+            session.createdAt,
+            finalFile,
+            session.processingMode,
+        )
     }
 
     fun retainForRecovery(session: Session): File {
@@ -46,7 +64,9 @@ class PendingRecordingStore(
         }
         val recoveryFile = File(
             directory,
-            "${session.externalId.toString().lowercase()}.recovery.m4a",
+            "${session.externalId.toString().lowercase()}" +
+                (session.processingMode?.let { ".${it.wireValue}" } ?: "") +
+                ".recovery.m4a",
         )
         check(!recoveryFile.exists()) { "A recovery recording already uses this ID" }
         check(session.temporaryFile.renameTo(recoveryFile)) {
@@ -63,9 +83,14 @@ class PendingRecordingStore(
             .asSequence()
             .filter { it.isFile }
             .mapNotNull { file ->
-                val externalId = MobileInboxProtocol.parseAudioFileName(file.name) ?: return@mapNotNull null
+                val parsed = parseReadyFileName(file.name) ?: return@mapNotNull null
                 val timestamp = file.lastModified().takeIf { it > 0 } ?: return@mapNotNull null
-                ReadyRecording(externalId, Instant.ofEpochMilli(timestamp), file)
+                ReadyRecording(
+                    parsed.first,
+                    Instant.ofEpochMilli(timestamp),
+                    file,
+                    parsed.second,
+                )
             }
             .sortedBy { it.createdAt }
             .toList()
@@ -90,6 +115,20 @@ class PendingRecordingStore(
         check(directory.isDirectory || directory.mkdirs()) {
             "Could not create private pending-recording storage"
         }
+    }
+
+    private fun parseReadyFileName(
+        fileName: String,
+    ): Pair<UUID, MobileInboxProtocol.ProcessingMode?>? {
+        val promptSuffix = ".${MobileInboxProtocol.ProcessingMode.CODEX_PROMPT.wireValue}.m4a"
+        if (fileName.endsWith(promptSuffix)) {
+            val externalId = runCatching {
+                UUID.fromString(fileName.removeSuffix(promptSuffix))
+            }.getOrNull() ?: return null
+            return externalId to MobileInboxProtocol.ProcessingMode.CODEX_PROMPT
+        }
+        val externalId = MobileInboxProtocol.parseAudioFileName(fileName) ?: return null
+        return externalId to null
     }
 
     companion object {

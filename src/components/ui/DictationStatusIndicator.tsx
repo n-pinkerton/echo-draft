@@ -16,6 +16,7 @@ type Props = {
   isSlow?: boolean;
   queuedWaitingCount?: number;
   outputMode?: "insert" | "clipboard" | string;
+  isExiting?: boolean;
 };
 
 const TERMINAL_ICON = {
@@ -34,6 +35,7 @@ export default function DictationStatusIndicator({
   isSlow = false,
   queuedWaitingCount = 0,
   outputMode = "insert",
+  isExiting = false,
 }: Props) {
   const TerminalIcon = Object.prototype.hasOwnProperty.call(TERMINAL_ICON, stage)
     ? TERMINAL_ICON[stage as keyof typeof TERMINAL_ICON]
@@ -56,7 +58,11 @@ export default function DictationStatusIndicator({
   const detail = [...activeContext, operationDetail].filter(Boolean).join(" · ");
 
   return (
-    <div className="dictation-window pointer-events-none fixed bottom-0 right-0 flex h-[72px] w-[260px] items-center justify-center p-1.5 select-none">
+    <div
+      className={`dictation-window pointer-events-none fixed right-0 bottom-0 flex h-[72px] w-[260px] items-center justify-center p-1.5 transition-opacity duration-300 select-none motion-reduce:transition-none ${
+        isExiting ? "opacity-0" : "opacity-100"
+      }`}
+    >
       <div
         data-testid="dictation-status-indicator"
         data-stage={stage}

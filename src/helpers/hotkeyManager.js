@@ -60,7 +60,7 @@ class HotkeyManager {
     return false;
   }
 
-  async initializeHotkey(mainWindow, callback) {
+  async initializeHotkey(mainWindow, callback, onHotkeyResolved = null) {
     if (!mainWindow || !callback) {
       throw new Error("mainWindow and callback are required");
     }
@@ -118,8 +118,15 @@ class HotkeyManager {
       globalShortcut.unregisterAll();
     }
 
-    setTimeout(() => {
-      this.loadSavedHotkeyOrDefault(mainWindow, callback);
+    setTimeout(async () => {
+      await this.loadSavedHotkeyOrDefault(mainWindow, callback);
+      if (process.platform === "win32" && typeof onHotkeyResolved === "function") {
+        try {
+          await onHotkeyResolved(this.currentHotkey);
+        } catch (err) {
+          debugLogger.warn("[HotkeyManager] Post-registration callback failed:", err.message);
+        }
+      }
     }, HOTKEY_REGISTRATION_DELAY_MS);
 
     this.isInitialized = true;

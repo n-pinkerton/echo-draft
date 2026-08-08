@@ -36,9 +36,7 @@ export const getMobileInboxExternalId = (context) => {
 export const reportMobileInboxFailure = (electronAPI, context) => {
   const requestId = getMobileInboxRequestId(context);
   if (!requestId) return false;
-  void electronAPI
-    ?.completeMobileInboxItem?.(requestId, { success: false })
-    ?.catch?.(() => {});
+  void electronAPI?.completeMobileInboxItem?.(requestId, { success: false })?.catch?.(() => {});
   return true;
 };
 
@@ -90,6 +88,12 @@ export const enqueueMobileInboxItem = ({
   const requestId = getMobileInboxRequestId(payload);
   const externalId = getMobileInboxExternalId(payload) || "";
   const createdAtMs = Date.parse(payload?.createdAt || "");
+  const processingMode =
+    payload?.processingMode === undefined
+      ? null
+      : payload.processingMode === "codex-prompt"
+        ? "codex-prompt"
+        : "invalid";
   const bytes = asUint8Array(payload?.data);
   if (
     !audioManager ||
@@ -97,6 +101,7 @@ export const enqueueMobileInboxItem = ({
     !UUID_PATTERN.test(externalId) ||
     payload?.mimeType !== MOBILE_AUDIO_MIME_TYPE ||
     !Number.isFinite(createdAtMs) ||
+    processingMode === "invalid" ||
     !bytes ||
     bytes.byteLength < 1 ||
     bytes.byteLength > MAX_MOBILE_AUDIO_BYTES
@@ -108,6 +113,7 @@ export const enqueueMobileInboxItem = ({
   const job = upsertJob(externalId, {
     mobileInboxRequestId: requestId,
     outputMode: "mobile-todo",
+    ...(processingMode ? { processingMode } : {}),
     startedAt,
     status: "queued",
   });
@@ -115,6 +121,7 @@ export const enqueueMobileInboxItem = ({
     sessionId: externalId,
     jobId: job.jobId,
     outputMode: "mobile-todo",
+    ...(processingMode ? { processingMode } : {}),
     mobileInboxRequestId: requestId,
     mobileInboxExternalId: externalId,
     createdAt: new Date(createdAtMs).toISOString(),

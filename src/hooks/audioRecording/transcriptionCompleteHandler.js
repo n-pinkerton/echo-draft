@@ -218,7 +218,9 @@ export const createTranscriptionCompleteHandler = (deps) => {
     }
 
     if (typeof result.rawText !== "string" || !result.rawText.trim()) {
-      throw new Error("Raw transcription was unavailable; cleaned text was not delivered or saved.");
+      throw new Error(
+        "Raw transcription was unavailable; cleaned text was not delivered or saved."
+      );
     }
 
     const rawText = typeof result.rawText === "string" ? result.rawText : "";
@@ -597,6 +599,7 @@ export const createTranscriptionCompleteHandler = (deps) => {
         meta: {
           sessionId: session.sessionId,
           outputMode: session.outputMode,
+          ...(session.processingMode ? { processingMode: session.processingMode } : {}),
           status: historyStatus,
           source: result.source,
           provider,
@@ -753,25 +756,25 @@ export const createTranscriptionCompleteHandler = (deps) => {
                 ? session.outputMode === "insert"
                   ? "Transcript may be incomplete; automatic insertion was skipped."
                   : "Transcript may be incomplete; review it before use."
-              : deliveryStatus === "insert_uncertain"
-                ? "Insert may have completed; check before pasting again."
-              : deliveryStatus === "inserted_clipboard_warning"
-                ? "Inserted; previous clipboard recovery is pending."
-                : deliveryStatus === "clipboard_protected"
-                  ? deliveryReasonCode === "WINDOWS_CLIPBOARD_RESTORE_PENDING"
-                    ? "Insert paused; previous clipboard recovery is still pending."
-                    : "Insert paused; existing clipboard left unchanged."
-                  : deliveryStatus === "clipboard_changed"
-                    ? "Insert failed; newer clipboard contents preserved."
-                    : deliveryStatus === "failed"
-                      ? "Automatic text delivery failed."
-                      : saveSucceeded
-                        ? cleanupFallback
-                          ? cleanupFallbackFeedback.stageMessage
-                          : null
-                        : session.outputMode === "insert" && pasteSucceeded
-                          ? "Inserted, but history save failed."
-                          : "Saved to clipboard, but history save failed.",
+                : deliveryStatus === "insert_uncertain"
+                  ? "Insert may have completed; check before pasting again."
+                  : deliveryStatus === "inserted_clipboard_warning"
+                    ? "Inserted; previous clipboard recovery is pending."
+                    : deliveryStatus === "clipboard_protected"
+                      ? deliveryReasonCode === "WINDOWS_CLIPBOARD_RESTORE_PENDING"
+                        ? "Insert paused; previous clipboard recovery is still pending."
+                        : "Insert paused; existing clipboard left unchanged."
+                      : deliveryStatus === "clipboard_changed"
+                        ? "Insert failed; newer clipboard contents preserved."
+                        : deliveryStatus === "failed"
+                          ? "Automatic text delivery failed."
+                          : saveSucceeded
+                            ? cleanupFallback
+                              ? cleanupFallbackFeedback.stageMessage
+                              : null
+                            : session.outputMode === "insert" && pasteSucceeded
+                              ? "Inserted, but history save failed."
+                              : "Saved to clipboard, but history save failed.",
           provider,
           model,
           generatedChars: result.text.length,

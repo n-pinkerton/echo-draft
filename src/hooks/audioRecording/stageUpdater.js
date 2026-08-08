@@ -1,5 +1,11 @@
 import logger from "../../utils/logger";
-import { STAGE_META, TERMINAL_STAGES } from "./stages";
+import {
+  DEFAULT_TERMINAL_STATUS_RESET_MS,
+  DONE_STATUS_FADE_MS,
+  DONE_STATUS_VISIBLE_MS,
+  STAGE_META,
+  TERMINAL_STAGES,
+} from "./stages";
 
 export const createStageUpdater = (deps) => {
   const {
@@ -128,13 +134,17 @@ export const createStageUpdater = (deps) => {
     });
 
     if (TERMINAL_STAGES.has(normalizedStage)) {
+      const resetDelayMs =
+        normalizedStage === "done"
+          ? DONE_STATUS_VISIBLE_MS + DONE_STATUS_FADE_MS
+          : DEFAULT_TERMINAL_STATUS_RESET_MS;
       progressResetTimerRef.current = setTimeout(() => {
         const state = audioManagerRef.current?.getState?.();
         if (state?.isRecording || state?.isProcessing || jobsBySessionIdRef.current.size > 0) {
           return;
         }
         resetProgress();
-      }, 3000);
+      }, resetDelayMs);
     }
   };
 };

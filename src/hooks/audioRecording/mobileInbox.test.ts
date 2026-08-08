@@ -40,6 +40,30 @@ describe("mobile inbox renderer bridge", () => {
     );
   });
 
+  it("carries the trusted prompt marker into the shared pipeline", () => {
+    const enqueueProcessingJob = vi.fn();
+    const upsertJob = vi.fn(() => ({ jobId: 5 }));
+    const context = enqueueMobileInboxItem({
+      audioManager: { enqueueProcessingJob },
+      payload: {
+        requestId: ID,
+        externalId: ID,
+        createdAt: "2026-07-18T02:03:04Z",
+        mimeType: "audio/mp4",
+        processingMode: "codex-prompt",
+        data: Uint8Array.from([1, 2, 3]),
+      },
+      removeJob: vi.fn(),
+      upsertJob,
+    });
+
+    expect(context).toMatchObject({ processingMode: "codex-prompt" });
+    expect(upsertJob).toHaveBeenCalledWith(
+      ID,
+      expect.objectContaining({ processingMode: "codex-prompt" })
+    );
+  });
+
   it("rejects unsupported or oversized payloads", () => {
     const base = {
       requestId: ID,
@@ -54,10 +78,15 @@ describe("mobile inbox renderer bridge", () => {
       upsertJob: vi.fn(),
     };
 
-    expect(() => enqueueMobileInboxItem({ ...deps, payload: { ...base, mimeType: "audio/wav" } }))
-      .toThrow(/invalid/i);
-    expect(() => enqueueMobileInboxItem({ ...deps, payload: { ...base, data: new Uint8Array(0) } }))
-      .toThrow(/invalid/i);
+    expect(() =>
+      enqueueMobileInboxItem({ ...deps, payload: { ...base, mimeType: "audio/wav" } })
+    ).toThrow(/invalid/i);
+    expect(() =>
+      enqueueMobileInboxItem({ ...deps, payload: { ...base, data: new Uint8Array(0) } })
+    ).toThrow(/invalid/i);
+    expect(() =>
+      enqueueMobileInboxItem({ ...deps, payload: { ...base, processingMode: "future-mode" } })
+    ).toThrow(/invalid/i);
   });
 
   it("preserves cleaned text when no valid title was returned", () => {

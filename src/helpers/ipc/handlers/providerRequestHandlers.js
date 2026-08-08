@@ -109,6 +109,9 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
   if (!CLEANUP_PROMPT_MODES.has(cleanupPromptMode)) {
     throw new Error("Cleanup prompt mode is unsupported");
   }
+  if (cleanupPromptMode === "codex-prompt" && (provider !== "openai" || model !== "gpt-5.6-luna")) {
+    throw new Error("Codex prompt cleanup requires the official OpenAI Luna model");
+  }
   const language = requireLanguageCode(operation.language, { allowAuto: true }, "cleanup language");
   const { userPrompt } = validateWrappedCleanupInput(operation.userPrompt, model);
   let dictionaryEntries = [];
@@ -139,9 +142,16 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
   let reasoningEffort;
   if (operation.reasoningEffort !== undefined) {
     reasoningEffort = String(operation.reasoningEffort);
-    if (!new Set(["none", "low", "medium", "high"]).has(reasoningEffort)) {
+    const allowedEfforts =
+      cleanupPromptMode === "codex-prompt"
+        ? new Set(["max"])
+        : new Set(["none", "low", "medium", "high"]);
+    if (!allowedEfforts.has(reasoningEffort)) {
       throw new Error("Cleanup reasoning effort is unsupported");
     }
+  }
+  if (cleanupPromptMode === "codex-prompt" && reasoningEffort !== "max") {
+    throw new Error("Codex prompt cleanup requires maximum reasoning effort");
   }
 
   const pathname = new URL(endpoint).pathname.replace(/\/+$/, "");

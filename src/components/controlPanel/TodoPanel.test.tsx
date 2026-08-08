@@ -59,7 +59,10 @@ describe("TodoPanel", () => {
     const copyToClipboard = vi.fn(async () => {});
     render(
       <TodoPanel
-        items={[makeItem(1, "Cleaned request", undefined, "clean request") , makeItem(2, "No raw copy")]}
+        items={[
+          makeItem(1, "Cleaned request", undefined, "clean request"),
+          makeItem(2, "No raw copy"),
+        ]}
         isLoading={false}
         copyToClipboard={copyToClipboard}
         markActioned={vi.fn(async () => {})}
@@ -71,7 +74,9 @@ describe("TodoPanel", () => {
       "clean request",
       expect.objectContaining({ title: "Raw Transcript Copied" })
     );
-    expect(screen.queryByRole("button", { name: "Copy raw mobile memo 2" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy raw mobile memo 2" })
+    ).not.toBeInTheDocument();
   });
 
   it("labels mobile dictations and searches by title", () => {
@@ -94,6 +99,19 @@ describe("TodoPanel", () => {
 
     expect(screen.queryByText("Call Sam tomorrow")).not.toBeInTheDocument();
     expect(screen.getByText("Book the car service")).toBeInTheDocument();
+  });
+
+  it("marks prompt-mode mobile dictations with an accessible icon", () => {
+    render(
+      <TodoPanel
+        items={[{ ...makeItem(1, "Continue with the review"), processingMode: "codex-prompt" }]}
+        isLoading={false}
+        copyToClipboard={vi.fn(async () => {})}
+        markActioned={vi.fn(async () => {})}
+      />
+    );
+
+    expect(screen.getByRole("img", { name: "Codex prompt" })).toBeInTheDocument();
   });
 
   it("announces loading and gives repeated controls distinct accessible names", () => {

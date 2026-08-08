@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 
 const mocks = vi.hoisted(() => ({
   recordingState: {
@@ -124,10 +124,7 @@ describe("App recording indicator routing", () => {
     rerender(<App />);
 
     expect(window.electronAPI.hideWindow).not.toHaveBeenCalled();
-    expect(screen.getByTestId("dictation-status-indicator")).toHaveAttribute(
-      "data-stage",
-      "done"
-    );
+    expect(screen.getByTestId("dictation-status-indicator")).toHaveAttribute("data-stage", "done");
     expect(screen.getByText("Text delivered")).toBeInTheDocument();
 
     mocks.recordingState = {
@@ -166,6 +163,49 @@ describe("App recording indicator routing", () => {
       "cleaning"
     );
     expect(screen.getByTestId("dictation-status-announcer")).toHaveTextContent("Cleaning up");
+  });
+
+  it("keeps Done visible for five seconds, fades it, then hides the overlay", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.recordingState = {
+        ...mocks.recordingState,
+        isRecording: false,
+        isProcessing: false,
+        progress: {
+          stage: "done",
+          stageLabel: "Done",
+          message: "Text delivered",
+          sessionId: "completed-dictation",
+        },
+      };
+
+      render(<App />);
+      const indicator = screen.getByTestId("dictation-status-indicator");
+      const overlay = indicator.parentElement;
+
+      expect(overlay).toHaveClass("opacity-100");
+      expect((window as any).electronAPI.hideWindow).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_999);
+      });
+      expect(overlay).toHaveClass("opacity-100");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(overlay).toHaveClass("opacity-0");
+      expect((window as any).electronAPI.hideWindow).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      expect(screen.queryByTestId("dictation-status-indicator")).not.toBeInTheDocument();
+      expect((window as any).electronAPI.hideWindow).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the overlay transparent through the final hide frame", () => {

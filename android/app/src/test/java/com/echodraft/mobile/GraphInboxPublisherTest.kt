@@ -32,6 +32,20 @@ class GraphInboxPublisherTest {
     }
 
     @Test
+    fun `publishes prompt mode in the ready manifest while keeping the canonical audio name`() {
+        val api = FakeOneDriveDriveApi()
+        val recording = recording("prompt audio").copy(
+            processingMode = MobileInboxProtocol.ProcessingMode.CODEX_PROMPT,
+        )
+
+        publisher(api).publish(recording)
+
+        val manifest = api.contents.getValue(manifestName).toString(Charsets.UTF_8)
+        assertTrue(manifest.contains("\"processingMode\":\"codex-prompt\""))
+        assertTrue(api.contents.containsKey(audioName))
+    }
+
+    @Test
     fun `retry accepts identical audio and publishes only missing manifest`() {
         val api = FakeOneDriveDriveApi()
         val recording = recording("already uploaded")

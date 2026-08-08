@@ -32,6 +32,7 @@ function createHarness() {
     getCurrentClipboardHotkey: () => "F9",
     getWindowsHotkeyController: () => controller,
     sendStopDictation: vi.fn(),
+    unregisterPromptHotkeys: vi.fn(),
     setHotkeyListeningMode: (enabled: boolean) => {
       listening = enabled;
     },
@@ -93,7 +94,11 @@ describe("setHotkeyCaptureMode", () => {
       sessionId: "capture-safety-stop",
       forcedStopReason: "hotkey-capture",
     });
+    expect(harness.windowManager.unregisterPromptHotkeys).toHaveBeenCalledOnce();
     expect(harness.windowManager.sendStopDictation.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.windowManager.unregisterPromptHotkeys.mock.invocationCallOrder[0]
+    );
+    expect(harness.windowManager.unregisterPromptHotkeys.mock.invocationCallOrder[0]).toBeLessThan(
       harness.refreshWindowsKeyListeners.mock.invocationCallOrder[0]
     );
     expect(harness.refreshWindowsKeyListeners.mock.invocationCallOrder[0]).toBeLessThan(

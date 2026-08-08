@@ -888,7 +888,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     let cleanup = null;
     let title = null;
 
-    if (transcriber.shouldApplyReasoningCleanup?.()) {
+    if (options.processingMode === "codex-prompt" || transcriber.shouldApplyReasoningCleanup?.()) {
       throwIfTranscriptionCancelled(externalSignal);
       transcriber.emitProgress?.({
         stage: "cleaning",
@@ -899,15 +899,14 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       try {
         const cleanupEnabledOverride = transcriber.getCleanupEnabledOverride?.() ?? null;
         if (
-          typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome ===
-          "function"
+          typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome === "function"
         ) {
           const cleanupResult =
             await transcriber.reasoningCleanupService.processTranscriptionWithOutcome(
               rawTextSnapshot,
               source,
               cleanupEnabledOverride,
-              { signal: externalSignal }
+              { ...options, signal: externalSignal }
             );
           cleanedText = cleanupResult.text;
           cleanup = cleanupResult.cleanup;
@@ -917,7 +916,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
             rawTextSnapshot,
             source,
             cleanupEnabledOverride,
-            { signal: externalSignal }
+            { ...options, signal: externalSignal }
           );
           cleanup = {
             requested: true,
@@ -986,13 +985,17 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
       try {
         const localFallbackStartedAt = performance.now();
         const arrayBuffer = await audioBlob.arrayBuffer();
-        const options = { model: fallbackModel };
+        const fallbackTranscriptionOptions = { model: fallbackModel };
         if (language && language !== "auto") {
-          options.language = language;
+          fallbackTranscriptionOptions.language = language;
         }
 
         const result = await invokeCancelableIpc(externalSignal, (requestId) =>
-          window.electronAPI.transcribeLocalWhisper(arrayBuffer, options, requestId)
+          window.electronAPI.transcribeLocalWhisper(
+            arrayBuffer,
+            fallbackTranscriptionOptions,
+            requestId
+          )
         );
         throwIfTranscriptionCancelled(externalSignal);
         if (result.success && result.text) {
@@ -1012,7 +1015,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
                   rawText,
                   "local-fallback",
                   transcriber.getCleanupEnabledOverride?.() ?? null,
-                  { signal: externalSignal }
+                  { ...options, signal: externalSignal }
                 );
               if (cleanupResult.text) {
                 return {
@@ -1036,7 +1039,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
                 rawText,
                 "local-fallback",
                 transcriber.getCleanupEnabledOverride?.() ?? null,
-                { signal: externalSignal }
+                { ...options, signal: externalSignal }
               );
               if (text) {
                 return {

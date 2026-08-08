@@ -155,6 +155,13 @@ export async function startNonStreamingRecording(manager, context = null) {
         manager.mediaRecorder = null;
       }
 
+      // Confirm stop as soon as MediaRecorder closes, before flush, debug capture, or queue work.
+      // Playing the cue any earlier could record it; playing it after those waits feels unresponsive.
+      manager.emitProgress({
+        context: recordingContext,
+        recordingClosed: true,
+      });
+
       try {
         flushContext = await waitForNonStreamingStopFlush(manager, stopContext);
         const stopRequestedAt =
@@ -237,7 +244,6 @@ export async function startNonStreamingRecording(manager, context = null) {
             ? `${jobsAhead} ${jobsAhead === 1 ? "dictation" : "dictations"} ahead`
             : "Recording stopped",
           context: recordingContext,
-          recordingClosed: true,
         });
         manager.pendingNonStreamingStopRequestedAt = null;
         manager.pendingNonStreamingStartTimings = null;

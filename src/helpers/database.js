@@ -350,6 +350,9 @@ class DatabaseManager {
           id: row.id,
           text: row.text,
           title: normalizeCleanupTitle(metadata?.title),
+          ...(metadata?.processingMode === "codex-prompt"
+            ? { processingMode: "codex-prompt" }
+            : {}),
           created_at: row.created_at,
         };
       });

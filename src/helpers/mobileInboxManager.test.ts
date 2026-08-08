@@ -25,7 +25,8 @@ const createWorkspace = async () => {
 const writeReadyItem = async (
   inboxPath: string,
   audio = Buffer.from("mobile audio"),
-  externalId = EXTERNAL_ID
+  externalId = EXTERNAL_ID,
+  processingMode: string | null = null
 ) => {
   const audioSha256 = crypto.createHash("sha256").update(audio).digest("hex");
   const audioFile = `${externalId}.m4a`;
@@ -40,6 +41,7 @@ const writeReadyItem = async (
       audioSha256,
       sizeBytes: audio.length,
       createdAt: "2026-07-18T02:03:04Z",
+      ...(processingMode ? { processingMode } : {}),
     })
   );
   return { audioFile, audioSha256, manifestFile };
@@ -53,10 +55,7 @@ const createRendererWindow = () => {
   }) as any;
 };
 
-const createManager = (
-  userDataPath: string,
-  overrides: Record<string, unknown> = {}
-) => {
+const createManager = (userDataPath: string, overrides: Record<string, unknown> = {}) => {
   const send = vi.fn();
   const databaseManager = {
     getTodoByExternalId: vi.fn(() => null),
@@ -202,6 +201,39 @@ describe("MobileInboxManager", () => {
     expect(databaseManager.saveTodo).not.toHaveBeenCalled();
     await expect(fs.promises.stat(path.join(inboxPath, item.manifestFile))).resolves.toBeTruthy();
     await expect(fs.promises.stat(path.join(inboxPath, item.audioFile))).resolves.toBeTruthy();
+  });
+
+  it("dispatches and saves the trusted Codex prompt marker", async () => {
+    const { inboxPath, userDataPath } = await createWorkspace();
+    await writeReadyItem(inboxPath, Buffer.from("prompt audio"), EXTERNAL_ID, "codex-prompt");
+    const { databaseManager, manager, send, windowManager } = createManager(userDataPath);
+    send.mockImplementation((_channel, payload) => {
+      queueMicrotask(() =>
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          title: "Continue review",
+          text: "Continue with the review.",
+          rawText: "continue with review",
+        })
+      );
+    });
+    await manager.setInboxPath(inboxPath);
+
+    await manager.scanNow();
+
+    expect(send).toHaveBeenCalledWith(
+      "mobile-inbox-process",
+      expect.objectContaining({ processingMode: "codex-prompt" })
+    );
+    expect(databaseManager.saveTodo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({ processingMode: "codex-prompt" }),
+      })
+    );
+    expect(windowManager.controlPanelWindow.webContents.send).toHaveBeenCalledWith(
+      "todo-added",
+      expect.objectContaining({ processingMode: "codex-prompt" })
+    );
   });
 
   it("does not save or remove a mobile item when the renderer omits raw text", async () => {
@@ -647,10 +679,14 @@ describe("MobileInboxManager", () => {
     });
     await scan;
 
-    await expect(fs.promises.stat(path.join(first.inboxPath, firstItem.audioFile))).rejects.toMatchObject({
+    await expect(
+      fs.promises.stat(path.join(first.inboxPath, firstItem.audioFile))
+    ).rejects.toMatchObject({
       code: "ENOENT",
     });
-    await expect(fs.promises.stat(path.join(secondInbox, secondItem.audioFile))).resolves.toBeTruthy();
+    await expect(
+      fs.promises.stat(path.join(secondInbox, secondItem.audioFile))
+    ).resolves.toBeTruthy();
     await expect(
       fs.promises.stat(path.join(secondInbox, secondItem.manifestFile))
     ).resolves.toBeTruthy();
@@ -898,8 +934,10 @@ describe("MobileInboxManager", () => {
       expect.objectContaining({ externalId: SECOND_EXTERNAL_ID })
     );
     await expect(fs.promises.stat(path.join(inboxPath, first.manifestFile))).resolves.toBeTruthy();
-    await expect(fs.promises.stat(path.join(inboxPath, second.manifestFile))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(fs.promises.stat(path.join(inboxPath, second.manifestFile))).rejects.toMatchObject(
+      {
+        code: "ENOENT",
+      }
+    );
   });
 });

@@ -49,6 +49,7 @@ export class CloudTranscriber {
 
   async processWithEchoDraftCloud(audioBlob, metadata = {}, runtime = {}) {
     const signal = runtime?.signal || null;
+    const isCodexPrompt = runtime?.processingMode === "codex-prompt";
     throwIfTranscriptionCancelled(signal);
     if (!navigator.onLine) {
       const err = new Error("You're offline. Cloud transcription requires an internet connection.");
@@ -88,7 +89,8 @@ export class CloudTranscriber {
 
     const override = this.getCleanupEnabledOverride?.() ?? null;
     const useReasoningModel =
-      override !== null ? override : localStorage.getItem("useReasoningModel") === "true";
+      isCodexPrompt ||
+      (override !== null ? override : localStorage.getItem("useReasoningModel") === "true");
     let source = ECHO_DRAFT_CLOUD_SOURCE;
     let cleanup = null;
     let title = null;
@@ -106,7 +108,7 @@ export class CloudTranscriber {
       let attemptedManagedCleanupModel = null;
 
       try {
-        if (cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE) {
+        if (!isCodexPrompt && cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE) {
           const reasonResult = await this.withSessionRefresh(
             async () => {
               const res = await invokeCancelableIpc(signal, (requestId) =>
@@ -239,7 +241,7 @@ export class CloudTranscriber {
         }
         processedText = rawText;
         title = null;
-        const managedCleanup = cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE;
+        const managedCleanup = !isCodexPrompt && cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE;
         cleanup = {
           requested: true,
           attempted: true,
@@ -251,16 +253,20 @@ export class CloudTranscriber {
               : "provider_error",
           model: managedCleanup
             ? attemptedManagedCleanupModel
-            : localStorage.getItem("reasoningModel") || null,
+            : isCodexPrompt
+              ? "gpt-5.6-luna"
+              : localStorage.getItem("reasoningModel") || null,
           appliedModel: null,
-          modelSource: managedCleanup ? "managed" : "selected",
+          modelSource: managedCleanup ? "managed" : isCodexPrompt ? "prompt-mode" : "selected",
           provider: managedCleanup
             ? ECHO_DRAFT_CLOUD_SOURCE
-            : localStorage.getItem("reasoningProvider") || "auto",
+            : isCodexPrompt
+              ? "openai"
+              : localStorage.getItem("reasoningProvider") || "auto",
           retryCount: managedCleanup
             ? 0
             : Number(reasonError?.cleanupRetryCount) ||
-              (reasonError?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0),
+              (reasonError?.code === "CLEANUP_FIDELITY_REJECTED" && !isCodexPrompt ? 1 : 0),
           ...(reasonError?.assessment?.metrics ? { metrics: reasonError.assessment.metrics } : {}),
         };
         this.logger?.error?.(

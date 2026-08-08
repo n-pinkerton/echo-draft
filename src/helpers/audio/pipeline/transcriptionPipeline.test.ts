@@ -39,7 +39,12 @@ describe("TranscriptionPipeline", () => {
     localStorage.setItem("isSignedIn", "false");
 
     const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-    const context = { sessionId: "s1", outputMode: "clipboard", jobId: 1 };
+    const context = {
+      sessionId: "s1",
+      outputMode: "clipboard",
+      processingMode: "codex-prompt",
+      jobId: 1,
+    };
 
     await pipeline.processAudio(
       audioBlob,
@@ -60,6 +65,11 @@ describe("TranscriptionPipeline", () => {
     );
 
     expect(openAiTranscriber.processWithOpenAIAPI).toHaveBeenCalledTimes(1);
+    expect(openAiTranscriber.processWithOpenAIAPI).toHaveBeenCalledWith(
+      audioBlob,
+      expect.any(Object),
+      { processingMode: "codex-prompt" }
+    );
     expect(onTranscriptionComplete).toHaveBeenCalledTimes(1);
 
     const payload = onTranscriptionComplete.mock.calls[0][0];

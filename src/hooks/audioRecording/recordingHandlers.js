@@ -50,6 +50,7 @@ export const createStartRecordingHandler = (deps) => {
       {
         sessionId: session.sessionId,
         outputMode: session.outputMode,
+        processingMode: session.processingMode || null,
         triggeredAt: session.triggeredAt,
         currentState,
       },
@@ -58,6 +59,7 @@ export const createStartRecordingHandler = (deps) => {
 
     const job = upsertJob(session.sessionId, {
       outputMode: session.outputMode,
+      ...(session.processingMode ? { processingMode: session.processingMode } : {}),
       status: "recording",
       startedAt: Date.now(),
       recordedMs: null,
@@ -94,6 +96,7 @@ export const createStartRecordingHandler = (deps) => {
       sessionId: session.sessionId,
       jobId: job.jobId,
       outputMode: session.outputMode,
+      ...(session.processingMode ? { processingMode: session.processingMode } : {}),
       triggeredAt: session.triggeredAt,
     };
 
@@ -191,6 +194,9 @@ export const createStopRecordingHandler = (deps) => {
         ? {
             sessionId: activeSessionRef.current.sessionId,
             outputMode: activeSessionRef.current.outputMode,
+            ...(activeSessionRef.current.processingMode
+              ? { processingMode: activeSessionRef.current.processingMode }
+              : {}),
             triggeredAt: activeSessionRef.current.triggeredAt,
             insertionTarget: activeSessionRef.current.insertionTarget,
           }
@@ -295,6 +301,7 @@ export const createStopRecordingHandler = (deps) => {
       source: stopSource,
       sessionId: session?.sessionId,
       outputMode: session?.outputMode,
+      ...(session?.processingMode ? { processingMode: session.processingMode } : {}),
     };
     const didStop =
       typeof audioManager.stopRecordingAndWaitForClose === "function"

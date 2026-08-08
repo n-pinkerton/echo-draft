@@ -18,7 +18,7 @@ vi.mock("../../utils/branding", () => ({
 
 import { createAudioManagerCallbacks } from "./audioManagerCallbacks";
 import { createStageUpdater } from "./stageUpdater";
-import { INITIAL_PROGRESS } from "./stages";
+import { DONE_STATUS_FADE_MS, DONE_STATUS_VISIBLE_MS, INITIAL_PROGRESS } from "./stages";
 
 describe("createAudioManagerCallbacks", () => {
   beforeEach(() => {
@@ -85,8 +85,42 @@ describe("createAudioManagerCallbacks", () => {
     callbacks.onProgress({ stage: "transcribing", recordingClosed: false });
     expect(playStopCue).not.toHaveBeenCalled();
 
-    callbacks.onProgress({ stage: "transcribing", recordingClosed: true });
+    callbacks.onProgress({ recordingClosed: true });
     expect(playStopCue).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat a cue-only recording-closed event as queue admission", () => {
+    const upsertJob = vi.fn();
+    const updateStage = vi.fn();
+    const setProgress = vi.fn();
+    const callbacks = createAudioManagerCallbacks({
+      activeSessionRef: { current: null },
+      audioManagerRef: { current: null },
+      jobsBySessionIdRef: { current: new Map() },
+      sessionsByIdRef: { current: new Map() },
+      recordingSessionIdRef: { current: null },
+      removeJob: vi.fn(),
+      setIsProcessing: vi.fn(),
+      setIsRecording: vi.fn(),
+      setIsStreaming: vi.fn(),
+      setPartialTranscript: vi.fn(),
+      setProgress,
+      toast: vi.fn(),
+      updateStage,
+      upsertJob,
+      onTranscriptionComplete: vi.fn(),
+      playErrorCue: vi.fn(),
+      playStopCue: vi.fn(),
+    });
+
+    callbacks.onProgress({
+      context: { sessionId: "closed-recording", outputMode: "insert" },
+      recordingClosed: true,
+    });
+
+    expect(upsertJob).not.toHaveBeenCalled();
+    expect(updateStage).not.toHaveBeenCalled();
+    expect(setProgress).not.toHaveBeenCalled();
   });
 
   it.each(["error", "cancelled"])(
@@ -247,12 +281,12 @@ describe("createAudioManagerCallbacks", () => {
       updateStage("done", { sessionId: "newer-job", stageLabel: "Done" });
       await vi.advanceTimersByTimeAsync(1500);
       jobsBySessionIdRef.current.delete("newer-job");
-      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(DONE_STATUS_VISIBLE_MS + DONE_STATUS_FADE_MS - 1501);
 
       expect(progress.stage).toBe("done");
       expect(resetProgress).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(1);
       expect(resetProgress).toHaveBeenCalledTimes(1);
       expect(progress.stage).toBe("idle");
     } finally {

@@ -120,4 +120,30 @@ describe("TrayManager recovery copy", () => {
       expect.objectContaining({ sessionId: "stacked-clipboard", outputMode: "clipboard" })
     );
   });
+
+  it("routes View Control Panel through the current-desktop window path", async () => {
+    const trayManager = new TrayManager();
+    const existingWindow = {
+      isDestroyed: vi.fn(() => false),
+      on: vi.fn(),
+      show: vi.fn(),
+      focus: vi.fn(),
+    };
+    const createControlPanelCallback = vi.fn(async () => undefined);
+
+    trayManager.setWindowManager({ controlPanelWindow: existingWindow });
+    trayManager.setWindows(null, existingWindow);
+    trayManager.setCreateControlPanelCallback(createControlPanelCallback);
+
+    const menuItem = trayManager
+      .buildContextMenuTemplate()
+      .find((item: any) => item.label === "View Control Panel");
+
+    expect(menuItem).toBeDefined();
+    await menuItem?.click();
+
+    expect(createControlPanelCallback).toHaveBeenCalledOnce();
+    expect(existingWindow.show).not.toHaveBeenCalled();
+    expect(existingWindow.focus).not.toHaveBeenCalled();
+  });
 });

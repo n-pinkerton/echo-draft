@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { INITIAL_PROGRESS } from "./stages";
+import { DONE_STATUS_FADE_MS, DONE_STATUS_VISIBLE_MS, INITIAL_PROGRESS } from "./stages";
 import { createStageUpdater } from "./stageUpdater";
 
 describe("createStageUpdater", () => {
@@ -88,7 +88,10 @@ describe("createStageUpdater", () => {
     updateStage("done", { sessionId: "s-1" });
     latestProgressRef.current = progress;
 
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(DONE_STATUS_VISIBLE_MS + DONE_STATUS_FADE_MS - 1);
+    expect(resetProgress).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
     expect(resetProgress).toHaveBeenCalledTimes(1);
 
     vi.useRealTimers();

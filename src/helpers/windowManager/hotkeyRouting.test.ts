@@ -69,6 +69,21 @@ describe("hotkeyRouting", () => {
     expect(manager.sendToggleDictation).not.toHaveBeenCalled();
   });
 
+  it("marks prompt-mode session payloads without changing their output route", () => {
+    expect(
+      createSessionPayload("insert", {
+        now: () => 123,
+        randomUUID: () => "uuid-prompt",
+        processingMode: "codex-prompt",
+      })
+    ).toEqual({
+      outputMode: "insert",
+      processingMode: "codex-prompt",
+      sessionId: "uuid-prompt",
+      triggeredAt: 123,
+    });
+  });
+
   it("blocks starts but always delivers explicit stops while shortcut capture is active", () => {
     const send = vi.fn();
     const manager: any = {
@@ -131,6 +146,58 @@ describe("hotkeyRouting", () => {
 
     expect(manager.sendToggleDictation).not.toHaveBeenCalled();
     expect(manager.createSessionPayload).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Alt prompt-mode shortcut on its distinct global route", () => {
+    setPlatform("win32");
+    const payload = {
+      outputMode: "insert",
+      processingMode: "codex-prompt",
+      sessionId: "prompt-1",
+      triggeredAt: 1000,
+    };
+    const manager: any = {
+      hotkeyManager: { isInListeningMode: () => false },
+      getActivationMode: () => "tap",
+      shouldUseWindowsNativeListener: () => true,
+      isWindowsNativeListenerReady: () => true,
+      sendToggleDictation: vi.fn(),
+      createSessionPayload: vi.fn(() => payload),
+    };
+
+    const callback = createHotkeyCallback(manager, "insert", () => "Alt+F10", {
+      processingMode: "codex-prompt",
+    });
+    callback();
+
+    expect(manager.createSessionPayload).toHaveBeenCalledWith("insert", "codex-prompt");
+    expect(manager.sendToggleDictation).toHaveBeenCalledWith(payload);
+  });
+
+  it("keeps prompt processing while using the clipboard delivery route", () => {
+    setPlatform("win32");
+    const manager: any = {
+      hotkeyManager: { isInListeningMode: () => false },
+      getActivationMode: () => "tap",
+      shouldUseWindowsNativeListener: () => true,
+      isWindowsNativeListenerReady: () => true,
+      sendToggleDictation: vi.fn(),
+      createSessionPayload: vi.fn(() => ({
+        outputMode: "clipboard",
+        processingMode: "codex-prompt",
+        sessionId: "prompt-clipboard",
+      })),
+    };
+
+    const callback = createHotkeyCallback(manager, "clipboard", () => "Alt+F9", {
+      processingMode: "codex-prompt",
+    });
+    callback();
+
+    expect(manager.createSessionPayload).toHaveBeenCalledWith("clipboard", "codex-prompt");
+    expect(manager.sendToggleDictation).toHaveBeenCalledWith(
+      expect.objectContaining({ outputMode: "clipboard", processingMode: "codex-prompt" })
+    );
   });
 
   it("uses the global toggle fallback in push mode while the native route is unavailable", () => {

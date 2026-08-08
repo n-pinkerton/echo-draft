@@ -30,6 +30,22 @@ describe("TranscriptionItem", () => {
     expect(screen.getByText("Finished text")).toBeInTheDocument();
   });
 
+  it("marks prompt-mode history entries with an accessible icon", () => {
+    render(
+      <TranscriptionItem
+        item={makeItem("Original raw text", { processingMode: "codex-prompt" }) as any}
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("img", { name: "Codex prompt" })).toBeInTheDocument();
+  });
+
   it.each([null, undefined, "   "])(
     "never substitutes finished text for an unavailable raw transcript (%s)",
     (rawText) => {

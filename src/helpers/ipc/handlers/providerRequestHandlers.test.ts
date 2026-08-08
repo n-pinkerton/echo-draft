@@ -8,6 +8,7 @@ import {
   createSenderBudget,
   registerProviderRequestHandlers,
   validateAudioLength,
+  validateCleanupOperation,
   validateCustomModelsEndpoint,
   validateProviderEndpoint,
 } from "./providerRequestHandlers.js";
@@ -92,6 +93,16 @@ const cleanupPayload = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const codexPromptCleanupOperation = (overrides: Record<string, unknown> = {}) =>
+  cleanupOperation({
+    model: "gpt-5.6-luna",
+    userPrompt:
+      '<echodraft_gpt56_luna_untrusted_dictation>\n"continue with that review"\n</echodraft_gpt56_luna_untrusted_dictation>',
+    cleanupPromptMode: "codex-prompt",
+    reasoningEffort: "max",
+    ...overrides,
+  });
+
 describe("providerRequestHandlers", () => {
   it("returns key presence only, never raw credentials", () => {
     const { handlers, controlSender } = createHarness();
@@ -140,6 +151,41 @@ describe("providerRequestHandlers", () => {
         "https://api.openai.com/v1/responses"
       )
     ).toBe("https://api.openai.com/v1/responses");
+  });
+
+  it("reserves Luna max effort for the fixed Codex prompt cleanup route", () => {
+    expect(
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        codexPromptCleanupOperation()
+      )
+    ).toMatchObject({
+      model: "gpt-5.6-luna",
+      cleanupPromptMode: "codex-prompt",
+      reasoningEffort: "max",
+    });
+    expect(() =>
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        codexPromptCleanupOperation({ model: "gpt-5.6-terra" })
+      )
+    ).toThrow(/official OpenAI Luna model/i);
+    expect(() =>
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        codexPromptCleanupOperation({ reasoningEffort: "medium" })
+      )
+    ).toThrow(/effort/i);
+    expect(() =>
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        cleanupOperation({ reasoningEffort: "max" })
+      )
+    ).toThrow(/effort/i);
   });
 
   it("injects credentials in main and uses Mistral's Bearer authorization contract", async () => {

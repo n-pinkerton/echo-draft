@@ -190,9 +190,7 @@ describe("createTranscriptionCompleteHandler", () => {
     const mobileInboxRequestBySessionIdRef = {
       current: new Map([[sessionId, requestId]]),
     };
-    const jobsBySessionId = new Map([
-      [sessionId, { jobId: 3, mobileInboxRequestId: requestId }],
-    ]);
+    const jobsBySessionId = new Map([[sessionId, { jobId: 3, mobileInboxRequestId: requestId }]]);
     const updateStage = vi.fn();
     const removeJob = vi.fn();
     const handler = createTranscriptionCompleteHandler({
@@ -276,6 +274,7 @@ describe("createTranscriptionCompleteHandler", () => {
 
     const normalizeTriggerPayload = (payload: any) => ({
       outputMode: payload?.outputMode === "clipboard" ? "clipboard" : "insert",
+      ...(payload?.processingMode === "codex-prompt" ? { processingMode: "codex-prompt" } : {}),
       sessionId: payload?.sessionId || "s-x",
       triggeredAt: 1,
       startedAt: null,
@@ -310,7 +309,12 @@ describe("createTranscriptionCompleteHandler", () => {
       title: "Greeting follow-up",
       source: "openai",
       timings: {},
-      context: { sessionId: "s-1", jobId: 1, outputMode: "clipboard" },
+      context: {
+        sessionId: "s-1",
+        jobId: 1,
+        outputMode: "clipboard",
+        processingMode: "codex-prompt",
+      },
     });
 
     expect(electronAPI.writeClipboard).toHaveBeenCalledWith("hello world");
@@ -327,6 +331,7 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(savePayload.meta).toMatchObject({
       sessionId: "s-1",
       outputMode: "clipboard",
+      processingMode: "codex-prompt",
       status: "success",
       provider: "openai",
       model: "gpt-4o-mini",

@@ -105,6 +105,11 @@ export function stopStreamingRecording(manager) {
 async function performStopStreamingRecording(manager, runtime = {}) {
   if (!manager.isStreaming) return false;
   const signal = runtime?.signal || null;
+  const isCodexPrompt = manager.streamingContext?.processingMode === "codex-prompt";
+  const processingRuntime = {
+    ...runtime,
+    ...(isCodexPrompt ? { processingMode: "codex-prompt" } : {}),
+  };
   throwIfTranscriptionCancelled(signal);
 
   const durationSeconds = manager.recordingStartTime
@@ -168,14 +173,18 @@ async function performStopStreamingRecording(manager, runtime = {}) {
     await raceWithAbort(
       Promise.race([
         flushWaiter.promise,
-        new Promise((resolve) => setTimeout(resolve, STREAMING_WORKLET_FLUSH_TIMEOUT_MS)),
+        new Promise((resolve) => {
+          setTimeout(resolve, STREAMING_WORKLET_FLUSH_TIMEOUT_MS);
+        }),
       ]),
       signal
     );
     manager.streamingWorklet.resolveFlushWaiter();
   }
   await raceWithAbort(
-    new Promise((resolve) => setTimeout(resolve, STREAMING_POST_FLUSH_GRACE_MS)),
+    new Promise((resolve) => {
+      setTimeout(resolve, STREAMING_POST_FLUSH_GRACE_MS);
+    }),
     signal
   );
   manager.streamingAudioForwarding = false;
@@ -298,7 +307,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
   let cleanup = null;
   let title = null;
 
-  const useReasoningModel = localStorage.getItem("useReasoningModel") === "true";
+  const useReasoningModel = isCodexPrompt || localStorage.getItem("useReasoningModel") === "true";
   if (useReasoningModel && finalText) {
     manager.emitProgress({
       stage: "cleaning",
@@ -311,7 +320,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
     let attemptedManagedCleanupModel = null;
 
     try {
-      if (isEchoDraftCloudMode(cloudReasoningMode)) {
+      if (!isCodexPrompt && isEchoDraftCloudMode(cloudReasoningMode)) {
         const reasonResult = await manager.withSessionRefresh(
           async () => {
             const res = await invokeCancelableIpc(signal, (requestId) =>
@@ -384,7 +393,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
             rawText,
             "assemblyai-streaming",
             null,
-            runtime
+            processingRuntime
           );
           finalText = result.text || rawText;
           cleanup = result.cleanup;
@@ -396,14 +405,14 @@ async function performStopStreamingRecording(manager, runtime = {}) {
                   rawText,
                   reasoningModel,
                   null,
-                  runtime
+                  processingRuntime
                 )
               : {
                   text: await manager.reasoningCleanupService.processWithReasoningModel(
                     rawText,
                     reasoningModel,
                     null,
-                    runtime
+                    processingRuntime
                   ),
                   retryCount: 0,
                   assessment: { metrics: {} },
@@ -448,7 +457,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
       }
       finalText = rawText;
       title = null;
-      const managedCleanup = isEchoDraftCloudMode(cloudReasoningMode);
+      const managedCleanup = !isCodexPrompt && isEchoDraftCloudMode(cloudReasoningMode);
       cleanup = {
         requested: true,
         attempted: true,
@@ -460,16 +469,20 @@ async function performStopStreamingRecording(manager, runtime = {}) {
             : "provider_error",
         model: managedCleanup
           ? attemptedManagedCleanupModel
-          : localStorage.getItem("reasoningModel") || null,
+          : isCodexPrompt
+            ? "gpt-5.6-luna"
+            : localStorage.getItem("reasoningModel") || null,
         appliedModel: null,
-        modelSource: managedCleanup ? "managed" : "selected",
+        modelSource: managedCleanup ? "managed" : isCodexPrompt ? "prompt-mode" : "selected",
         provider: managedCleanup
           ? ECHO_DRAFT_CLOUD_SOURCE
-          : localStorage.getItem("reasoningProvider") || "auto",
+          : isCodexPrompt
+            ? "openai"
+            : localStorage.getItem("reasoningProvider") || "auto",
         retryCount: managedCleanup
           ? 0
           : Number(reasonError?.cleanupRetryCount) ||
-            (reasonError?.code === "CLEANUP_FIDELITY_REJECTED" ? 1 : 0),
+            (reasonError?.code === "CLEANUP_FIDELITY_REJECTED" && !isCodexPrompt ? 1 : 0),
         ...(reasonError?.assessment?.metrics ? { metrics: reasonError.assessment.metrics } : {}),
       };
       logger.error(

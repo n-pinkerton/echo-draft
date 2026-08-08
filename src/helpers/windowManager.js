@@ -26,6 +26,7 @@ const {
   sendToggleDictation: sendToggleDictationImpl,
   startMacCompoundPushToTalk: startMacCompoundPushToTalkImpl,
 } = require("./windowManager/hotkeyRouting");
+const { derivePromptHotkey } = require("./windowManager/promptHotkey");
 const {
   initializeClipboardHotkey: initializeClipboardHotkeyImpl,
   persistClipboardHotkey: persistClipboardHotkeyImpl,
@@ -68,6 +69,7 @@ class WindowManager {
     this._cachedActivationMode = "tap";
     this.currentClipboardHotkey = DEFAULT_CLIPBOARD_HOTKEY;
     this.registeredClipboardAccelerator = null;
+    this.registeredPromptAccelerators = new Map();
     this.controlPanelShortcutStatus = {
       accelerator: CONTROL_PANEL_ACCELERATOR,
       registered: false,
@@ -223,11 +225,12 @@ class WindowManager {
     await this.loadWindowContent(this.mainWindow, false);
   }
 
-  createSessionPayload(outputMode = "insert") {
-    const payload = createSessionPayloadImpl(outputMode);
+  createSessionPayload(outputMode = "insert", processingMode = null) {
+    const payload = createSessionPayloadImpl(outputMode, { processingMode });
     this._purgeExpiredDictationSessions();
     this.issuedDictationSessions.set(payload.sessionId, {
       outputMode: payload.outputMode,
+      processingMode: payload.processingMode || null,
       expiresAt: Date.now() + ISSUED_SESSION_TTL_MS,
       insertionTargetClaimed: false,
       debugAudioClaimed: false,
@@ -286,8 +289,11 @@ class WindowManager {
     sendToggleDictationImpl(this, payload, { logger: debugLogger });
   }
 
-  createHotkeyCallback(outputMode = "insert", hotkeyResolver = null) {
-    return createHotkeyCallbackImpl(this, outputMode, hotkeyResolver, { logger: debugLogger });
+  createHotkeyCallback(outputMode = "insert", hotkeyResolver = null, processingMode = null) {
+    return createHotkeyCallbackImpl(this, outputMode, hotkeyResolver, {
+      logger: debugLogger,
+      processingMode,
+    });
   }
 
   startMacCompoundPushToTalk(hotkey, outputMode = "insert") {
@@ -324,6 +330,9 @@ class WindowManager {
 
   setActivationModeCache(mode) {
     this._cachedActivationMode = mode === "push" ? "push" : "tap";
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.registerPromptHotkeys();
+    }
   }
 
   setHotkeyListeningMode(enabled) {
@@ -341,8 +350,78 @@ class WindowManager {
   async initializeHotkey() {
     await this.hotkeyManager.initializeHotkey(
       this.mainWindow,
-      this.createHotkeyCallback("insert", () => this.hotkeyManager.getCurrentHotkey?.())
+      this.createHotkeyCallback("insert", () => this.hotkeyManager.getCurrentHotkey?.()),
+      () => this.registerPromptHotkeys()
     );
+  }
+
+  getPromptHotkey(outputMode = "insert") {
+    if (process.platform !== "win32" || this.getActivationMode() !== "tap") return null;
+    const baseHotkey =
+      outputMode === "clipboard"
+        ? this.currentClipboardHotkey
+        : this.hotkeyManager.getCurrentHotkey?.();
+    return derivePromptHotkey(baseHotkey);
+  }
+
+  unregisterPromptHotkeys(shortcutApi = globalShortcut) {
+    for (const hotkey of this.registeredPromptAccelerators.values()) {
+      try {
+        shortcutApi.unregister(hotkey);
+      } catch (error) {
+        debugLogger.warn("Could not unregister a prompt-mode hotkey", {
+          hotkey,
+          error: error?.message || String(error),
+        });
+      }
+    }
+    this.registeredPromptAccelerators.clear();
+  }
+
+  registerPromptHotkeys(shortcutApi = globalShortcut) {
+    this.unregisterPromptHotkeys(shortcutApi);
+    const results = {};
+    for (const outputMode of ["insert", "clipboard"]) {
+      const hotkey = this.getPromptHotkey(outputMode);
+      if (!hotkey) {
+        results[outputMode] = { success: false, unavailable: true };
+        continue;
+      }
+      const otherBaseHotkey =
+        outputMode === "insert"
+          ? this.currentClipboardHotkey
+          : this.hotkeyManager.getCurrentHotkey?.();
+      if (hotkey === otherBaseHotkey) {
+        results[outputMode] = { success: false, conflict: "base-hotkey", hotkey };
+        continue;
+      }
+
+      try {
+        const registered = shortcutApi.register(
+          hotkey,
+          this.createHotkeyCallback(outputMode, () => hotkey, "codex-prompt")
+        );
+        if (!registered) {
+          debugLogger.warn("Prompt-mode hotkey registration failed", { hotkey, outputMode });
+          results[outputMode] = { success: false, hotkey };
+          continue;
+        }
+        this.registeredPromptAccelerators.set(outputMode, hotkey);
+        results[outputMode] = { success: true, hotkey };
+      } catch (error) {
+        debugLogger.warn("Prompt-mode hotkey registration failed", {
+          hotkey,
+          outputMode,
+          error: error?.message || String(error),
+        });
+        results[outputMode] = { success: false, hotkey };
+      }
+    }
+    return results;
+  }
+
+  async initializePromptHotkeys() {
+    return this.registerPromptHotkeys();
   }
 
   async updateHotkey(hotkey) {
@@ -352,7 +431,14 @@ class WindowManager {
         message: "Insert and Clipboard hotkeys must be different.",
       };
     }
+    if (hotkey && hotkey === this.getPromptHotkey("clipboard")) {
+      return {
+        success: false,
+        message: "The Insert hotkey conflicts with the Alt prompt-mode clipboard shortcut.",
+      };
+    }
 
+    this.unregisterPromptHotkeys();
     const result = await this.hotkeyManager.updateHotkey(
       hotkey,
       this.createHotkeyCallback("insert", () => this.hotkeyManager.getCurrentHotkey?.())
@@ -361,6 +447,8 @@ class WindowManager {
     if (result?.success && this.currentClipboardHotkey) {
       this.registerClipboardHotkeyInternal(this.currentClipboardHotkey);
     }
+
+    this.registerPromptHotkeys();
 
     return result;
   }
@@ -416,7 +504,16 @@ class WindowManager {
   }
 
   async updateClipboardHotkey(hotkey) {
-    return updateClipboardHotkeyImpl(this, hotkey, { globalShortcut });
+    if (hotkey && hotkey === this.getPromptHotkey("insert")) {
+      return {
+        success: false,
+        message: "The Clipboard hotkey conflicts with the Alt prompt-mode shortcut.",
+      };
+    }
+    this.unregisterPromptHotkeys();
+    const result = await updateClipboardHotkeyImpl(this, hotkey, { globalShortcut });
+    this.registerPromptHotkeys();
+    return result;
   }
 
   async recoverHotkeys() {
@@ -446,7 +543,8 @@ class WindowManager {
       : this.currentClipboardHotkey
         ? this.registerClipboardHotkeyInternal(this.currentClipboardHotkey)
         : { success: false, message: "No clipboard hotkey configured." };
-    return { insert, clipboard };
+    const prompt = this.registerPromptHotkeys();
+    return { insert, clipboard, prompt };
   }
 
   isUsingGnomeHotkeys() {

@@ -2,6 +2,7 @@ import "./windowElectron";
 
 export type LocalTranscriptionProvider = "whisper" | "nvidia";
 export type DictationOutputMode = "insert" | "clipboard" | "file";
+export type DictationProcessingMode = "codex-prompt";
 
 export interface TranscriptionTimings {
   recordDurationMs?: number;
@@ -21,7 +22,7 @@ export interface CleanupOutcome {
   fallbackReason?: string | null;
   model?: string | null;
   appliedModel?: string | null;
-  modelSource?: "selected" | "managed";
+  modelSource?: "selected" | "managed" | "prompt-mode";
   provider?: string | null;
   retryCount?: number;
   retryDriftRecovered?: boolean;
@@ -35,6 +36,7 @@ export interface CleanupOutcome {
 export interface TranscriptionMeta {
   sessionId?: string;
   outputMode?: DictationOutputMode;
+  processingMode?: DictationProcessingMode;
   status?: "success" | "error" | "cancelled" | string;
   source?: string;
   provider?: string;
@@ -56,6 +58,7 @@ export interface TranscriptionMeta {
 
 export interface DictationTriggerPayload {
   outputMode?: DictationOutputMode;
+  processingMode?: DictationProcessingMode;
   sessionId?: string;
   triggeredAt?: number;
   insertionTarget?: InsertionTargetSnapshot | null;
@@ -83,6 +86,7 @@ export interface TodoItem {
   raw_text?: string | null;
   created_at: string;
   title?: string | null;
+  processingMode?: DictationProcessingMode;
 }
 
 export interface DictionaryImportResult {

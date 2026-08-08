@@ -58,6 +58,7 @@ async function setHotkeyCaptureMode(
       ...safetyPayload,
       forcedStopReason: "hotkey-capture",
     });
+    windowManager.unregisterPromptHotkeys?.();
 
     if (platform === "win32") {
       const controller = windowManager.getWindowsHotkeyController?.();

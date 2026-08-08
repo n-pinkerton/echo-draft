@@ -63,6 +63,7 @@ class RecorderService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> beginStart()
+            ACTION_START_PROMPT -> beginStart(MobileInboxProtocol.ProcessingMode.CODEX_PROMPT)
             ACTION_STOP -> beginStop()
             ACTION_RETRY -> beginRetry()
             else -> stopSelf(startId)
@@ -73,7 +74,7 @@ class RecorderService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     @Synchronized
-    private fun beginStart() {
+    private fun beginStart(processingMode: MobileInboxProtocol.ProcessingMode? = null) {
         if (phase != AppPreferences.Phase.IDLE && phase != AppPreferences.Phase.ERROR) return
         val operation = operationFence.begin()
         activeOperation = operation
@@ -98,7 +99,7 @@ class RecorderService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
         )
         updateState(phase, getString(R.string.notification_starting))
-        executor.execute { startRecording(operation) }
+        executor.execute { startRecording(operation, processingMode) }
     }
 
     @Synchronized
@@ -137,7 +138,10 @@ class RecorderService : Service() {
         executor.execute { publishPending(operation, currentMemoId = null) }
     }
 
-    private fun startRecording(operation: Long) {
+    private fun startRecording(
+        operation: Long,
+        processingMode: MobileInboxProtocol.ProcessingMode? = null,
+    ) {
         if (!operationFence.isCurrent(operation)) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             fail(
@@ -156,7 +160,9 @@ class RecorderService : Service() {
             return
         }
 
-        val newSession = runCatching { pendingStore.createSession() }.getOrElse { error ->
+        val newSession = runCatching {
+            pendingStore.createSession(processingMode = processingMode)
+        }.getOrElse { error ->
             fail(
                 operation,
                 MobileDiagnosticEvents.RECORDING_STORAGE_FAILED,
@@ -465,6 +471,7 @@ class RecorderService : Service() {
 
     companion object {
         const val ACTION_START = "com.echodraft.mobile.action.START"
+        const val ACTION_START_PROMPT = "com.echodraft.mobile.action.START_PROMPT"
         const val ACTION_STOP = "com.echodraft.mobile.action.STOP"
         const val ACTION_RETRY = "com.echodraft.mobile.action.RETRY"
 
@@ -479,9 +486,17 @@ class RecorderService : Service() {
         var isRunning: Boolean = false
             private set
 
-        fun requestStart(context: Context) {
+        fun requestStart(
+            context: Context,
+            processingMode: MobileInboxProtocol.ProcessingMode? = null,
+        ) {
+            val action = if (processingMode == MobileInboxProtocol.ProcessingMode.CODEX_PROMPT) {
+                ACTION_START_PROMPT
+            } else {
+                ACTION_START
+            }
             context.startForegroundService(
-                Intent(context, RecorderService::class.java).setAction(ACTION_START),
+                Intent(context, RecorderService::class.java).setAction(action),
             )
         }
 

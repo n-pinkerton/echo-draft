@@ -349,6 +349,92 @@ describe("AudioManager.stopStreamingRecording", () => {
     manager.cleanup();
   });
 
+  it("routes prompt-mode streaming text through BYOK cleanup even when regular cleanup is off", async () => {
+    vi.useFakeTimers();
+    const cloudReason = vi.fn();
+    (window as any).electronAPI = {
+      assemblyAiStreamingSend: vi.fn(),
+      assemblyAiStreamingForceEndpoint: vi.fn(),
+      assemblyAiStreamingStop: vi.fn(async () => ({
+        success: true,
+        text: "",
+        terminationConfirmed: true,
+      })),
+      cloudReason,
+    };
+
+    localStorage.setItem("useLocalWhisper", "true");
+    localStorage.setItem("useReasoningModel", "false");
+    localStorage.setItem("cloudReasoningMode", "echodraft");
+    const processTranscriptionWithOutcome = vi.fn(async () => ({
+      text: "Continue with that review.",
+      cleanup: {
+        requested: true,
+        attempted: true,
+        applied: true,
+        status: "applied",
+        model: "gpt-5.6-luna",
+        appliedModel: "gpt-5.6-luna",
+        modelSource: "prompt-mode",
+        provider: "openai",
+        retryCount: 0,
+      },
+    }));
+
+    const manager = new AudioManager();
+    (manager as any).reasoningCleanupService = { processTranscriptionWithOutcome };
+    const onTranscriptionComplete = vi.fn();
+    manager.setCallbacks({
+      onStateChange: vi.fn(),
+      onError: vi.fn(),
+      onTranscriptionComplete,
+      onPartialTranscript: vi.fn(),
+      onProgress: vi.fn(),
+    });
+    manager.isStreaming = true;
+    manager.isRecording = true;
+    (manager as any).streamingAudioForwarding = true;
+    manager.streamingFinalText = "continue with that review";
+    manager.streamingContext = {
+      sessionId: "prompt-stream",
+      jobId: 9,
+      outputMode: "clipboard",
+      processingMode: "codex-prompt",
+    } as any;
+
+    const port = { onmessage: null as null | ((event: any) => void), postMessage: vi.fn() };
+    manager.streamingProcessor = { port, disconnect: vi.fn() } as any;
+    manager.streamingSource = { disconnect: vi.fn() } as any;
+    manager.streamingStream = { getTracks: () => [{ stop: vi.fn() }] } as any;
+    port.onmessage = (event: any) => manager.streamingWorklet.handleMessage(event);
+    setTimeout(
+      () => port.onmessage?.({ data: (manager as any).STREAMING_WORKLET_FLUSH_DONE_MESSAGE }),
+      0
+    );
+
+    const stopPromise = manager.stopStreamingRecording();
+    await vi.runAllTimersAsync();
+    await expect(stopPromise).resolves.toBe(true);
+
+    expect(cloudReason).not.toHaveBeenCalled();
+    expect(processTranscriptionWithOutcome).toHaveBeenCalledWith(
+      "continue with that review",
+      "assemblyai-streaming",
+      null,
+      expect.objectContaining({ processingMode: "codex-prompt" })
+    );
+    expect(onTranscriptionComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Continue with that review.",
+        rawText: "continue with that review",
+        cleanup: expect.objectContaining({ modelSource: "prompt-mode" }),
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+
+    manager.cleanup();
+  });
+
   it("records one managed cleanup attempt when streaming fidelity validation rejects it", async () => {
     vi.useFakeTimers();
 

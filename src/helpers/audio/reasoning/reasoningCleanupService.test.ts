@@ -75,6 +75,71 @@ describe("ReasoningCleanupService", () => {
     expect(reasoningService.processText).toHaveBeenCalledTimes(1);
   });
 
+  it("forces Codex prompt mode through OpenAI Luna at max effort", async () => {
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => "Continue with the same review and keep the current scope."),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+    localStorage.setItem("reasoningModel", "gpt-5.6-terra");
+    localStorage.setItem("reasoningProvider", "custom");
+    localStorage.setItem("useReasoningModel", "false");
+
+    const result = await svc.processTranscriptionWithOutcome(
+      "continue with the same review and keep the current scope",
+      "openai",
+      false,
+      { processingMode: "codex-prompt" }
+    );
+
+    expect(reasoningService.isAvailable).toHaveBeenCalledWith("openai");
+    expect(reasoningService.processText).toHaveBeenCalledWith(
+      "continue with the same review and keep the current scope",
+      "gpt-5.6-luna",
+      null,
+      {
+        cleanupPromptMode: "codex-prompt",
+        reasoningEffort: "max",
+      }
+    );
+    expect(result.cleanup).toMatchObject({
+      requested: true,
+      model: "gpt-5.6-luna",
+      modelSource: "prompt-mode",
+      provider: "openai",
+      retryCount: 0,
+    });
+  });
+
+  it("keeps raw prompt dictation instead of running the normal fidelity repair", async () => {
+    const original = "Review this change and do not expand the scope.";
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => "I reviewed it and everything looks good."),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    const result = await svc.processTranscriptionWithOutcome(original, "openai", false, {
+      processingMode: "codex-prompt",
+    });
+
+    expect(reasoningService.processText).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      text: original,
+      cleanup: {
+        status: "fallback",
+        fallbackReason: "fidelity_rejected",
+        retryCount: 0,
+      },
+    });
+  });
+
   it("preserves literal Title and Text labels when plain cleanup output has no contract", async () => {
     const cleaned = "Title: Quarterly note\nText: Keep every detail.";
     const reasoningService = {
@@ -112,11 +177,7 @@ describe("ReasoningCleanupService", () => {
     localStorage.setItem("reasoningProvider", "openai");
     localStorage.setItem("useReasoningModel", "true");
 
-    const result = await svc.processTranscriptionWithOutcome(
-      "Keep every detail.",
-      "openai",
-      null
-    );
+    const result = await svc.processTranscriptionWithOutcome("Keep every detail.", "openai", null);
 
     expect(result).toMatchObject({
       text: "Keep every detail.",

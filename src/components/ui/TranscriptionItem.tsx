@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "./button";
-import { Copy, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import { Copy, Trash2, ChevronDown, ChevronUp, SquareTerminal } from "lucide-react";
 import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
 import { getReasoningModelLabel } from "../../models/ModelRegistry";
 import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
@@ -156,9 +156,11 @@ export default function TranscriptionItem({
   const cleanupModelLabel =
     cleanup?.modelSource === "managed"
       ? "Managed model"
-      : cleanup?.modelSource === "selected"
-        ? "Selected"
-        : "Model";
+      : cleanup?.modelSource === "prompt-mode"
+        ? "Prompt mode"
+        : cleanup?.modelSource === "selected"
+          ? "Selected"
+          : "Model";
   const cleanupRetryAccepted = Boolean(
     !cleanupFallback && !cleanupRetryDriftRecovered && cleanupRetryCount > 0 && cleanupAppliedModel
   );
@@ -326,6 +328,16 @@ export default function TranscriptionItem({
             <span className="inline-flex items-center rounded-sm px-1.5 py-px text-[10px] font-medium bg-primary/10 text-primary">
               {outputModeLabel}
             </span>
+            {meta.processingMode === "codex-prompt" ? (
+              <span
+                role="img"
+                aria-label="Codex prompt"
+                title="Codex prompt"
+                className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-violet-500/10 text-violet-600 dark:text-violet-300"
+              >
+                <SquareTerminal size={11} aria-hidden="true" />
+              </span>
+            ) : null}
             <span
               className={cn(
                 "inline-flex items-center rounded-sm px-1.5 py-px text-[10px] font-medium",

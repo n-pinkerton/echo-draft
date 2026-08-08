@@ -1,10 +1,7 @@
 import { getBaseLanguageCode, validateLanguageForModel } from "../../../utils/languageSupport";
 import { invokeCancelableIpc } from "../../../utils/cancelableIpc";
 import { getCustomDictionaryArray } from "./customDictionary";
-import {
-  areTranscriptionsEquivalent,
-  classifyDictionaryPromptEcho,
-} from "./dictionaryPromptEcho";
+import { areTranscriptionsEquivalent, classifyDictionaryPromptEcho } from "./dictionaryPromptEcho";
 import {
   createTranscriptionCancelledError,
   isTranscriptionCancelled,
@@ -43,7 +40,7 @@ export class LocalTranscriber {
   async applyReasoningCleanup(rawText, source, runtime = {}) {
     const cleanupEnabledOverride = this.getCleanupEnabledOverride?.() ?? null;
     if (typeof this.reasoningCleanupService?.processTranscriptionWithOutcome === "function") {
-      return await this.reasoningCleanupService.processTranscriptionWithOutcome(
+      return this.reasoningCleanupService.processTranscriptionWithOutcome(
         rawText,
         source,
         cleanupEnabledOverride,
@@ -105,11 +102,7 @@ export class LocalTranscriber {
           const confirmationOptions = { model };
           if (language) confirmationOptions.language = language;
           const confirmation = await invokeCancelableIpc(signal, (requestId) =>
-            window.electronAPI.transcribeLocalWhisper(
-              arrayBuffer,
-              confirmationOptions,
-              requestId
-            )
+            window.electronAPI.transcribeLocalWhisper(arrayBuffer, confirmationOptions, requestId)
           );
           throwIfTranscriptionCancelled(signal);
           if (
@@ -136,7 +129,7 @@ export class LocalTranscriber {
         let cleanup = null;
         let title = null;
 
-        if (this.shouldApplyReasoningCleanup?.()) {
+        if (runtime?.processingMode === "codex-prompt" || this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
           const reasoningStart = performance.now();
           try {
@@ -261,7 +254,7 @@ export class LocalTranscriber {
         let cleanup = null;
         let title = null;
 
-        if (this.shouldApplyReasoningCleanup?.()) {
+        if (runtime?.processingMode === "codex-prompt" || this.shouldApplyReasoningCleanup?.()) {
           this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
           const reasoningStart = performance.now();
           try {

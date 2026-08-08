@@ -48,4 +48,13 @@ describe("normalizeTriggerPayload", () => {
     expect(result.stopReason).toBeNull();
     expect(result.stopSource).toBeNull();
   });
+
+  it("accepts only the Codex prompt processing marker", () => {
+    expect(
+      normalizeTriggerPayload({ processingMode: "codex-prompt" }, { createSessionId: () => "s" })
+    ).toMatchObject({ processingMode: "codex-prompt" });
+    expect(
+      normalizeTriggerPayload({ processingMode: "future-mode" }, { createSessionId: () => "s" })
+    ).not.toHaveProperty("processingMode");
+  });
 });

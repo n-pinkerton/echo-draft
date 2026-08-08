@@ -30,8 +30,7 @@ function normalizeMobileInboxManifest(value, manifestFileName) {
     throw new Error("Mobile inbox audio filename does not match its external ID");
   }
 
-  const audioSha256 =
-    typeof value.audioSha256 === "string" ? value.audioSha256.toLowerCase() : "";
+  const audioSha256 = typeof value.audioSha256 === "string" ? value.audioSha256.toLowerCase() : "";
   if (!SHA256_PATTERN.test(audioSha256)) {
     throw new Error("Invalid mobile inbox audio hash");
   }
@@ -47,6 +46,10 @@ function normalizeMobileInboxManifest(value, manifestFileName) {
     throw new Error("Invalid mobile inbox timestamp");
   }
 
+  if (value.processingMode !== undefined && value.processingMode !== "codex-prompt") {
+    throw new Error("Invalid mobile inbox processing mode");
+  }
+
   return {
     version: MOBILE_INBOX_PROTOCOL_VERSION,
     externalId,
@@ -55,6 +58,7 @@ function normalizeMobileInboxManifest(value, manifestFileName) {
     sizeBytes,
     createdAt: new Date(createdAtMs).toISOString(),
     mimeType: MOBILE_AUDIO_MIME_TYPE,
+    ...(value.processingMode === "codex-prompt" ? { processingMode: "codex-prompt" } : {}),
   };
 }
 

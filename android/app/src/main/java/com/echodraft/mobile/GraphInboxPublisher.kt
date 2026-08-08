@@ -16,6 +16,7 @@ class GraphInboxPublisher(
             audioSha256 = MobileInboxProtocol.sha256(source),
             sizeBytes = source.length(),
             createdAt = recording.createdAt,
+            processingMode = recording.processingMode,
         )
         val manifestBytes = manifest.toJson().toByteArray(Charsets.UTF_8)
         check(manifestBytes.size <= MobileInboxProtocol.MAX_MANIFEST_BYTES) {

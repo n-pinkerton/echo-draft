@@ -19,7 +19,7 @@ export interface CleanupReasoningIpcOptions {
   temperature?: number;
   contextSize?: number;
   cleanupPromptMode?: CleanupPromptMode;
-  reasoningEffort?: "none" | "low" | "medium";
+  reasoningEffort?: "none" | "low" | "medium" | "max";
   language?: string;
   dictionaryEntries?: string[];
 }

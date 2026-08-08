@@ -42,7 +42,15 @@ export class TranscriptionPipeline {
   async processAudio(audioBlob, metadata = {}, context = null, runtime = {}) {
     const pipelineStart = performance.now();
     let audioLevel = null;
-    const signal = runtime?.signal || null;
+    const processingMode =
+      context?.processingMode === "codex-prompt" || runtime?.processingMode === "codex-prompt"
+        ? "codex-prompt"
+        : null;
+    const processingRuntime = {
+      ...runtime,
+      ...(processingMode ? { processingMode } : {}),
+    };
+    const signal = processingRuntime.signal || null;
 
     try {
       throwIfTranscriptionCancelled(signal);
@@ -83,7 +91,7 @@ export class TranscriptionPipeline {
             audioBlob,
             parakeetModel,
             metadata,
-            { signal }
+            processingRuntime
           );
         } else {
           this.emitProgress({
@@ -98,7 +106,7 @@ export class TranscriptionPipeline {
             audioBlob,
             whisperModel,
             metadata,
-            { signal }
+            processingRuntime
           );
         }
       } else if (useCloud) {
@@ -110,9 +118,11 @@ export class TranscriptionPipeline {
           canCancel: true,
         });
         activeModel = ECHO_DRAFT_CLOUD_MODEL;
-        result = await this.cloudTranscriber.processWithEchoDraftCloud(audioBlob, metadata, {
-          signal,
-        });
+        result = await this.cloudTranscriber.processWithEchoDraftCloud(
+          audioBlob,
+          metadata,
+          processingRuntime
+        );
       } else {
         activeModel = this.openAiTranscriber.getTranscriptionModel();
         this.emitProgress({
@@ -122,7 +132,11 @@ export class TranscriptionPipeline {
           model: activeModel,
           canCancel: true,
         });
-        result = await this.openAiTranscriber.processWithOpenAIAPI(audioBlob, metadata, { signal });
+        result = await this.openAiTranscriber.processWithOpenAIAPI(
+          audioBlob,
+          metadata,
+          processingRuntime
+        );
       }
 
       throwIfTranscriptionCancelled(signal);

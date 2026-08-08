@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import "./index.css";
 import { useToast } from "./components/ui/toastContext";
 import { useAudioRecording } from "./hooks/useAudioRecording";
@@ -8,6 +8,7 @@ import RecordingIndicator from "./components/ui/RecordingIndicator";
 import DictationStatusIndicator from "./components/ui/DictationStatusIndicator";
 import { DICTATION_FEEDBACK_STORAGE_KEYS } from "./utils/dictationCues";
 import { useWindowsPushToTalkStatus } from "./hooks/useWindowsPushToTalkStatus";
+import { DONE_STATUS_FADE_MS, DONE_STATUS_VISIBLE_MS } from "./hooks/audioRecording/stages";
 
 const serializeBoolean = (value) => String(value);
 const deserializeBoolean = (value) => value !== "false";
@@ -25,6 +26,7 @@ export default function App() {
     true,
     { serialize: serializeBoolean, deserialize: deserializeBoolean }
   );
+  const [doneVisibility, setDoneVisibility] = useState("visible");
 
   useLayoutEffect(() => {
     // Keep the transparent surface in place while the final hide IPC crosses
@@ -143,8 +145,34 @@ export default function App() {
   }, [trayStatus]);
 
   const isListening = progress?.stage === "listening";
+  const isDone = progress?.stage === "done";
+  useEffect(() => {
+    if (!isDone) {
+      setDoneVisibility("visible");
+      return undefined;
+    }
+
+    setDoneVisibility("visible");
+    let hideTimer;
+    const fadeTimer = window.setTimeout(() => {
+      setDoneVisibility("fading");
+      hideTimer = window.setTimeout(() => {
+        setDoneVisibility("hidden");
+      }, DONE_STATUS_FADE_MS);
+    }, DONE_STATUS_VISIBLE_MS);
+
+    return () => {
+      window.clearTimeout(fadeTimer);
+      if (hideTimer) window.clearTimeout(hideTimer);
+    };
+  }, [isDone, progress?.sessionId]);
+
   const shouldShowRecordingIndicator = recordingIndicatorEnabled && isListening;
-  const shouldShowProcessingStatus = !isListening && progress?.stage && progress.stage !== "idle";
+  const shouldShowProcessingStatus =
+    !isListening &&
+    progress?.stage &&
+    progress.stage !== "idle" &&
+    !(isDone && doneVisibility === "hidden");
   const shouldShowDictationStatus =
     shouldShowRecordingIndicator || Boolean(shouldShowProcessingStatus);
   const processingAnnouncement = shouldShowProcessingStatus
@@ -207,6 +235,7 @@ export default function App() {
           isSlow={progress?.isSlow === true}
           queuedWaitingCount={queuedWaitingCount}
           outputMode={progress?.outputMode}
+          isExiting={isDone && doneVisibility === "fading"}
         />
       ) : null}
     </>

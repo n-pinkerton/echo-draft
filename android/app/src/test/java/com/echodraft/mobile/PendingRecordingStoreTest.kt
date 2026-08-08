@@ -43,6 +43,27 @@ class PendingRecordingStoreTest {
     }
 
     @Test
+    fun `prompt mode survives finalization and retry queue discovery`() {
+        val root = Files.createTempDirectory("echodraft-prompt-pending").toFile()
+        val createdAt = Instant.parse("2026-07-18T01:02:03Z")
+        val store = PendingRecordingStore(root, Clock.fixed(createdAt, ZoneOffset.UTC))
+        val id = UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
+        val session = store.createSession(
+            id,
+            MobileInboxProtocol.ProcessingMode.CODEX_PROMPT,
+        )
+        session.temporaryFile.writeBytes(byteArrayOf(1, 2, 3))
+
+        val ready = store.finalize(session)
+        val rediscovered = PendingRecordingStore(root).listReady().single()
+
+        assertEquals("$id.codex-prompt.m4a", ready.file.name)
+        assertEquals(MobileInboxProtocol.ProcessingMode.CODEX_PROMPT, ready.processingMode)
+        assertEquals(MobileInboxProtocol.ProcessingMode.CODEX_PROMPT, rediscovered.processingMode)
+        assertEquals(id, rediscovered.externalId)
+    }
+
+    @Test
     fun `failed limit recording is retained outside the upload queue`() {
         val root = Files.createTempDirectory("echodraft-recovery").toFile()
         val createdAt = Instant.parse("2026-07-18T01:02:03Z")

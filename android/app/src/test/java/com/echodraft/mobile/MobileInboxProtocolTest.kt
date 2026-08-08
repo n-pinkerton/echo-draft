@@ -2,6 +2,7 @@ package com.echodraft.mobile
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -29,6 +30,19 @@ class MobileInboxProtocolTest {
                 "\"createdAt\":\"2026-07-18T01:02:03Z\",\"mimeType\":\"audio/mp4\"}",
             manifest.toJson(),
         )
+    }
+
+    @Test
+    fun `prompt manifest adds the optional processing mode`() {
+        val manifest = MobileInboxProtocol.Manifest(
+            externalId = id,
+            audioSha256 = "ab".repeat(32),
+            sizeBytes = 123,
+            createdAt = Instant.parse("2026-07-18T01:02:03Z"),
+            processingMode = MobileInboxProtocol.ProcessingMode.CODEX_PROMPT,
+        )
+
+        assertTrue(manifest.toJson().contains("\"processingMode\":\"codex-prompt\""))
     }
 
     @Test

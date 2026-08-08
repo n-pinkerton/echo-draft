@@ -53,6 +53,7 @@ function createMainWindow() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.resetModules();
   Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
@@ -61,6 +62,21 @@ afterEach(() => {
 });
 
 describe("HotkeyManager reserved shortcut migration", () => {
+  it("notifies after the delayed Windows hotkey has been resolved", async () => {
+    vi.useFakeTimers();
+    const { manager } = await createManager("win32");
+    const mainWindow = createMainWindow();
+    const onHotkeyResolved = vi.fn();
+    process.env.DICTATION_KEY = "F10";
+
+    await manager.initializeHotkey(mainWindow, vi.fn(), onHotkeyResolved);
+
+    expect(onHotkeyResolved).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(manager.getCurrentHotkey()).toBe("F10");
+    expect(onHotkeyResolved).toHaveBeenCalledWith("F10");
+  });
+
   it.each([
     ["win32", "Control+Super"],
     ["darwin", "GLOBE"],

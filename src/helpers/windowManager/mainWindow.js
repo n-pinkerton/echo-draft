@@ -82,6 +82,7 @@ async function createMainWindow(manager) {
   await manager.loadMainWindow();
   await manager.initializeHotkey();
   await manager.initializeClipboardHotkey();
+  await manager.initializePromptHotkeys();
   manager.dragManager.setTargetWindow(manager.mainWindow);
   MenuManager.setupMainMenu();
 }

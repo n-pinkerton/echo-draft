@@ -41,6 +41,20 @@ class EchoDraftWidgetPresentationTest {
     }
 
     @Test
+    fun `compact idle layout gives both recording actions full width`() {
+        assertEquals(false, widgetShowsStatus(WidgetActionMode.RECORD, MIN_WIDGET_WIDTH_DP))
+        assertEquals(false, widgetShowsStatus(WidgetActionMode.SETUP, MIN_WIDGET_WIDTH_DP))
+        assertEquals(true, widgetShowsStatus(WidgetActionMode.STOP, MIN_WIDGET_WIDTH_DP))
+        assertEquals(true, widgetShowsStatus(WidgetActionMode.PROCESSING, MIN_WIDGET_WIDTH_DP))
+    }
+
+    @Test
+    fun `wide idle layout retains its visible status`() {
+        assertEquals(true, widgetShowsStatus(WidgetActionMode.RECORD, IDLE_STATUS_MIN_WIDTH_DP))
+        assertEquals(true, widgetShowsStatus(WidgetActionMode.SETUP, IDLE_STATUS_MIN_WIDTH_DP))
+    }
+
+    @Test
     fun `compact status gives active work priority`() {
         assertEquals(
             WidgetStatusMode.RECORDING,

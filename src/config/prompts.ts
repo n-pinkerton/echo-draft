@@ -37,6 +37,7 @@ type CleanupPromptProfile = {
 
 export type CleanupPromptMode =
   | "standard"
+  | "codex-prompt"
   | "preservation-first"
   | "fidelity-repair"
   | "strict-preservation"

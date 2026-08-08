@@ -11,6 +11,7 @@ export const normalizeTriggerPayload = (payload = {}, deps = {}) => {
     typeof deps.createSessionId === "function" ? deps.createSessionId : createSessionId;
 
   const outputMode = payload?.outputMode === "clipboard" ? "clipboard" : "insert";
+  const processingMode = payload?.processingMode === "codex-prompt" ? "codex-prompt" : null;
   const sessionId =
     typeof payload?.sessionId === "string" && payload.sessionId.trim()
       ? payload.sessionId
@@ -29,6 +30,7 @@ export const normalizeTriggerPayload = (payload = {}, deps = {}) => {
       : null;
   return {
     outputMode,
+    ...(processingMode ? { processingMode } : {}),
     sessionId,
     triggeredAt,
     startedAt,

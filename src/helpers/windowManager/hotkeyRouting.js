@@ -2,10 +2,11 @@ const crypto = require("crypto");
 
 function createSessionPayload(
   outputMode = "insert",
-  { now = Date.now, randomUUID = crypto.randomUUID } = {}
+  { now = Date.now, randomUUID = crypto.randomUUID, processingMode = null } = {}
 ) {
   return {
     outputMode,
+    ...(processingMode === "codex-prompt" ? { processingMode } : {}),
     sessionId: randomUUID(),
     triggeredAt: now(),
   };
@@ -187,7 +188,7 @@ function createHotkeyCallback(
   manager,
   outputMode = "insert",
   hotkeyResolver = null,
-  { logger } = {}
+  { logger, processingMode = null } = {}
 ) {
   let lastToggleTime = 0;
   const DEBOUNCE_MS = 150;
@@ -220,6 +221,7 @@ function createHotkeyCallback(
     const windowsRouteId = outputMode === "clipboard" ? "clipboard" : "insert";
     if (
       process.platform === "win32" &&
+      processingMode !== "codex-prompt" &&
       manager.shouldUseWindowsNativeListener?.(resolvedHotkey, activationMode) &&
       manager.isWindowsNativeListenerReady?.(windowsRouteId)
     ) {
@@ -237,10 +239,10 @@ function createHotkeyCallback(
     }
     lastToggleTime = now;
 
-    const payload = manager.createSessionPayload(outputMode);
+    const payload = manager.createSessionPayload(outputMode, processingMode);
     logger?.debug?.(
       "[Hotkey] Triggered",
-      { outputMode, resolvedHotkey, activationMode, payload },
+      { outputMode, processingMode, resolvedHotkey, activationMode, payload },
       "hotkey"
     );
     manager.sendToggleDictation(payload);

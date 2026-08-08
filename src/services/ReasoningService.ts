@@ -45,7 +45,7 @@ class ReasoningService extends BaseReasoningService {
   private async getApiKey(
     provider: "openai" | "anthropic" | "gemini" | "groq" | "custom"
   ): Promise<string> {
-    return await getReasoningApiKey({
+    return getReasoningApiKey({
       provider,
       apiKeyCache: this.apiKeyCache,
       electronAPI: window.electronAPI,
@@ -137,7 +137,8 @@ class ReasoningService extends BaseReasoningService {
     config: ReasoningConfig = {}
   ): Promise<string> {
     const reasoningProvider = window.localStorage?.getItem("reasoningProvider") || "";
-    const isCustomProvider = reasoningProvider === "custom";
+    const forceOfficialOpenAI = config.cleanupPromptMode === "codex-prompt";
+    const isCustomProvider = !forceOfficialOpenAI && reasoningProvider === "custom";
 
     if (this.isProcessing) {
       throw new Error("Already processing a request");
@@ -152,7 +153,9 @@ class ReasoningService extends BaseReasoningService {
 
     try {
       const storage = typeof window !== "undefined" ? window.localStorage : undefined;
-      const openAiBase = this.openAiEndpointResolver.getConfiguredBase(storage);
+      const openAiBase = forceOfficialOpenAI
+        ? API_ENDPOINTS.OPENAI_BASE
+        : this.openAiEndpointResolver.getConfiguredBase(storage);
       const endpointCandidates = this.openAiEndpointResolver.getEndpointCandidates(
         openAiBase,
         storage
@@ -205,7 +208,7 @@ class ReasoningService extends BaseReasoningService {
       throw new Error("Anthropic reasoning is not available in this environment");
     }
 
-    return await processWithIpcProvider({
+    return processWithIpcProvider({
       providerName: "anthropic",
       text,
       model,
@@ -237,7 +240,7 @@ class ReasoningService extends BaseReasoningService {
       throw new Error("Local reasoning is not available in this environment");
     }
 
-    return await processWithIpcProvider({
+    return processWithIpcProvider({
       providerName: "local",
       text,
       model,
@@ -378,7 +381,7 @@ class ReasoningService extends BaseReasoningService {
   }
 
   async isAvailable(provider: string = "auto"): Promise<boolean> {
-    return await checkReasoningAvailability(window.electronAPI, provider);
+    return checkReasoningAvailability(window.electronAPI, provider);
   }
 
   clearApiKeyCache(
