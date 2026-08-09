@@ -153,13 +153,15 @@ class ReasoningService extends BaseReasoningService {
 
     try {
       const storage = typeof window !== "undefined" ? window.localStorage : undefined;
-      const openAiBase = forceOfficialOpenAI
-        ? API_ENDPOINTS.OPENAI_BASE
-        : this.openAiEndpointResolver.getConfiguredBase(storage);
-      const endpointCandidates = this.openAiEndpointResolver.getEndpointCandidates(
-        openAiBase,
-        storage
-      );
+      const openAiBase = isCustomProvider
+        ? this.openAiEndpointResolver.getConfiguredBase(storage)
+        : API_ENDPOINTS.OPENAI_BASE;
+      const allowsChatFallback = isCustomProvider && openAiBase !== API_ENDPOINTS.OPENAI_BASE;
+      // First-party OpenAI cleanup always uses Responses. Only a genuinely custom
+      // OpenAI-compatible endpoint may need the Chat compatibility fallback.
+      const endpointCandidates = allowsChatFallback
+        ? this.openAiEndpointResolver.getEndpointCandidates(openAiBase, storage)
+        : [{ url: buildApiUrl(openAiBase, "/responses"), type: "responses" as const }];
       return await processWithOpenAiProvider({
         text,
         model,

@@ -68,11 +68,7 @@ npm run build:win
 
 ### `download:whisper-cpp` fails (GitHub 404 / no releases)
 
-During this session, `scripts/download-whisper-cpp.js` initially failed with an HTTP 404 when trying to fetch releases from `EchoDraft/whisper.cpp`.
-
-What we changed:
-
-- `scripts/download-whisper-cpp.js` now **skips the download** if `resources/bin/whisper-server-win32-x64.exe` already exists (unless you pass `--force`).
+`scripts/download-whisper-cpp.js` downloads public releases from `OpenWhispr/whisper.cpp`. It skips the download if `resources/bin/whisper-server-win32-x64.exe` already exists, unless you pass `--force`.
 
 If you hit download failures on a fresh machine:
 
@@ -85,7 +81,7 @@ If you hit download failures on a fresh machine:
 npm run download:whisper-cpp -- --force
 ```
 
-Also consider setting `GITHUB_TOKEN`/`GH_TOKEN` if you are hitting GitHub API rate limits.
+GitHub Actions uses its built-in token when `GH_TOKEN` is not configured. For local builds, consider setting `GITHUB_TOKEN` if you are hitting GitHub API rate limits.
 
 ### `windows-key-listener` integrity failure
 
