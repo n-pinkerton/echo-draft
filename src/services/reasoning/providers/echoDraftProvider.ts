@@ -31,6 +31,7 @@ export async function processWithEchoDraftProvider({
           {
             model,
             language,
+            ...(_config.writingStyle ? { writingStyle: _config.writingStyle } : {}),
           },
           requestId
         )

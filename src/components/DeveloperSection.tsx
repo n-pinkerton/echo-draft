@@ -17,6 +17,7 @@ export default function DeveloperSection() {
   const [isToggling, setIsToggling] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const [isPurging, setIsPurging] = useState(false);
+  const [isPurgingOldData, setIsPurgingOldData] = useState(false);
   const { toast } = useToast();
 
   const loadDebugState = useCallback(async () => {
@@ -169,6 +170,56 @@ export default function DeveloperSection() {
     }
   };
 
+  const handlePurgeOldData = async () => {
+    if (isPurgingOldData) return;
+
+    try {
+      setIsPurgingOldData(true);
+      const result = await window.electronAPI.purgeDataOlderThan30Days();
+      if (result.cancelled) return;
+
+      const historyDeleted = result.database?.historyDeleted || 0;
+      const todosDeleted = result.database?.todosDeleted || 0;
+      const logsDeleted = result.logs?.filesDeleted || 0;
+      if (!result.success) {
+        const outcome = result.uncertain
+          ? "EchoDraft could not confirm how much of the reviewed data was deleted."
+          : result.aborted
+            ? "Nothing was deleted."
+            : `Deleted ${historyDeleted} History item${historyDeleted === 1 ? "" : "s"}, ` +
+              `${todosDeleted} To Do${todosDeleted === 1 ? "" : "s"}, and ` +
+              `${logsDeleted} log file${logsDeleted === 1 ? "" : "s"}.`;
+        toast({
+          title: result.uncertain
+            ? "Deletion result unconfirmed"
+            : result.aborted
+              ? "Deletion stopped safely"
+              : "Deletion incomplete",
+          description: `${outcome} ${result.error || "Some reviewed data remains."}`,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      toast({
+        title: "Old local data deleted",
+        description:
+          `Deleted ${historyDeleted} History item${historyDeleted === 1 ? "" : "s"}, ` +
+          `${todosDeleted} To Do${todosDeleted === 1 ? "" : "s"}, and ` +
+          `${logsDeleted} desktop log file${logsDeleted === 1 ? "" : "s"}.`,
+        variant: "success",
+      });
+    } catch (error) {
+      toast({
+        title: "Deletion failed",
+        description: `No complete result was returned: ${error}`,
+        variant: "destructive",
+      });
+    } finally {
+      setIsPurgingOldData(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="mb-5">
@@ -261,7 +312,7 @@ export default function DeveloperSection() {
                     {copiedPath ? (
                       <Check className="h-3.5 w-3.5 text-success" />
                     ) : (
-                      <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+                      <Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                     )}
                   </Button>
                 </div>
@@ -311,7 +362,7 @@ export default function DeveloperSection() {
             className="w-full text-destructive hover:text-destructive"
             disabled={isPurging}
           >
-            <Trash2 className="mr-2 h-3.5 w-3.5" />
+            <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
             {isPurging ? "Deleting…" : "Delete Diagnostic Data"}
           </Button>
         </div>
@@ -321,6 +372,29 @@ export default function DeveloperSection() {
             immediately start a fresh log.
           </p>
         )}
+        <div className="border-t border-border/40 px-5 py-4 dark:border-border-subtle">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-foreground">30-day local data deletion</p>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
+                Permanently deletes verified desktop logs and every History and To Do item created
+                strictly more than 30 days ago. Captured audio and mobile inbox data are excluded.
+              </p>
+            </div>
+            <Button
+              onClick={() => void handlePurgeOldData()}
+              variant="outline"
+              size="sm"
+              className="shrink-0 text-destructive hover:text-destructive"
+              disabled={isPurgingOldData}
+            >
+              <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+              {isPurgingOldData
+                ? "Reviewing deletion…"
+                : "Delete logs and transcripts older than 30 days"}
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* What gets logged */}

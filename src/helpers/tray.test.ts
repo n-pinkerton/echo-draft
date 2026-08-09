@@ -146,4 +146,42 @@ describe("TrayManager recovery copy", () => {
     expect(existingWindow.show).not.toHaveBeenCalled();
     expect(existingWindow.focus).not.toHaveBeenCalled();
   });
+
+  it("shows a pending-only mobile count and copies the newest To Do with a redacted status", async () => {
+    const writeClipboard = vi.fn(async () => ({ success: true }));
+    const trayManager = new TrayManager({
+      clipboardManager: { writeClipboard },
+      databaseManager: {
+        getLatestTranscription: () => null,
+        getPendingTodoCount: () => 2,
+        getNewestPendingTodo: () => ({ id: 9, text: "PRIVATE_MOBILE_MEMO" }),
+      },
+    });
+
+    const menu = trayManager.buildContextMenuTemplate();
+    expect(menu.find((item: any) => item.label === "Mobile To Do: 2 pending")).toMatchObject({
+      enabled: false,
+    });
+    const copyItem = menu.find((item: any) => item.label === "Copy newest To Do");
+    expect(copyItem?.enabled).toBe(true);
+    await copyItem?.click();
+
+    expect(writeClipboard).toHaveBeenCalledWith("PRIVATE_MOBILE_MEMO");
+    expect(trayManager.getStatusLabel(false)).toBe("Status: Copied newest To Do");
+    expect(trayManager.getStatusLabel(false)).not.toContain("PRIVATE_MOBILE_MEMO");
+  });
+
+  it("disables newest To Do copy when only Archived items exist", () => {
+    const trayManager = new TrayManager({
+      databaseManager: {
+        getLatestTranscription: () => null,
+        getPendingTodoCount: () => 0,
+        getNewestPendingTodo: vi.fn(),
+      },
+    });
+
+    const menu = trayManager.buildContextMenuTemplate();
+    expect(menu.find((item: any) => item.label === "Mobile To Do: 0 pending")).toBeDefined();
+    expect(menu.find((item: any) => item.label === "Copy newest To Do")?.enabled).toBe(false);
+  });
 });

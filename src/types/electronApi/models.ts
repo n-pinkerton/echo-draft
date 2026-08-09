@@ -1,4 +1,5 @@
 import type { CleanupPromptMode } from "../../config/prompts";
+import type { AppWritingStyle } from "../../config/prompts";
 import type {
   ParakeetCheckResult,
   ParakeetDiagnosticsResult,
@@ -22,6 +23,7 @@ export interface CleanupReasoningIpcOptions {
   reasoningEffort?: "none" | "low" | "medium" | "max";
   language?: string;
   dictionaryEntries?: string[];
+  writingStyle?: AppWritingStyle;
 }
 
 export interface ElectronAPIModels {

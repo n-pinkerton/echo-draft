@@ -111,6 +111,28 @@ function registerClipboardHandlers(
     };
   });
 
+  ipcMain.handle("capture-application-process", async (event, sessionId) => {
+    requireTrustedRenderer(event, windowManager, ["dictation"]);
+    if (!clipboardManager?.captureInsertionTarget) {
+      return { success: false, reason: "unavailable" };
+    }
+    const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (
+      !windowManager?.isIssuedDictationSession?.(normalizedSessionId, "clipboard") ||
+      !windowManager?.claimApplicationProcessSession?.(normalizedSessionId)
+    ) {
+      return { success: false, reason: "invalid_or_used_session" };
+    }
+    const result = await clipboardManager.captureInsertionTarget();
+    const applicationProcessName =
+      typeof result?.target?.processName === "string" && result.target.processName.trim()
+        ? result.target.processName.trim().toLowerCase()
+        : null;
+    return applicationProcessName
+      ? { success: true, applicationProcessName }
+      : { success: false, reason: result?.reason || "process_identity_unavailable" };
+  });
+
   ipcMain.handle("check-paste-tools", async (event) => {
     requireTrustedRenderer(event, windowManager);
     return clipboardManager.checkPasteTools();

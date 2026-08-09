@@ -44,6 +44,14 @@ For every completed desktop or mobile dictation, EchoDraft saves the source audi
 
 The audio files can contain sensitive information. Use **Delete Diagnostic Data** in the Developer settings to remove EchoDraft daily logs and captured recordings from every known app log location. The cleanup preserves unrelated files and refuses linked log roots. If a source-audio capture cannot be saved, EchoDraft does not consume the mobile inbox pair or enqueue the desktop recording for transcription.
 
+## Separate 30-day deletion
+
+**Settings → Developer → Delete logs and transcripts older than 30 days** is a separate privacy/storage control. It does not reuse **Delete Diagnostic Data** and never enters `logs/audio/`.
+
+EchoDraft captures one rolling 30-day UTC cutoff, previews counts for History, pending and actioned To Dos, linked alternatives/flags, and verified desktop JSONL logs, then asks twice with Cancel selected by default. Database age comes only from each source row's `created_at`. Log age comes only from the canonical `echodraft-debug-YYYY-MM-DD[-part-NNN].jsonl` filename: the complete local calendar day must end before the cutoff. The active log, newer or unrelated files, captured audio, mobile data/diagnostics, and writing settings are excluded.
+
+Immediately before deletion, EchoDraft rechecks the previewed database fingerprints and file identities. A changed source, dependent, or file stops the operation before deletion. Files created after preview are never added. SQLite and file outcomes are reported separately if a verified file cannot be removed after the database transaction.
+
 ## What gets logged (when enabled)
 
 Examples of the high-value telemetry captured in debug mode:

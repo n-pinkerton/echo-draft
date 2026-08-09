@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import TranscriptionItem from "./TranscriptionItem";
@@ -74,6 +74,103 @@ describe("TranscriptionItem", () => {
       expect(onCopyClean).toHaveBeenCalledWith("Finished text");
     }
   );
+
+  it("creates cleanup and Codex-prompt alternatives only when stored raw text exists", async () => {
+    const onReprocess = vi.fn(async () => {});
+    const { rerender } = render(
+      <TranscriptionItem
+        item={makeItem("Exact stored raw text") as any}
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+        onReprocess={onReprocess}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Clean again" }));
+    await waitFor(() =>
+      expect(onReprocess).toHaveBeenCalledWith(
+        expect.objectContaining({ raw_text: "Exact stored raw text" }),
+        "cleanup"
+      )
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Make Codex prompt" }));
+    await waitFor(() =>
+      expect(onReprocess).toHaveBeenCalledWith(
+        expect.objectContaining({ raw_text: "Exact stored raw text" }),
+        "codex-prompt"
+      )
+    );
+
+    rerender(
+      <TranscriptionItem
+        item={makeItem("   ") as any}
+        index={0}
+        total={1}
+        onCopyClean={vi.fn()}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+        onReprocess={onReprocess}
+      />
+    );
+    expect(screen.getByRole("button", { name: "Clean again" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clean again" })).toHaveAttribute(
+      "title",
+      "Raw transcript is required to clean again"
+    );
+    expect(screen.getByRole("button", { name: "Make Codex prompt" })).toBeDisabled();
+  });
+
+  it("sets a reason-only correction flag and shows linked alternatives without replacing the source", async () => {
+    const onSetCorrectionFlag = vi.fn(async () => {});
+    const onCopyClean = vi.fn();
+    render(
+      <TranscriptionItem
+        item={
+          {
+            ...makeItem("Original raw text"),
+            alternatives: [
+              {
+                id: 2,
+                transcriptionId: 1,
+                todoId: null,
+                mode: "cleanup",
+                text: "Alternative wording",
+                meta: {},
+                createdAt: "2026-08-09 00:00:00",
+              },
+            ],
+          } as any
+        }
+        index={0}
+        total={1}
+        onCopyClean={onCopyClean}
+        onCopyRaw={vi.fn()}
+        onCopyDiagnostics={vi.fn()}
+        onDelete={vi.fn()}
+        onSetCorrectionFlag={onSetCorrectionFlag}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Correction flag for dictation 1"), {
+      target: { value: "paste-delivery" },
+    });
+    await waitFor(() =>
+      expect(onSetCorrectionFlag).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1 }),
+        "paste-delivery"
+      )
+    );
+    expect(screen.getByText("Finished text")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByText("Alternative wording")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy alternative" }));
+    expect(onCopyClean).toHaveBeenCalledWith("Alternative wording");
+  });
 
   it("copies stored raw text and explains a clipboard delivery fallback", () => {
     const onCopyRaw = vi.fn();

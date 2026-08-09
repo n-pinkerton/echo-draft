@@ -119,6 +119,7 @@ class IPCHandlers {
         databaseManager: this.databaseManager,
         windowManager: this.windowManager,
         broadcastToWindows,
+        trayManager: this.trayManager,
       }
     );
 
@@ -224,7 +225,13 @@ class IPCHandlers {
 
     registerDebugLoggingHandlers(
       { ipcMain, app, path, shell, dialog, BrowserWindow, debugLogger, saveDebugAudioCapture },
-      { environmentManager: this.environmentManager, windowManager: this.windowManager }
+      {
+        broadcastToWindows,
+        databaseManager: this.databaseManager,
+        environmentManager: this.environmentManager,
+        trayManager: this.trayManager,
+        windowManager: this.windowManager,
+      }
     );
     registerUpdateHandlers(
       { ipcMain, shell },

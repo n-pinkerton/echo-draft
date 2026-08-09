@@ -9,7 +9,15 @@ afterEach(() => {
   else process.env.OPENWHISPR_LOG_LEVEL = originalLogLevel;
 });
 
-const createHarness = ({ enabled = false, dialogResponse = 0 } = {}) => {
+const createHarness = ({
+  enabled = false,
+  dialogResponse = 0,
+  dialogResponses,
+}: {
+  enabled?: boolean;
+  dialogResponse?: number;
+  dialogResponses?: number[];
+} = {}) => {
   const handlers = new Map<string, (...args: any[]) => any>();
   const ipcMain = {
     handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
@@ -61,7 +69,12 @@ const createHarness = ({ enabled = false, dialogResponse = 0 } = {}) => {
     debug: vi.fn(),
     error: vi.fn(),
   };
-  const dialog = { showMessageBox: vi.fn(async () => ({ response: dialogResponse })) };
+  const queuedDialogResponses = dialogResponses ? [...dialogResponses] : null;
+  const dialog = {
+    showMessageBox: vi.fn(async () => ({
+      response: queuedDialogResponses?.length ? queuedDialogResponses.shift() : dialogResponse,
+    })),
+  };
   const saveDebugAudioCapture = vi.fn(async () => ({
     filePath: "C:\\safe\\logs\\audio\\capture.webm",
     audioDir: "C:\\safe\\logs\\audio",
@@ -73,6 +86,31 @@ const createHarness = ({ enabled = false, dialogResponse = 0 } = {}) => {
   }));
   const claimedDebugSessions = new Set<string>();
   const setDebugConsent = vi.fn();
+  const retentionManifest = {
+    version: 1,
+    cutoffIso: "2026-07-10T12:00:00.000Z",
+    summary: {
+      history: 3,
+      todos: 5,
+      pendingTodos: 2,
+      actionedTodos: 3,
+      alternatives: 2,
+      correctionFlags: 1,
+      logFiles: 4,
+      logBytes: 512,
+    },
+  };
+  const createRetentionManifest = vi.fn(async () => retentionManifest);
+  const executeRetentionManifest = vi.fn(async () => ({
+    success: true,
+    aborted: false,
+    cutoffIso: retentionManifest.cutoffIso,
+    database: { success: true, historyDeleted: 3, todosDeleted: 5 },
+    logs: { success: true, filesDeleted: 4, bytesDeleted: 512, residualFiles: 0 },
+    errors: [],
+  }));
+  const broadcastToWindows = vi.fn();
+  const trayManager = { updateTrayMenu: vi.fn() };
 
   registerDebugLoggingHandlers(
     {
@@ -84,16 +122,20 @@ const createHarness = ({ enabled = false, dialogResponse = 0 } = {}) => {
       BrowserWindow: { fromWebContents: vi.fn(() => senderWindow) },
       debugLogger,
       saveDebugAudioCapture,
+      createRetentionManifest,
+      executeRetentionManifest,
     },
     {
+      broadcastToWindows,
+      databaseManager: {},
       environmentManager: { saveDebugLogLevel, setDebugConsent },
+      trayManager,
       windowManager: {
         controlPanelWindow: senderWindow,
         mainWindow: dictationWindow,
         isIssuedDictationSession: (sessionId: string) => /^session-\d+$/.test(sessionId),
         claimDebugAudioSession: (sessionId: string) => {
-          if (!/^session-\d+$/.test(sessionId) || claimedDebugSessions.has(sessionId))
-            return false;
+          if (!/^session-\d+$/.test(sessionId) || claimedDebugSessions.has(sessionId)) return false;
           claimedDebugSessions.add(sessionId);
           return true;
         },
@@ -102,15 +144,19 @@ const createHarness = ({ enabled = false, dialogResponse = 0 } = {}) => {
   );
 
   return {
+    broadcastToWindows,
     debugLogger,
+    createRetentionManifest,
     dialog,
     dictationEvent: { sender: dictationSender, senderFrame: dictationSender.mainFrame },
     event: { sender, senderFrame: sender.mainFrame },
     handlers,
     purgeArtifacts,
+    executeRetentionManifest,
     saveDebugLogLevel,
     setDebugConsent,
     saveDebugAudioCapture,
+    trayManager,
     sender,
     senderWindow,
   };
@@ -199,6 +245,176 @@ describe("debug logging IPC handlers", () => {
     expect(harness.saveDebugLogLevel).not.toHaveBeenCalled();
     expect(harness.purgeArtifacts).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ success: true, debugEnabled: true, freshLogStarted: true });
+  });
+
+  it("shows immutable 30-day scope and requires two cancel-default confirmations", async () => {
+    const harness = createHarness({ dialogResponses: [1, 1] });
+
+    const result = await harness.handlers.get("purge-data-older-than-30-days")?.(harness.event);
+
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(2);
+    expect(harness.dialog.showMessageBox).toHaveBeenNthCalledWith(
+      1,
+      harness.senderWindow,
+      expect.objectContaining({
+        title: "Delete logs and transcripts older than 30 days?",
+        buttons: ["Cancel", "Continue"],
+        defaultId: 0,
+        cancelId: 0,
+        detail: expect.stringMatching(
+          /3 History items.*5 To Dos.*2 pending, 3 actioned.*captured audio.*mobile inbox data.*permanent/is
+        ),
+      })
+    );
+    expect(harness.dialog.showMessageBox).toHaveBeenNthCalledWith(
+      2,
+      harness.senderWindow,
+      expect.objectContaining({
+        buttons: ["Cancel", "Permanently Delete"],
+        defaultId: 0,
+        cancelId: 0,
+        detail: expect.stringMatching(
+          /2026-07-10T12:00:00\.000Z.*rechecks the whole preview.*partial filesystem failure/is
+        ),
+      })
+    );
+    expect(harness.createRetentionManifest).toHaveBeenCalledOnce();
+    expect(harness.executeRetentionManifest).toHaveBeenCalledOnce();
+    expect(harness.broadcastToWindows).toHaveBeenCalledWith("retention-data-changed", {
+      reason: "retention",
+    });
+    expect(harness.trayManager.updateTrayMenu).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      success: true,
+      database: { historyDeleted: 3, todosDeleted: 5 },
+      logs: { filesDeleted: 4, residualFiles: 0 },
+    });
+  });
+
+  it("refreshes database consumers after SQLite success with a partial log failure", async () => {
+    const harness = createHarness({ dialogResponses: [1, 1] });
+    harness.executeRetentionManifest.mockResolvedValueOnce({
+      success: false,
+      aborted: false,
+      cutoffIso: "2026-07-10T12:00:00.000Z",
+      database: { success: true, historyDeleted: 3, todosDeleted: 5 },
+      logs: {
+        success: false,
+        filesDeleted: 2,
+        bytesDeleted: 256,
+        residualFiles: 2,
+        errors: ["two logs remain"],
+      },
+      errors: ["two logs remain"],
+    } as any);
+
+    await harness.handlers.get("purge-data-older-than-30-days")?.(harness.event);
+
+    expect(harness.broadcastToWindows).toHaveBeenCalledOnce();
+    expect(harness.trayManager.updateTrayMenu).toHaveBeenCalledOnce();
+  });
+
+  it("does not refresh database consumers after a safe execution abort", async () => {
+    const harness = createHarness({ dialogResponses: [1, 1] });
+    harness.executeRetentionManifest.mockResolvedValueOnce({
+      success: false,
+      aborted: true,
+      changed: true,
+      cutoffIso: "2026-07-10T12:00:00.000Z",
+      database: { success: false, historyDeleted: 0, todosDeleted: 0 },
+      logs: { success: false, filesDeleted: 0, bytesDeleted: 0, residualFiles: 0 },
+      errors: ["preview changed"],
+    } as any);
+
+    await harness.handlers.get("purge-data-older-than-30-days")?.(harness.event);
+
+    expect(harness.broadcastToWindows).not.toHaveBeenCalled();
+    expect(harness.trayManager.updateTrayMenu).not.toHaveBeenCalled();
+  });
+
+  it("cancels either 30-day confirmation without deleting anything", async () => {
+    const firstCancel = createHarness({ dialogResponses: [0] });
+    await expect(
+      firstCancel.handlers.get("purge-data-older-than-30-days")?.(firstCancel.event)
+    ).resolves.toMatchObject({ success: false, cancelled: true });
+    expect(firstCancel.executeRetentionManifest).not.toHaveBeenCalled();
+
+    const finalCancel = createHarness({ dialogResponses: [1, 0] });
+    await expect(
+      finalCancel.handlers.get("purge-data-older-than-30-days")?.(finalCancel.event)
+    ).resolves.toMatchObject({ success: false, cancelled: true });
+    expect(finalCancel.dialog.showMessageBox).toHaveBeenCalledTimes(2);
+    expect(finalCancel.executeRetentionManifest).not.toHaveBeenCalled();
+  });
+
+  it("rejects concurrent 30-day deletion requests before a second preview", async () => {
+    const harness = createHarness({ dialogResponse: 0 });
+    let releasePreview: (() => void) | null = null;
+    harness.createRetentionManifest.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releasePreview = () =>
+            resolve({
+              version: 1,
+              cutoffIso: "2026-07-10T12:00:00.000Z",
+              summary: {
+                history: 0,
+                todos: 0,
+                pendingTodos: 0,
+                actionedTodos: 0,
+                alternatives: 0,
+                correctionFlags: 0,
+                logFiles: 0,
+                logBytes: 0,
+              },
+            });
+        })
+    );
+
+    const first = harness.handlers.get("purge-data-older-than-30-days")?.(harness.event);
+    await vi.waitFor(() => expect(harness.createRetentionManifest).toHaveBeenCalledOnce());
+    await expect(
+      harness.handlers.get("purge-data-older-than-30-days")?.(harness.event)
+    ).resolves.toMatchObject({ success: false, busy: true });
+    expect(harness.createRetentionManifest).toHaveBeenCalledOnce();
+    releasePreview?.();
+    await expect(first).resolves.toMatchObject({ success: false, cancelled: true });
+  });
+
+  it("reports a preview failure as safely aborted before any deletion", async () => {
+    const harness = createHarness({ dialogResponses: [1, 1] });
+    harness.createRetentionManifest.mockRejectedValueOnce(new Error("preview unavailable"));
+
+    await expect(
+      harness.handlers.get("purge-data-older-than-30-days")?.(harness.event)
+    ).resolves.toMatchObject({
+      success: false,
+      aborted: true,
+      uncertain: false,
+      error: "preview unavailable",
+    });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(harness.executeRetentionManifest).not.toHaveBeenCalled();
+    expect(harness.broadcastToWindows).not.toHaveBeenCalled();
+    expect(harness.trayManager.updateTrayMenu).not.toHaveBeenCalled();
+  });
+
+  it("does not invent zero counts after an unexpected execution exception", async () => {
+    const harness = createHarness({ dialogResponses: [1, 1] });
+    harness.executeRetentionManifest.mockRejectedValueOnce(new Error("unexpected stop"));
+
+    const result = await harness.handlers.get("purge-data-older-than-30-days")?.(harness.event);
+
+    expect(result).toMatchObject({
+      success: false,
+      aborted: false,
+      uncertain: true,
+      error: expect.stringMatching(/could not confirm the complete deletion result/i),
+    });
+    expect(result).not.toHaveProperty("database");
+    expect(result).not.toHaveProperty("logs");
+    expect(harness.broadcastToWindows).toHaveBeenCalledOnce();
+    expect(harness.trayManager.updateTrayMenu).toHaveBeenCalledOnce();
   });
 
   it("accepts bounded audio only from an issued dictation session and hides local paths", async () => {

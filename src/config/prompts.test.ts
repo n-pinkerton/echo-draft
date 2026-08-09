@@ -173,6 +173,31 @@ describe("prompts untrusted transcription wrapper", () => {
     expect(prompt).not.toContain("Rilje");
   });
 
+  it("adds only fixed application guidance to ordinary cleanup and never to prompt mode", () => {
+    const documentPrompt = getSystemPrompt(
+      "Echo",
+      [],
+      "en",
+      "gpt-5.6-terra",
+      "preservation-first",
+      "document"
+    );
+    expect(documentPrompt).toContain("# Trusted application style");
+    expect(documentPrompt).toContain("complete sentences and readable paragraphs");
+
+    const codexPrompt = getSystemPrompt(
+      "Echo",
+      [],
+      "en",
+      "gpt-5.6-luna",
+      "codex-prompt",
+      "document"
+    );
+    expect(codexPrompt).toContain("# Codex CLI Prompt Pass");
+    expect(codexPrompt).not.toContain("# Trusted application style");
+    expect(codexPrompt).not.toContain("complete sentences and readable paragraphs");
+  });
+
   it("keeps model-facing agent identity fixed for every user-controlled value", () => {
     for (const value of [
       "Echo Prime",

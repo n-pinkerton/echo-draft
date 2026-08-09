@@ -46,6 +46,7 @@ const createHarness = () => {
     mainWindow: dictationWindow,
     controlPanelWindow,
     claimInsertionTargetSession: vi.fn(() => true),
+    claimApplicationProcessSession: vi.fn(() => true),
     isIssuedDictationSession: vi.fn(() => true),
   };
 
@@ -85,6 +86,29 @@ describe("clipboardHandlers", () => {
       expect.objectContaining({ hwnd: 42 }),
       { ownerId: 17, sessionId: "session-1" }
     );
+  });
+
+  it("returns only a normalized process name for a one-use clipboard session", async () => {
+    const { handlers, sender, clipboardManager, windowManager } = createHarness();
+    const result = await handlers.get("capture-application-process")?.(
+      { sender, senderFrame: sender.mainFrame },
+      "session-1"
+    );
+
+    expect(result).toEqual({ success: true, applicationProcessName: "privateapp" });
+    expect(result).not.toHaveProperty("title");
+    expect(result).not.toHaveProperty("hwnd");
+    expect(windowManager.isIssuedDictationSession).toHaveBeenCalledWith("session-1", "clipboard");
+    expect(windowManager.claimApplicationProcessSession).toHaveBeenCalledWith("session-1");
+    expect(clipboardManager.captureInsertionTarget).toHaveBeenCalledOnce();
+
+    windowManager.claimApplicationProcessSession.mockReturnValueOnce(false);
+    await expect(
+      handlers.get("capture-application-process")?.(
+        { sender, senderFrame: sender.mainFrame },
+        "session-1"
+      )
+    ).resolves.toEqual({ success: false, reason: "invalid_or_used_session" });
   });
 
   it("resolves the capability in main and strips unapproved paste options", async () => {

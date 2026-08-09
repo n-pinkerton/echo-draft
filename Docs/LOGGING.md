@@ -66,3 +66,7 @@ The main logging boundary applies a defensive credential redactor, but callers m
 
 - If the change affects the user-facing debug workflow, update `DEBUG.md` too.
 - If the new log exists only to support one temporary investigation, remove it before closing the task unless it provides lasting operational value.
+
+## Age-based deletion boundary
+
+The Developer control **Delete logs and transcripts older than 30 days** may delete only top-level canonical desktop JSONL log names whose complete filename date is strictly before the captured cutoff. It must not use file mtime as an age authority, follow links, recurse into `audio/`, or include mobile diagnostics. Keep this separate from **Delete Diagnostic Data**, whose explicit purpose includes rolling source-audio captures.

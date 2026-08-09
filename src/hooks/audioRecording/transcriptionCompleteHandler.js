@@ -600,6 +600,9 @@ export const createTranscriptionCompleteHandler = (deps) => {
           sessionId: session.sessionId,
           outputMode: session.outputMode,
           ...(session.processingMode ? { processingMode: session.processingMode } : {}),
+          ...(session.applicationProcessName
+            ? { applicationProcessName: session.applicationProcessName }
+            : {}),
           status: historyStatus,
           source: result.source,
           provider,

@@ -888,13 +888,19 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
     let cleanup = null;
     let title = null;
 
-    if (options.processingMode === "codex-prompt" || transcriber.shouldApplyReasoningCleanup?.()) {
+    const cleanupRequested =
+      options.processingMode === "codex-prompt" || transcriber.shouldApplyReasoningCleanup?.();
+    const canPrepareWriting =
+      typeof transcriber.reasoningCleanupService?.processTranscriptionWithOutcome === "function";
+    if (cleanupRequested || canPrepareWriting) {
       throwIfTranscriptionCancelled(externalSignal);
-      transcriber.emitProgress?.({
-        stage: "cleaning",
-        stageLabel: "Cleaning up",
-        canCancel: true,
-      });
+      if (cleanupRequested) {
+        transcriber.emitProgress?.({
+          stage: "cleaning",
+          stageLabel: "Cleaning up",
+          canCancel: true,
+        });
+      }
       const reasoningStart = performance.now();
       try {
         const cleanupEnabledOverride = transcriber.getCleanupEnabledOverride?.() ?? null;
@@ -934,7 +940,7 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
         cleanedText = rawTextSnapshot;
         title = null;
         cleanup = {
-          requested: true,
+          requested: cleanupRequested,
           attempted: true,
           applied: false,
           status: "fallback",

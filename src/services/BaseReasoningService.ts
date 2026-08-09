@@ -1,4 +1,4 @@
-import { getSystemPrompt, type CleanupPromptMode } from "../config/prompts";
+import { getSystemPrompt, type AppWritingStyle, type CleanupPromptMode } from "../config/prompts";
 import { getCustomDictionaryArray } from "../helpers/audio/transcription/customDictionary";
 
 export type CleanupReasoningEffort = "none" | "low" | "medium" | "max";
@@ -9,6 +9,7 @@ export interface ReasoningConfig {
   contextSize?: number;
   cleanupPromptMode?: CleanupPromptMode;
   reasoningEffort?: CleanupReasoningEffort;
+  writingStyle?: AppWritingStyle;
   signal?: AbortSignal;
 }
 
@@ -30,10 +31,18 @@ export abstract class BaseReasoningService {
   protected getSystemPrompt(
     agentName: string | null,
     modelId?: string | null,
-    mode: CleanupPromptMode = "standard"
+    mode: CleanupPromptMode = "standard",
+    writingStyle?: AppWritingStyle
   ): string {
     const language = this.getPreferredLanguage();
-    return getSystemPrompt(agentName, this.getCustomDictionary(), language, modelId, mode);
+    return getSystemPrompt(
+      agentName,
+      this.getCustomDictionary(),
+      language,
+      modelId,
+      mode,
+      writingStyle
+    );
   }
 
   protected calculateMaxTokens(

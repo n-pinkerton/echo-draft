@@ -65,4 +65,33 @@ export interface ElectronAPIDebugLogging {
     errors?: string[];
     error?: string;
   }>;
+  purgeDataOlderThan30Days: () => Promise<{
+    success: boolean;
+    cutoffIso?: string | null;
+    cancelled?: boolean;
+    busy?: boolean;
+    aborted?: boolean;
+    uncertain?: boolean;
+    changed?: boolean;
+    database?: {
+      success: boolean;
+      historyDeleted?: number;
+      todosDeleted?: number;
+      pendingTodosDeleted?: number;
+      actionedTodosDeleted?: number;
+      alternativesDeleted?: number;
+      correctionFlagsDeleted?: number;
+      error?: string;
+    };
+    logs?: {
+      success: boolean;
+      filesDeleted?: number;
+      bytesDeleted?: number;
+      residualFiles?: number;
+      residualBytes?: number;
+      errors?: string[];
+    };
+    errors?: string[];
+    error?: string;
+  }>;
 }

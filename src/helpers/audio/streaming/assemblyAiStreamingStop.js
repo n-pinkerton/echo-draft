@@ -109,6 +109,12 @@ async function performStopStreamingRecording(manager, runtime = {}) {
   const processingRuntime = {
     ...runtime,
     ...(isCodexPrompt ? { processingMode: "codex-prompt" } : {}),
+    ...(typeof manager.streamingContext?.applicationProcessName === "string"
+      ? { applicationProcessName: manager.streamingContext.applicationProcessName }
+      : {}),
+    ...(typeof manager.streamingContext?.applicationProcessPromise?.then === "function"
+      ? { applicationProcessPromise: manager.streamingContext.applicationProcessPromise }
+      : {}),
   };
   throwIfTranscriptionCancelled(signal);
 
@@ -308,6 +314,26 @@ async function performStopStreamingRecording(manager, runtime = {}) {
   let title = null;
 
   const useReasoningModel = isCodexPrompt || localStorage.getItem("useReasoningModel") === "true";
+  if (
+    !useReasoningModel &&
+    finalText &&
+    typeof manager.reasoningCleanupService?.prepareTranscriptionInput === "function"
+  ) {
+    const prepared = await manager.reasoningCleanupService.prepareTranscriptionInput(
+      rawText,
+      processingRuntime
+    );
+    finalText = prepared.text;
+    cleanup = {
+      requested: false,
+      attempted: false,
+      applied: false,
+      status: "disabled",
+      fallbackReason: "disabled",
+      correctionCount: prepared.correctionCount,
+      writingStyle: prepared.writingStyle,
+    };
+  }
   if (useReasoningModel && finalText) {
     manager.emitProgress({
       stage: "cleaning",
@@ -321,13 +347,22 @@ async function performStopStreamingRecording(manager, runtime = {}) {
 
     try {
       if (!isCodexPrompt && isEchoDraftCloudMode(cloudReasoningMode)) {
+        const prepared =
+          typeof manager.reasoningCleanupService?.prepareTranscriptionInput === "function"
+            ? await manager.reasoningCleanupService.prepareTranscriptionInput(
+                rawText,
+                processingRuntime
+              )
+            : { text: rawText, correctionCount: 0, writingStyle: null };
+        const managedInput = prepared.text;
         const reasonResult = await manager.withSessionRefresh(
           async () => {
             const res = await invokeCancelableIpc(signal, (requestId) =>
               window.electronAPI.cloudReason(
-                finalText,
+                managedInput,
                 {
                   language: localStorage.getItem("preferredLanguage") || "auto",
+                  ...(prepared.writingStyle ? { writingStyle: prepared.writingStyle } : {}),
                 },
                 requestId
               )
@@ -355,7 +390,7 @@ async function performStopStreamingRecording(manager, runtime = {}) {
         }
 
         const validated = manager.reasoningCleanupService.validateCleanupCandidate(
-          rawText,
+          managedInput,
           reasonResult.text
         );
         finalText = validated.text;
@@ -371,6 +406,8 @@ async function performStopStreamingRecording(manager, runtime = {}) {
           modelSource: "managed",
           provider: ECHO_DRAFT_CLOUD_SOURCE,
           retryCount: 0,
+          correctionCount: prepared.correctionCount,
+          writingStyle: prepared.writingStyle,
           metrics: validated.assessment.metrics,
         };
 

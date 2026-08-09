@@ -1,5 +1,9 @@
 const { requireTrustedRenderer } = require("../trustedRenderer");
-const { audioCaptureMutex, createAsyncMutex } = require("../../audio/debug/audioCaptureCoordinator");
+const {
+  audioCaptureMutex,
+  createAsyncMutex,
+} = require("../../audio/debug/audioCaptureCoordinator");
+const { createRetentionManifest, executeRetentionManifest } = require("../../retentionPurge");
 
 const MAX_DEBUG_AUDIO_BYTES = 64 * 1024 * 1024;
 const MAX_DEBUG_AUDIO_DURATION_SECONDS = 30 * 60;
@@ -13,10 +17,40 @@ const ALLOWED_DEBUG_AUDIO_MIME_TYPES = new Set([
 ]);
 
 function registerDebugLoggingHandlers(
-  { ipcMain, app, path, shell, dialog, BrowserWindow, debugLogger, saveDebugAudioCapture },
-  { environmentManager, windowManager }
+  {
+    ipcMain,
+    app,
+    path,
+    shell,
+    dialog,
+    BrowserWindow,
+    debugLogger,
+    saveDebugAudioCapture,
+    createRetentionManifest: createRetentionManifestOverride,
+    executeRetentionManifest: executeRetentionManifestOverride,
+  },
+  { broadcastToWindows, databaseManager, environmentManager, trayManager = null, windowManager }
 ) {
   let purgeRequestInProgress = false;
+  let retentionRequestInProgress = false;
+  const buildRetentionManifest = createRetentionManifestOverride || createRetentionManifest;
+  const runRetentionManifest = executeRetentionManifestOverride || executeRetentionManifest;
+  const refreshRetentionConsumers = () => {
+    try {
+      broadcastToWindows?.("retention-data-changed", { reason: "retention" });
+    } catch {
+      debugLogger.error("Could not notify windows after 30-day deletion", {
+        errorCategory: "retention_refresh_failed",
+      });
+    }
+    try {
+      trayManager?.updateTrayMenu?.();
+    } catch {
+      debugLogger.error("Could not refresh the tray after 30-day deletion", {
+        errorCategory: "retention_tray_refresh_failed",
+      });
+    }
+  };
 
   const getTrustedControlPanelWindow = (event) => {
     try {
@@ -224,6 +258,95 @@ function registerDebugLoggingHandlers(
       return { success: false, error: error?.message || String(error) };
     } finally {
       purgeRequestInProgress = false;
+    }
+  });
+
+  ipcMain.handle("purge-data-older-than-30-days", async (event) => {
+    if (retentionRequestInProgress) {
+      return { success: false, busy: true, error: "30-day deletion is already in progress" };
+    }
+    const senderWindow = getTrustedControlPanelWindow(event);
+    if (!senderWindow) {
+      return { success: false, error: "30-day deletion requires the EchoDraft control panel" };
+    }
+
+    retentionRequestInProgress = true;
+    let executionStarted = false;
+    try {
+      return await audioCaptureMutex.run(async () => {
+        const manifest = await buildRetentionManifest({ databaseManager, debugLogger });
+        const summary = manifest.summary;
+        const firstConfirmation = await dialog.showMessageBox(senderWindow, {
+          type: "warning",
+          title: "Delete logs and transcripts older than 30 days?",
+          message: "Review the permanent 30-day deletion",
+          detail:
+            `Cutoff: ${manifest.cutoffIso} (UTC).\n\n` +
+            `Included: ${summary.history} History item${summary.history === 1 ? "" : "s"}; ` +
+            `${summary.todos} To Do${summary.todos === 1 ? "" : "s"} ` +
+            `(${summary.pendingTodos} pending, ${summary.actionedTodos} actioned); ` +
+            `${summary.alternatives} linked alternative${summary.alternatives === 1 ? "" : "s"}; ` +
+            `${summary.correctionFlags} linked correction flag${summary.correctionFlags === 1 ? "" : "s"}; ` +
+            `${summary.logFiles} verified desktop log file${summary.logFiles === 1 ? "" : "s"} ` +
+            `(${summary.logBytes} bytes).\n\n` +
+            "Excluded: the active log, newer and unrelated files, captured audio, mobile inbox data, correction rules, and app style profiles. This deletion is permanent and has no backup or undo.",
+          buttons: ["Cancel", "Continue"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (firstConfirmation.response !== 1) {
+          return { success: false, cancelled: true };
+        }
+
+        const finalConfirmation = await dialog.showMessageBox(senderWindow, {
+          type: "warning",
+          title: "Final confirmation",
+          message: "Permanently delete the reviewed data?",
+          detail:
+            `Delete exactly the previewed ${summary.history} History item${summary.history === 1 ? "" : "s"}, ` +
+            `${summary.todos} To Do${summary.todos === 1 ? "" : "s"}, and ` +
+            `${summary.logFiles} desktop log file${summary.logFiles === 1 ? "" : "s"} ` +
+            `strictly older than ${manifest.cutoffIso}? EchoDraft rechecks the whole preview before starting and reports any later partial filesystem failure.`,
+          buttons: ["Cancel", "Permanently Delete"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (finalConfirmation.response !== 1) {
+          return { success: false, cancelled: true };
+        }
+
+        executionStarted = true;
+        const result = await runRetentionManifest({ manifest, databaseManager, debugLogger });
+        if (result.database?.success) {
+          refreshRetentionConsumers();
+        }
+        return {
+          ...result,
+          error: result.success
+            ? undefined
+            : result.errors?.join("; ") || "30-day deletion was incomplete",
+        };
+      });
+    } catch (error) {
+      if (executionStarted) {
+        refreshRetentionConsumers();
+      }
+      debugLogger.error("30-day deletion failed", {
+        errorCategory: error?.code || error?.name || "unknown",
+      });
+      const errorMessage = executionStarted
+        ? "EchoDraft could not confirm the complete deletion result. Review History, To Do, and the logs folder before trying again."
+        : error?.message || String(error);
+      return {
+        success: false,
+        aborted: !executionStarted,
+        uncertain: executionStarted,
+        error: errorMessage,
+      };
+    } finally {
+      retentionRequestInProgress = false;
     }
   });
 

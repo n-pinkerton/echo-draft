@@ -82,9 +82,11 @@ describe("ClipboardManager", () => {
       capability: expect.any(String),
       sessionId: "session-1",
       capturedAt: 100,
+      applicationProcessName: "secretapp",
     });
     expect(snapshot).not.toHaveProperty("hwnd");
     expect(snapshot).not.toHaveProperty("processName");
+    expect(snapshot).not.toHaveProperty("title");
     expect(
       manager.consumeInsertionTargetCapability(snapshot, { ownerId: 7, sessionId: "session-1" })
     ).toBe(target);

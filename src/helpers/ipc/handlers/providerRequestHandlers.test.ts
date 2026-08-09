@@ -188,6 +188,30 @@ describe("providerRequestHandlers", () => {
     ).toThrow(/effort/i);
   });
 
+  it("accepts only fixed application styles and rejects every prompt-mode style", () => {
+    expect(
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        cleanupOperation({ writingStyle: "technical" })
+      )
+    ).toMatchObject({ writingStyle: "technical" });
+    expect(() =>
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        cleanupOperation({ writingStyle: "executive" })
+      )
+    ).toThrow(/application style/i);
+    expect(() =>
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        codexPromptCleanupOperation({ writingStyle: "document" })
+      )
+    ).toThrow(/cannot use an application style/i);
+  });
+
   it("injects credentials in main and uses Mistral's Bearer authorization contract", async () => {
     const fetchImpl = vi.fn(
       async () =>

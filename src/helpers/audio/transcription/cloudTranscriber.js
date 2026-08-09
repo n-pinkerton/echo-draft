@@ -95,6 +95,27 @@ export class CloudTranscriber {
     let cleanup = null;
     let title = null;
 
+    if (
+      !useReasoningModel &&
+      processedText &&
+      typeof this.reasoningCleanupService?.prepareTranscriptionInput === "function"
+    ) {
+      const prepared = await this.reasoningCleanupService.prepareTranscriptionInput(
+        rawText,
+        runtime
+      );
+      processedText = prepared.text;
+      cleanup = {
+        requested: false,
+        attempted: false,
+        applied: false,
+        status: "disabled",
+        fallbackReason: "disabled",
+        correctionCount: prepared.correctionCount,
+        writingStyle: prepared.writingStyle,
+      };
+    }
+
     if (useReasoningModel && processedText) {
       this.emitProgress?.({
         stage: "cleaning",
@@ -109,13 +130,19 @@ export class CloudTranscriber {
 
       try {
         if (!isCodexPrompt && cloudReasoningMode === ECHO_DRAFT_CLOUD_MODE) {
+          const prepared =
+            typeof this.reasoningCleanupService?.prepareTranscriptionInput === "function"
+              ? await this.reasoningCleanupService.prepareTranscriptionInput(rawText, runtime)
+              : { text: rawText, correctionCount: 0, writingStyle: null };
+          const managedInput = prepared.text;
           const reasonResult = await this.withSessionRefresh(
             async () => {
               const res = await invokeCancelableIpc(signal, (requestId) =>
                 window.electronAPI.cloudReason(
-                  processedText,
+                  managedInput,
                   {
                     language: localStorage.getItem("preferredLanguage") || "auto",
+                    ...(prepared.writingStyle ? { writingStyle: prepared.writingStyle } : {}),
                   },
                   requestId
                 )
@@ -143,7 +170,7 @@ export class CloudTranscriber {
           }
 
           const validated = this.reasoningCleanupService.validateCleanupCandidate(
-            rawText,
+            managedInput,
             reasonResult.text
           );
           processedText = validated.text;
@@ -159,6 +186,8 @@ export class CloudTranscriber {
             modelSource: "managed",
             provider: ECHO_DRAFT_CLOUD_SOURCE,
             retryCount: 0,
+            correctionCount: prepared.correctionCount,
+            writingStyle: prepared.writingStyle,
             metrics: validated.assessment.metrics,
           };
           source = ECHO_DRAFT_REASONED_SOURCE;

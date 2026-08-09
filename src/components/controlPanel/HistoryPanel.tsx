@@ -4,7 +4,11 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import TranscriptionItem from "../ui/TranscriptionItem";
 import { formatHotkeyLabel } from "../../utils/hotkeys";
-import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
+import type {
+  CorrectionReason,
+  ReprocessingMode,
+  TranscriptionItem as TranscriptionItemType,
+} from "../../types/electron";
 
 type ModeFilter = "all" | "insert" | "clipboard" | "file";
 type StatusFilter = "all" | "success" | "delivery_issue" | "error" | "cancelled";
@@ -24,6 +28,8 @@ type Props = {
   setStatusFilter: (next: StatusFilter) => void;
   providerFilter: string;
   setProviderFilter: (next: string) => void;
+  correctionFilter?: "all" | "needs-correction";
+  setCorrectionFilter?: (next: "all" | "needs-correction") => void;
 
   exportTranscriptions: (format: "csv" | "json") => Promise<void>;
   isExporting: boolean;
@@ -34,6 +40,11 @@ type Props = {
   ) => Promise<void>;
   copyDiagnostics: (item: TranscriptionItemType) => Promise<void>;
   deleteTranscription: (id: number) => Promise<void>;
+  reprocessTranscription?: (item: TranscriptionItemType, mode: ReprocessingMode) => Promise<void>;
+  setTranscriptionCorrectionFlag?: (
+    item: TranscriptionItemType,
+    reason: CorrectionReason | null
+  ) => Promise<void>;
 };
 
 export default function HistoryPanel(props: Props) {
@@ -51,31 +62,38 @@ export default function HistoryPanel(props: Props) {
     setStatusFilter,
     providerFilter,
     setProviderFilter,
+    correctionFilter = "all",
+    setCorrectionFilter = () => {},
     exportTranscriptions,
     isExporting,
     copyToClipboard,
     copyDiagnostics,
     deleteTranscription,
+    reprocessTranscription,
+    setTranscriptionCorrectionFlag,
   } = props;
 
   return (
     <div className="rounded-lg border border-border bg-card/50 dark:bg-card/30 backdrop-blur-sm">
       <div className="border-b border-border/50 p-3 space-y-2">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-6">
           <Input
             data-testid="history-search"
             aria-label="Search dictation history"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
+            name="history-search"
+            autoComplete="off"
             placeholder="Search dictations…"
             className="h-8 text-xs md:col-span-2"
           />
           <select
             data-testid="history-filter-mode"
             aria-label="Filter by output mode"
+            name="history-output-mode"
             value={modeFilter}
             onChange={(event) => setModeFilter(event.target.value as ModeFilter)}
-            className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="all">All modes</option>
             <option value="insert">Insert</option>
@@ -83,11 +101,25 @@ export default function HistoryPanel(props: Props) {
             <option value="file">File</option>
           </select>
           <select
+            data-testid="history-filter-correction"
+            aria-label="Filter by correction flag"
+            name="history-correction-filter"
+            value={correctionFilter}
+            onChange={(event) =>
+              setCorrectionFilter(event.target.value as "all" | "needs-correction")
+            }
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="all">All evaluations</option>
+            <option value="needs-correction">Needs correction</option>
+          </select>
+          <select
             data-testid="history-filter-status"
             aria-label="Filter by status"
+            name="history-status-filter"
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-            className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="all">All statuses</option>
             <option value="success">Success</option>
@@ -98,9 +130,10 @@ export default function HistoryPanel(props: Props) {
           <select
             data-testid="history-filter-provider"
             aria-label="Filter by provider"
+            name="history-provider-filter"
             value={providerFilter}
             onChange={(event) => setProviderFilter(event.target.value)}
-            className="h-8 px-2 rounded-md border border-border bg-background text-xs text-foreground"
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="all">All providers</option>
             {providerOptions.map((provider) => (
@@ -123,7 +156,7 @@ export default function HistoryPanel(props: Props) {
               onClick={() => exportTranscriptions("json")}
               disabled={isExporting || history.length === 0}
             >
-              <Download size={12} className="mr-1" />
+              <Download size={12} className="mr-1" aria-hidden="true" />
               Export JSON
             </Button>
             <Button
@@ -133,7 +166,7 @@ export default function HistoryPanel(props: Props) {
               onClick={() => exportTranscriptions("csv")}
               disabled={isExporting || history.length === 0}
             >
-              <Download size={12} className="mr-1" />
+              <Download size={12} className="mr-1" aria-hidden="true" />
               Export CSV
             </Button>
           </div>
@@ -171,6 +204,7 @@ export default function HistoryPanel(props: Props) {
               setModeFilter("all");
               setStatusFilter("all");
               setProviderFilter("all");
+              setCorrectionFilter("all");
             }}
           >
             Reset filters
@@ -193,6 +227,8 @@ export default function HistoryPanel(props: Props) {
               }
               onCopyDiagnostics={copyDiagnostics}
               onDelete={deleteTranscription}
+              onReprocess={reprocessTranscription}
+              onSetCorrectionFlag={setTranscriptionCorrectionFlag}
             />
           ))}
         </div>

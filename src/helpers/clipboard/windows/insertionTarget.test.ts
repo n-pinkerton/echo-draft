@@ -8,22 +8,23 @@ const {
 } = require("./insertionTarget");
 
 describe("insertionTarget", () => {
-  it("resolveTargetLabel prefers process + title then falls back", () => {
-    expect(resolveTargetLabel({ processName: "foo", title: "bar" })).toBe("foo (bar)");
+  it("uses only the process name for target labels and ignores titles", () => {
+    expect(resolveTargetLabel({ processName: "foo", title: "private document" })).toBe("foo");
     expect(resolveTargetLabel({ processName: "foo" })).toBe("foo");
-    expect(resolveTargetLabel({ title: "bar" })).toBe("bar");
+    expect(resolveTargetLabel({ title: "private document" })).toBe("original app");
     expect(resolveTargetLabel({})).toBe("original app");
   });
 
-  it("captureInsertionTarget returns a normalized target on success", async () => {
+  it("captures process identity without retaining a supplied window title", async () => {
+    const runWindowsPowerShellScript = vi.fn(async (_script: string) => ({
+      code: 0,
+      stdout:
+        '{"success":true,"hwnd":42,"pid":7,"processStartTimeUtcTicks":"638800000000000000","processName":"foo","title":"private document"}',
+      stderr: "",
+    }));
     const manager = {
       deps: { platform: "win32", now: () => 123 },
-      runWindowsPowerShellScript: async () => ({
-        code: 0,
-        stdout:
-          '{"success":true,"hwnd":42,"pid":7,"processStartTimeUtcTicks":"638800000000000000","processName":"foo","title":"bar"}',
-        stderr: "",
-      }),
+      runWindowsPowerShellScript,
       parsePowerShellJsonOutput,
     };
 
@@ -35,10 +36,12 @@ describe("insertionTarget", () => {
         pid: 7,
         processStartTimeUtcTicks: "638800000000000000",
         processName: "foo",
-        title: "bar",
         capturedAt: 123,
       },
     });
+    const [captureScript] = runWindowsPowerShellScript.mock.calls[0];
+    expect(captureScript).not.toContain("GetWindowText");
+    expect(captureScript).not.toMatch(/\btitle\b/i);
   });
 
   it("activateInsertionTarget rejects invalid hwnds", async () => {

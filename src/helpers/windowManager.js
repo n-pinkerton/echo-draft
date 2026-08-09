@@ -233,6 +233,7 @@ class WindowManager {
       processingMode: payload.processingMode || null,
       expiresAt: Date.now() + ISSUED_SESSION_TTL_MS,
       insertionTargetClaimed: false,
+      applicationProcessClaimed: false,
       debugAudioClaimed: false,
     });
     return payload;
@@ -261,6 +262,14 @@ class WindowManager {
       return false;
     }
     session.insertionTargetClaimed = true;
+    return true;
+  }
+
+  claimApplicationProcessSession(sessionId) {
+    this._purgeExpiredDictationSessions();
+    const session = this.issuedDictationSessions.get(String(sessionId || ""));
+    if (!session || session.applicationProcessClaimed) return false;
+    session.applicationProcessClaimed = true;
     return true;
   }
 

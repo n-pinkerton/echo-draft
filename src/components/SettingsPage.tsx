@@ -21,6 +21,7 @@ import PermissionsSection from "./settings/sections/PermissionsSection";
 import PrivacySection from "./settings/sections/PrivacySection";
 import PromptsSection from "./settings/sections/PromptsSection";
 import TranscriptionSection from "./settings/sections/TranscriptionSection";
+import WritingSection from "./settings/sections/WritingSection";
 
 interface SettingsPageProps {
   activeSection?: SettingsSectionType;
@@ -190,6 +191,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
             toast={toast}
           />
         );
+
+      case "writing":
+        return <WritingSection toast={toast} showConfirmDialog={showConfirmDialog} />;
 
       case "prompts":
         return <PromptsSection />;

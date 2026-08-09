@@ -129,8 +129,14 @@ export class LocalTranscriber {
         let cleanup = null;
         let title = null;
 
-        if (runtime?.processingMode === "codex-prompt" || this.shouldApplyReasoningCleanup?.()) {
-          this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
+        const cleanupRequested =
+          runtime?.processingMode === "codex-prompt" || this.shouldApplyReasoningCleanup?.();
+        const canPrepareWriting =
+          typeof this.reasoningCleanupService?.processTranscriptionWithOutcome === "function";
+        if (cleanupRequested || canPrepareWriting) {
+          if (cleanupRequested) {
+            this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
+          }
           const reasoningStart = performance.now();
           try {
             const cleanupResult = await this.applyReasoningCleanup(
@@ -150,7 +156,7 @@ export class LocalTranscriber {
             cleanedText = rawTextSnapshot;
             title = null;
             cleanup = {
-              requested: true,
+              requested: cleanupRequested,
               attempted: true,
               applied: false,
               status: "fallback",
@@ -254,8 +260,14 @@ export class LocalTranscriber {
         let cleanup = null;
         let title = null;
 
-        if (runtime?.processingMode === "codex-prompt" || this.shouldApplyReasoningCleanup?.()) {
-          this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
+        const cleanupRequested =
+          runtime?.processingMode === "codex-prompt" || this.shouldApplyReasoningCleanup?.();
+        const canPrepareWriting =
+          typeof this.reasoningCleanupService?.processTranscriptionWithOutcome === "function";
+        if (cleanupRequested || canPrepareWriting) {
+          if (cleanupRequested) {
+            this.emitProgress?.({ stage: "cleaning", stageLabel: "Cleaning up" });
+          }
           const reasoningStart = performance.now();
           try {
             const cleanupResult = await this.applyReasoningCleanup(
@@ -273,7 +285,7 @@ export class LocalTranscriber {
             cleanedText = rawTextSnapshot;
             title = null;
             cleanup = {
-              requested: true,
+              requested: cleanupRequested,
               attempted: true,
               applied: false,
               status: "fallback",

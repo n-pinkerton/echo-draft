@@ -82,12 +82,14 @@ export const createStartRecordingHandler = (deps) => {
         const captureResult = await electronAPI.captureInsertionTarget(session.sessionId);
         if (captureResult?.success && captureResult?.target?.capability) {
           session.insertionTarget = captureResult.target;
+          if (captureResult.target.applicationProcessName) {
+            session.applicationProcessName = captureResult.target.applicationProcessName;
+          }
         }
       } catch (error) {
         logger.warn("Failed to capture insertion target", { error: error?.message }, "clipboard");
       }
     }
-
     // A live streaming session owns one backend connection. While any earlier job is
     // processing, record locally and let the FIFO queue start it when its turn arrives.
     const shouldForceNonStreaming =
@@ -97,8 +99,49 @@ export const createStartRecordingHandler = (deps) => {
       jobId: job.jobId,
       outputMode: session.outputMode,
       ...(session.processingMode ? { processingMode: session.processingMode } : {}),
+      ...(session.applicationProcessName
+        ? { applicationProcessName: session.applicationProcessName }
+        : {}),
       triggeredAt: session.triggeredAt,
     };
+    if (session.outputMode === "clipboard" && electronAPI?.captureApplicationProcess) {
+      try {
+        const applicationProcessPromise = Promise.resolve(
+          electronAPI.captureApplicationProcess(session.sessionId)
+        )
+          .then((captureResult) => {
+            const applicationProcessName =
+              captureResult?.success && typeof captureResult.applicationProcessName === "string"
+                ? captureResult.applicationProcessName
+                : null;
+            if (applicationProcessName) {
+              session.applicationProcessName = applicationProcessName;
+              recordingContext.applicationProcessName = applicationProcessName;
+            }
+            return applicationProcessName;
+          })
+          .catch((error) => {
+            logger.warn(
+              "Failed to capture application process",
+              { error: error?.message },
+              "clipboard"
+            );
+            return null;
+          });
+        Object.defineProperty(recordingContext, "applicationProcessPromise", {
+          configurable: false,
+          enumerable: false,
+          value: applicationProcessPromise,
+          writable: false,
+        });
+      } catch (error) {
+        logger.warn(
+          "Failed to capture application process",
+          { error: error?.message },
+          "clipboard"
+        );
+      }
+    }
 
     const shouldUseStreaming = !shouldForceNonStreaming && audioManager.shouldUseStreaming();
     logger.info(
@@ -302,6 +345,9 @@ export const createStopRecordingHandler = (deps) => {
       sessionId: session?.sessionId,
       outputMode: session?.outputMode,
       ...(session?.processingMode ? { processingMode: session.processingMode } : {}),
+      ...(session?.applicationProcessName
+        ? { applicationProcessName: session.applicationProcessName }
+        : {}),
     };
     const didStop =
       typeof audioManager.stopRecordingAndWaitForClose === "function"

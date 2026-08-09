@@ -37,6 +37,7 @@ export interface TranscriptionMeta {
   sessionId?: string;
   outputMode?: DictationOutputMode;
   processingMode?: DictationProcessingMode;
+  applicationProcessName?: string;
   status?: "success" | "error" | "cancelled" | string;
   source?: string;
   provider?: string;
@@ -68,6 +69,47 @@ export interface InsertionTargetSnapshot {
   capability: string;
   sessionId: string;
   capturedAt: number;
+  applicationProcessName?: string | null;
+}
+
+export type ReprocessingMode = "cleanup" | "codex-prompt";
+export type CorrectionReason = "transcription" | "cleanup" | "prompt" | "paste-delivery";
+export type AppWritingStyle = "document" | "message" | "technical";
+
+export interface ReprocessingAlternative {
+  id: number;
+  transcription_id?: number | null;
+  todo_id?: number | null;
+  mode: ReprocessingMode;
+  text: string;
+  meta_json?: string;
+  meta?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface CorrectionFlag {
+  id: number;
+  reason: CorrectionReason;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CorrectionRule {
+  id: number;
+  sourcePhrase: string;
+  replacementText: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppStyleProfile {
+  id: number;
+  processName: string;
+  style: AppWritingStyle;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface TranscriptionItem {
@@ -78,6 +120,8 @@ export interface TranscriptionItem {
   meta?: TranscriptionMeta;
   timestamp: string;
   created_at: string;
+  alternatives?: ReprocessingAlternative[];
+  correctionFlag?: CorrectionFlag | null;
 }
 
 export interface TodoItem {
@@ -87,6 +131,13 @@ export interface TodoItem {
   created_at: string;
   title?: string | null;
   processingMode?: DictationProcessingMode;
+  status?: "pending" | "actioned";
+  actioned_at?: string | null;
+  sortEpoch?: number;
+  meta_json?: string;
+  meta?: Record<string, unknown>;
+  alternatives?: ReprocessingAlternative[];
+  correctionFlag?: CorrectionFlag | null;
 }
 
 export interface DictionaryImportResult {

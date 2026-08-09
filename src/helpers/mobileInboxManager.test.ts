@@ -57,6 +57,7 @@ const createRendererWindow = () => {
 
 const createManager = (userDataPath: string, overrides: Record<string, unknown> = {}) => {
   const send = vi.fn();
+  const logger = { error: vi.fn(), warn: vi.fn() };
   const databaseManager = {
     getTodoByExternalId: vi.fn(() => null),
     saveTodo: vi.fn((payload) => ({
@@ -82,11 +83,11 @@ const createManager = (userDataPath: string, overrides: Record<string, unknown> 
     app: { getPath: () => userDataPath },
     databaseManager,
     windowManager,
-    logger: { error: vi.fn(), warn: vi.fn() },
+    logger,
     ...overrides,
   });
   manager.markRendererReady();
-  return { databaseManager, manager, send, windowManager };
+  return { databaseManager, logger, manager, send, windowManager };
 };
 
 afterEach(async () => {
@@ -171,6 +172,42 @@ describe("MobileInboxManager", () => {
         title: "Call Taylor",
         raw_text: "call taylor tomorrow",
       })
+    );
+    await expect(fs.promises.stat(path.join(inboxPath, item.manifestFile))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(fs.promises.stat(path.join(inboxPath, item.audioFile))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("acknowledges a saved mobile item when the optional tray refresh fails", async () => {
+    const { inboxPath, userDataPath } = await createWorkspace();
+    const item = await writeReadyItem(inboxPath);
+    const onTodoChanged = vi.fn(() => {
+      throw new Error("tray unavailable");
+    });
+    const { databaseManager, logger, manager, send } = createManager(userDataPath, {
+      onTodoChanged,
+    });
+    send.mockImplementation((_channel, payload) => {
+      queueMicrotask(() =>
+        manager.completeRequest(payload.requestId, {
+          success: true,
+          text: "Saved mobile memo.",
+          rawText: "saved mobile memo",
+        })
+      );
+    });
+    await manager.setInboxPath(inboxPath);
+
+    await manager.scanNow();
+
+    expect(databaseManager.saveTodo).toHaveBeenCalledOnce();
+    expect(onTodoChanged).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Mobile To Do tray refresh failed",
+      expect.objectContaining({ code: "Error" })
     );
     await expect(fs.promises.stat(path.join(inboxPath, item.manifestFile))).rejects.toMatchObject({
       code: "ENOENT",

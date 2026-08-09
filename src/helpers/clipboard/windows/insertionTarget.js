@@ -16,10 +16,8 @@ async function captureInsertionTarget(manager) {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 public static class WinApiCapture {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll", SetLastError=true)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 }
 "@
@@ -30,8 +28,6 @@ if ($hwnd -eq [IntPtr]::Zero) {
 }
 $processId = [UInt32]0
 [void][WinApiCapture]::GetWindowThreadProcessId($hwnd, [ref]$processId)
-$titleBuilder = New-Object System.Text.StringBuilder 512
-[void][WinApiCapture]::GetWindowText($hwnd, $titleBuilder, $titleBuilder.Capacity)
 $processName = ""
 $processStartTimeUtcTicks = [Int64]0
 try {
@@ -49,7 +45,6 @@ if ($processId -le 0 -or $processStartTimeUtcTicks -le 0) {
   pid = [Int32]$processId
   processStartTimeUtcTicks = $processStartTimeUtcTicks.ToString()
   processName = $processName
-  title = $titleBuilder.ToString()
 } | ConvertTo-Json -Compress
 `.trim();
 
@@ -84,7 +79,6 @@ if ($processId -le 0 -or $processStartTimeUtcTicks -le 0) {
           ? String(parsed.processStartTimeUtcTicks)
           : null,
         processName: parsed.processName || "",
-        title: parsed.title || "",
         capturedAt: now(),
       },
     };
@@ -253,10 +247,7 @@ $success = ($success -and $after.success)
 
 function resolveTargetLabel(target = {}) {
   const processName = target?.processName ? String(target.processName) : "";
-  const title = target?.title ? String(target.title) : "";
-  if (processName && title) return `${processName} (${title})`;
   if (processName) return processName;
-  if (title) return title;
   return "original app";
 }
 

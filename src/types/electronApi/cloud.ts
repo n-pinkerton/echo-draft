@@ -15,7 +15,11 @@ export interface ElectronAPICloud {
   }>;
   cloudReason?: (
     text: string,
-    opts: { model?: string; language?: string },
+    opts: {
+      model?: string;
+      language?: string;
+      writingStyle?: "document" | "message" | "technical";
+    },
     requestId: string
   ) => Promise<{
     success: boolean;

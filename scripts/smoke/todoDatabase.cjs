@@ -79,7 +79,9 @@ try {
 
   const firstPage = manager.getPendingTodos(100);
   assert.equal(firstPage.length, 100);
-  assert.deepEqual(Object.keys(firstPage[0]).sort(), ["created_at", "id", "text", "title"]);
+  assert.equal(Object.hasOwn(firstPage[0], "raw_text"), true);
+  assert.equal(Object.hasOwn(firstPage[0], "alternatives"), true);
+  assert.equal(Object.hasOwn(firstPage[0], "correctionFlag"), true);
   assert.equal(
     firstPage.some((item) => item.id === first.id),
     false
@@ -108,10 +110,7 @@ try {
   reopened = new DatabaseManager();
   const reopenedTodos = reopened.getPendingTodos(100);
   assert.equal(reopenedTodos.length, 100);
-  assert.equal(
-    reopenedTodos.find((item) => item.id === first.id)?.title,
-    "Test mobile memo title"
-  );
+  assert.equal(reopenedTodos.find((item) => item.id === first.id)?.title, "Test mobile memo title");
   assert.equal(reopened.markTodoActioned(newest.id).alreadyActioned, true);
   assert.equal(reopened.getTranscriptions(10).length, 1);
 

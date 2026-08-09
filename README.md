@@ -329,17 +329,18 @@ On Windows in tap mode, hold `Alt` while using either configured dictation hotke
 
 - **Access**: Click the tray icon, then choose **View Control Panel**. On Windows, EchoDraft opens it on the current virtual desktop and recreates the window only when Windows cannot safely reuse it there.
 - **Configure**: Choose between local and cloud processing
-- **History**: View, search, copy, and delete past transcriptions. When cleanup returns the complete title contract, EchoDraft shows the generated title and includes it in search. A terminal badge identifies Codex prompt dictations.
-- **To Do**: Review pending mobile memos, search their generated titles or text, copy them, and mark them as actioned. A terminal badge identifies Codex prompt dictations.
+- **History**: View, search, copy, and delete past transcriptions. `Clean again` and `Make Codex prompt` create a linked alternative from the stored raw transcript, leave the original unchanged, and copy the alternative without pasting it. You can flag an item as needing correction for Transcription, Cleanup, Prompt, or Paste/delivery and filter locally by that flag. A terminal badge identifies Codex prompt dictations.
+- **To Do**: Pending contains mobile memos awaiting action. Archived contains actioned memos and searches every archived row stored on this computer through bounded pages. Both views can copy cleaned or raw text and create eligible copy-only alternatives; Archived does not move items back to Pending.
 - **Models**: Download and manage local Whisper models
 - **Storage Cleanup**: Remove downloaded Whisper models from cache to reclaim space
-- **Settings**: Configure API keys, customize hotkeys, select or test the microphone, preview or adjust dictation sounds, and manage permissions. If a selected microphone disconnects, EchoDraft shows the fallback and temporarily uses the system default.
+- **Settings**: Configure API keys, customize hotkeys, select or test the microphone, preview or adjust dictation sounds, manage permissions, and open **Writing** for explicit local replacements and fixed application styles. If a selected microphone disconnects, EchoDraft shows the fallback and temporarily uses the system default.
+- **Developer**: `Delete logs and transcripts older than 30 days` previews one exact cutoff and requires two confirmations before deleting eligible History, every To Do status, linked alternatives/flags, and verified old desktop logs. It excludes captured audio and mobile data.
 
 ### Mobile To Do inbox
 
 The private Android companion uses Microsoft sign-in and delegated `Files.ReadWrite.AppFolder` access to publish into its own `Apps/EchoDraft Mobile Inbox` OneDrive folder; it does not open a network port on the PC or require a custom backend. In **Control Panel → To Do**, choose the local PC copy of that folder after OneDrive syncs it. The compact 2×1 widget has a standard microphone and a violet microphone-with-terminal button for Codex prompt mode. Standard phone recordings follow the desktop app's selected transcription provider, model, cleanup setting, and generated-title contract. Prompt recordings use the same transcription path followed by GPT-5.6 Luna at maximum reasoning effort; Android does not transcribe either mode locally.
 
-Mobile results appear only in **To Do**. They do not paste automatically, replace the clipboard, or create a second History item. The floating desktop indicator identifies mobile work as **To Do**, then shows a brief processed or automatic-retry state when processing finishes instead of leaving stale progress visible. While the dictation renderer is ready, EchoDraft checks the selected sync folder every five seconds and removes an uploaded audio/manifest pair only after the cleaned memo has been saved idempotently to To Do. A bounded processing timeout releases an unresponsive renderer request for retry. The folder can therefore be empty during normal operation; completed memo pairs disappear after consumption. The Android companion is intended for private sideloading, not app-store distribution.
+Mobile results appear only in **To Do**. They do not paste automatically, replace the clipboard, or create a second History item. The tray shows the pending count and offers **Copy newest To Do**; that action copies only the newest pending memo and never pastes or submits it. Marked items remain locally searchable under Archived. The floating desktop indicator identifies mobile work as **To Do**, then shows a brief processed or automatic-retry state when processing finishes instead of leaving stale progress visible. While the dictation renderer is ready, EchoDraft checks the selected sync folder every five seconds and removes an uploaded audio/manifest pair only after the cleaned memo has been saved idempotently to To Do. A bounded processing timeout releases an unresponsive renderer request for retry. The folder can therefore be empty during normal operation; completed memo pairs disappear after consumption. The Android companion is intended for private sideloading, not app-store distribution.
 
 Mobile failures produce a bounded, strictly allowlisted, content-free `echodraft-mobile-diagnostics.jsonl` support file in the OneDrive app folder when Graph is available. A private local copy is retained and retried if OneDrive is temporarily unavailable; the log excludes dictation/audio, exception messages, paths/URIs, account details, credentials, and phone/device identifiers.
 
@@ -408,6 +409,12 @@ Improve transcription accuracy for specific names and technical terms on support
 - Technical jargon (e.g., "Kubernetes", "OAuth")
 - Brand names (e.g., "EchoDraft", "whisper.cpp")
 - Domain-specific terms (e.g., "amortization", "polymerase")
+
+### Local corrections and application styles
+
+Open **Settings → Writing** to add an explicit `heard phrase → written form` correction. These boundary-aware rules are stored locally, remain separate from the speech dictionary, and run before optional cleanup. EchoDraft does not learn rules automatically; each rule can be previewed, edited, disabled, or deleted.
+
+The same page can map an application process name to one fixed **Document**, **Message**, or **Technical** style. Routing uses the process name only. EchoDraft does not capture or send the window title, selection, clipboard contents, screenshot, or surrounding text for this feature. Prompt hotkeys ignore application styles and continue to use GPT-5.6 Luna with maximum reasoning effort.
 
 ### Processing Options
 
@@ -752,6 +759,7 @@ If you need to diagnose lag, missing audio, or truncated transcripts, enable **D
   - Fallback: the app’s `userData/logs` directory (if the install directory isn’t writable)
 - Use **Open Logs Folder** in the Developer section to jump to the current log location.
 - Use **Delete Diagnostic Data** to permanently remove EchoDraft daily logs and rolling input-audio captures from its verified log locations. Source audio is retained for completed desktop and mobile dictations even when debug logging is off. Turn debug mode off first if you do not want a fresh log created.
+- Use **Delete logs and transcripts older than 30 days** for the separate age-based flow. It uses two cancel-default confirmations and deletes only previewed History, every To Do status, their linked alternatives/flags, and verified desktop JSONL logs strictly older than one captured UTC cutoff. It never deletes captured audio or mobile data.
 
 For full details (enable/disable options, log format, and what gets captured), see `DEBUG.md`.
 

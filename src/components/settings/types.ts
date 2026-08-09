@@ -4,6 +4,7 @@ export type SettingsSectionType =
   | "hotkeys"
   | "transcription"
   | "dictionary"
+  | "writing"
   | "aiModels"
   | "prompts"
   | "permissions"

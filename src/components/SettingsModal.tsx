@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Lock,
   Keyboard,
+  PenLine,
 } from "lucide-react";
 import SidebarModal, { SidebarItem } from "./ui/SidebarModal";
 import SettingsPage, { SettingsSectionType } from "./SettingsPage";
@@ -71,6 +72,13 @@ export default function SettingsModal({
       label: "AI Models",
       icon: Brain,
       description: "Text cleanup & enhancement",
+      group: "Intelligence",
+    },
+    {
+      id: "writing",
+      label: "Writing",
+      icon: PenLine,
+      description: "Corrections and application styles",
       group: "Intelligence",
     },
     {

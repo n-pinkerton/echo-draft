@@ -1,7 +1,19 @@
 import { useState } from "react";
 import { Button } from "./button";
-import { Copy, Trash2, ChevronDown, ChevronUp, SquareTerminal } from "lucide-react";
-import type { TranscriptionItem as TranscriptionItemType } from "../../types/electron";
+import {
+  Copy,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  RefreshCw,
+  SquareTerminal,
+} from "lucide-react";
+import type {
+  CorrectionReason,
+  ReprocessingMode,
+  TranscriptionItem as TranscriptionItemType,
+} from "../../types/electron";
 import { getReasoningModelLabel } from "../../models/ModelRegistry";
 import { cleanupAppliedPreferredSpelling } from "../../utils/cleanupOutcome";
 import { sanitizeOpaqueRequestId } from "../../utils/diagnosticSanitizers";
@@ -16,6 +28,11 @@ interface TranscriptionItemProps {
   onCopyRaw: (text: string) => void;
   onCopyDiagnostics: (item: TranscriptionItemType) => void;
   onDelete: (id: number) => void;
+  onReprocess?: (item: TranscriptionItemType, mode: ReprocessingMode) => Promise<void>;
+  onSetCorrectionFlag?: (
+    item: TranscriptionItemType,
+    reason: CorrectionReason | null
+  ) => Promise<void>;
 }
 
 const TEXT_PREVIEW_LENGTH = 180;
@@ -128,8 +145,12 @@ export default function TranscriptionItem({
   onCopyRaw,
   onCopyDiagnostics,
   onDelete,
+  onReprocess,
+  onSetCorrectionFlag,
 }: TranscriptionItemProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [reprocessingMode, setReprocessingMode] = useState<ReprocessingMode | null>(null);
+  const [isUpdatingFlag, setIsUpdatingFlag] = useState(false);
   const detailsPanelId = `transcription-details-${item.id}`;
 
   const meta = item.meta || {};
@@ -373,6 +394,12 @@ export default function TranscriptionItem({
                 {deliveryPresentation.badge}
               </span>
             ) : null}
+            {item.correctionFlag ? (
+              <span className="inline-flex items-center rounded-sm bg-warning/10 px-1.5 py-px text-[10px] font-medium text-warning">
+                Needs correction ·{" "}
+                {item.correctionFlag.reason.replace("paste-delivery", "paste/delivery")}
+              </span>
+            ) : null}
           </div>
 
           {title ? (
@@ -397,7 +424,7 @@ export default function TranscriptionItem({
               onClick={() => onCopyClean(item.text)}
               className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
             >
-              <Copy size={12} className="mr-1" />
+              <Copy size={12} className="mr-1" aria-hidden="true" />
               Copy
             </Button>
             <Button
@@ -423,6 +450,86 @@ export default function TranscriptionItem({
             >
               Diagnostics
             </Button>
+            {onReprocess ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    setReprocessingMode("cleanup");
+                    try {
+                      await onReprocess(item, "cleanup");
+                    } finally {
+                      setReprocessingMode(null);
+                    }
+                  }}
+                  disabled={!hasRawText || reprocessingMode !== null}
+                  title={
+                    hasRawText
+                      ? "Create and copy a new cleanup alternative"
+                      : "Raw transcript is required to clean again"
+                  }
+                  className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  {reprocessingMode === "cleanup" ? (
+                    <Loader2 size={12} className="mr-1 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <RefreshCw size={12} className="mr-1" aria-hidden="true" />
+                  )}
+                  Clean again
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    setReprocessingMode("codex-prompt");
+                    try {
+                      await onReprocess(item, "codex-prompt");
+                    } finally {
+                      setReprocessingMode(null);
+                    }
+                  }}
+                  disabled={!hasRawText || reprocessingMode !== null}
+                  title={
+                    hasRawText
+                      ? "Create and copy a Luna prompt alternative"
+                      : "Raw transcript is required to make a Codex prompt"
+                  }
+                  className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  {reprocessingMode === "codex-prompt" ? (
+                    <Loader2 size={12} className="mr-1 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <SquareTerminal size={12} className="mr-1" aria-hidden="true" />
+                  )}
+                  Make Codex prompt
+                </Button>
+              </>
+            ) : null}
+            {onSetCorrectionFlag ? (
+              <select
+                aria-label={`Correction flag for dictation ${total - index}`}
+                name={`transcription-${item.id}-correction-flag`}
+                value={item.correctionFlag?.reason || ""}
+                disabled={isUpdatingFlag}
+                onChange={async (event) => {
+                  const value = event.target.value as CorrectionReason | "";
+                  setIsUpdatingFlag(true);
+                  try {
+                    await onSetCorrectionFlag(item, value || null);
+                  } finally {
+                    setIsUpdatingFlag(false);
+                  }
+                }}
+                className="h-6 rounded-md border border-border bg-background px-1.5 text-[11px] text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <option value="">No correction flag</option>
+                <option value="transcription">Needs correction: Transcription</option>
+                <option value="cleanup">Needs correction: Cleanup</option>
+                <option value="prompt">Needs correction: Prompt</option>
+                <option value="paste-delivery">Needs correction: Paste/delivery</option>
+              </select>
+            ) : null}
             <Button
               size="sm"
               variant="ghost"
@@ -434,12 +541,12 @@ export default function TranscriptionItem({
               {isExpanded ? (
                 <>
                   Hide
-                  <ChevronUp size={12} className="ml-1" />
+                  <ChevronUp size={12} className="ml-1" aria-hidden="true" />
                 </>
               ) : (
                 <>
                   Details
-                  <ChevronDown size={12} className="ml-1" />
+                  <ChevronDown size={12} className="ml-1" aria-hidden="true" />
                 </>
               )}
             </Button>
@@ -450,7 +557,7 @@ export default function TranscriptionItem({
               aria-label={`Delete dictation ${total - index}`}
               className="h-6 w-6 rounded-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10"
             >
-              <Trash2 size={12} />
+              <Trash2 size={12} aria-hidden="true" />
             </Button>
           </div>
 
@@ -473,6 +580,38 @@ export default function TranscriptionItem({
                   </p>
                 )}
               </div>
+
+              {item.alternatives && item.alternatives.length > 0 ? (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Saved alternatives
+                  </p>
+                  <div className="mt-1 space-y-1.5">
+                    {item.alternatives.map((alternative) => (
+                      <div
+                        key={alternative.id}
+                        className="rounded border border-border/50 bg-background/60 p-2"
+                      >
+                        <p className="text-[10px] font-medium text-muted-foreground">
+                          {alternative.mode === "codex-prompt" ? "Codex prompt" : "Cleanup"}
+                        </p>
+                        <p className="mt-0.5 whitespace-pre-wrap break-words text-[12px] text-foreground/90">
+                          {alternative.text}
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onCopyClean(alternative.text)}
+                          className="mt-1 h-6 px-1.5 text-[11px] text-muted-foreground"
+                        >
+                          <Copy size={11} className="mr-1" aria-hidden="true" />
+                          Copy alternative
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">

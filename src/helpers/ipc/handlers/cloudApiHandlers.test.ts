@@ -48,4 +48,18 @@ describe("cloud IPC public error boundary", () => {
       model: "gpt-5.6-terra",
     });
   });
+
+  it("allows only one fixed application style through managed cleanup options", () => {
+    expect(
+      normalizeCloudReasonOptions({
+        model: "gpt-5.6-terra",
+        writingStyle: "technical",
+        applicationProcessName: "private-app",
+        windowTitle: "Private document title",
+      })
+    ).toEqual({ model: "gpt-5.6-terra", writingStyle: "technical" });
+    expect(
+      normalizeCloudReasonOptions({ model: "gpt-5.6-terra", writingStyle: "executive" })
+    ).toEqual({ model: "gpt-5.6-terra" });
+  });
 });

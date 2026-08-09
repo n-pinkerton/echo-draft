@@ -80,6 +80,7 @@ describe("HistoryPanel", () => {
     const setModeFilter = vi.fn();
     const setStatusFilter = vi.fn();
     const setProviderFilter = vi.fn();
+    const setCorrectionFilter = vi.fn();
 
     render(
       <HistoryPanel
@@ -96,6 +97,8 @@ describe("HistoryPanel", () => {
         setStatusFilter={setStatusFilter}
         providerFilter="openai"
         setProviderFilter={setProviderFilter}
+        correctionFilter="needs-correction"
+        setCorrectionFilter={setCorrectionFilter}
         exportTranscriptions={vi.fn(async () => {})}
         isExporting={false}
         copyToClipboard={vi.fn(async () => {})}
@@ -110,6 +113,45 @@ describe("HistoryPanel", () => {
     expect(setModeFilter).toHaveBeenCalledWith("all");
     expect(setStatusFilter).toHaveBeenCalledWith("all");
     expect(setProviderFilter).toHaveBeenCalledWith("all");
+    expect(setCorrectionFilter).toHaveBeenCalledWith("all");
+  });
+
+  it("exposes the local Needs correction evaluation filter", () => {
+    const setCorrectionFilter = vi.fn();
+    const flagged = {
+      ...makeItem(1, "hello"),
+      correctionFlag: { id: 4, reason: "cleanup" },
+    } as any;
+    render(
+      <HistoryPanel
+        history={[flagged]}
+        filteredHistory={[flagged]}
+        providerOptions={["openai"]}
+        isLoading={false}
+        hotkey="F9"
+        searchQuery=""
+        setSearchQuery={vi.fn()}
+        modeFilter="all"
+        setModeFilter={vi.fn()}
+        statusFilter="all"
+        setStatusFilter={vi.fn()}
+        providerFilter="all"
+        setProviderFilter={vi.fn()}
+        correctionFilter="all"
+        setCorrectionFilter={setCorrectionFilter}
+        exportTranscriptions={vi.fn(async () => {})}
+        isExporting={false}
+        copyToClipboard={vi.fn(async () => {})}
+        copyDiagnostics={vi.fn(async () => {})}
+        deleteTranscription={vi.fn(async () => {})}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Filter by correction flag"), {
+      target: { value: "needs-correction" },
+    });
+    expect(setCorrectionFilter).toHaveBeenCalledWith("needs-correction");
+    expect(screen.getByText("Needs correction · cleanup")).toBeInTheDocument();
   });
 
   it("renders transcription list", () => {

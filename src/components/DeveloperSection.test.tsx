@@ -20,6 +20,11 @@ describe("DeveloperSection", () => {
     bytesDeleted: 2048,
     freshLogStarted: true,
   }));
+  const purgeDataOlderThan30Days = vi.fn(async () => ({
+    success: true,
+    database: { success: true, historyDeleted: 2, todosDeleted: 3 },
+    logs: { success: true, filesDeleted: 4, bytesDeleted: 4096, residualFiles: 0 },
+  }));
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -37,6 +42,7 @@ describe("DeveloperSection", () => {
       setDebugLogging: vi.fn(),
       openLogsFolder: vi.fn(async () => ({ success: true })),
       purgeDebugArtifacts,
+      purgeDataOlderThan30Days,
     };
   });
 
@@ -49,6 +55,12 @@ describe("DeveloperSection", () => {
       screen.getByRole("switch", { name: "Enable debug logging and voice recording capture" })
     ).toHaveAccessibleDescription(/may include dictated text/i);
     expect(screen.getByRole("button", { name: "Delete Diagnostic Data" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete logs and transcripts older than 30 days" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Captured audio and mobile inbox data are excluded/i)
+    ).toBeInTheDocument();
   });
 
   it("keeps the warning visible and delegates enablement consent to the main process", async () => {
@@ -93,5 +105,51 @@ describe("DeveloperSection", () => {
         })
       )
     );
+  });
+
+  it("delegates the separate 30-day flow and reports each deletion surface", async () => {
+    render(<DeveloperSection />);
+    const deleteButton = await screen.findByRole("button", {
+      name: "Delete logs and transcripts older than 30 days",
+    });
+
+    fireEvent.click(deleteButton);
+
+    await waitFor(() => expect(purgeDataOlderThan30Days).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Old local data deleted",
+          description: expect.stringMatching(/2 History items.*3 To Dos.*4 desktop log files/i),
+        })
+      )
+    );
+  });
+
+  it("does not show invented deletion counts when the result is uncertain", async () => {
+    (purgeDataOlderThan30Days as any).mockResolvedValueOnce({
+      success: false,
+      aborted: false,
+      uncertain: true,
+      error: "Review the local data before trying again.",
+    });
+    render(<DeveloperSection />);
+    const deleteButton = await screen.findByRole("button", {
+      name: "Delete logs and transcripts older than 30 days",
+    });
+
+    fireEvent.click(deleteButton);
+
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Deletion result unconfirmed",
+          description: expect.stringContaining(
+            "EchoDraft could not confirm how much of the reviewed data was deleted."
+          ),
+        })
+      )
+    );
+    expect(toast.mock.calls.at(-1)?.[0]?.description).not.toMatch(/Deleted 0/i);
   });
 });

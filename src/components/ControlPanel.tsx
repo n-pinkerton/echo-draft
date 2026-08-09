@@ -12,13 +12,19 @@ import {
   removeTranscription as removeFromStore,
   clearTranscriptions as clearStoreTranscriptions,
 } from "../stores/transcriptionStore";
-import type { TodoItem, TranscriptionItem as TranscriptionItemType } from "../types/electron";
+import type {
+  CorrectionReason,
+  ReprocessingMode,
+  TodoItem,
+  TranscriptionItem as TranscriptionItemType,
+} from "../types/electron";
 import type { MobileInboxStatus } from "../types/electronApi/mobileInbox";
 import { sanitizeTranscriptionMetaForDiagnostics } from "../utils/transcriptionDiagnostics";
 import { filterHistory, getProviderOptions } from "./controlPanel/historyFilterUtils";
 import ControlPanelView from "./controlPanel/ControlPanelView";
 import { useFileTranscription } from "./controlPanel/useFileTranscription";
 import { useWindowsPushToTalkStatus } from "../hooks/useWindowsPushToTalkStatus";
+import { reprocessStoredItem } from "../services/reprocessingService";
 
 const TODO_PAGE_SIZE = 100;
 
@@ -43,6 +49,8 @@ export default function ControlPanel() {
     "all" | "success" | "delivery_issue" | "error" | "cancelled"
   >("all");
   const [providerFilter, setProviderFilter] = useState("all");
+  const [correctionFilter, setCorrectionFilter] = useState<"all" | "needs-correction">("all");
+  const [archiveRefreshKey, setArchiveRefreshKey] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
   const [showCloudMigrationBanner, setShowCloudMigrationBanner] = useState(false);
   const cloudMigrationProcessed = useRef(false);
@@ -124,6 +132,13 @@ export default function ControlPanel() {
       setTodos((current) => [item, ...current.filter((candidate) => candidate.id !== item.id)]);
     });
   }, []);
+
+  useEffect(() => {
+    return window.electronAPI.onRetentionDataChanged?.(() => {
+      setArchiveRefreshKey((current) => current + 1);
+      void loadPanelData();
+    });
+  }, [loadPanelData]);
 
   useEffect(() => {
     if (updateStatus.updateDownloaded && !isDownloading) {
@@ -220,13 +235,16 @@ export default function ControlPanel() {
   }, [history]);
 
   const filteredHistory = useMemo(() => {
-    return filterHistory(history, {
+    const filtered = filterHistory(history, {
       searchQuery,
       modeFilter,
       statusFilter,
       providerFilter,
     });
-  }, [history, modeFilter, providerFilter, searchQuery, statusFilter]);
+    return correctionFilter === "needs-correction"
+      ? filtered.filter((item) => Boolean(item.correctionFlag))
+      : filtered;
+  }, [correctionFilter, history, modeFilter, providerFilter, searchQuery, statusFilter]);
 
   const exportTranscriptions = async (format: "csv" | "json") => {
     if (!window.electronAPI?.exportTranscriptions) {
@@ -328,6 +346,7 @@ export default function ControlPanel() {
       } catch {
         setTodos((current) => current.filter((item) => item.id !== id));
       }
+      setArchiveRefreshKey((current) => current + 1);
       toast({
         title: "Marked as actioned",
         description: "The mobile memo was removed from To Do.",
@@ -337,6 +356,109 @@ export default function ControlPanel() {
     } catch {
       toast({
         title: "Could not update To Do",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const reprocessTranscription = async (item: TranscriptionItemType, mode: ReprocessingMode) => {
+    try {
+      const result = await reprocessStoredItem(item, "transcription", mode);
+      try {
+        await initializeTranscriptions(250);
+      } catch {
+        // The alternative is already saved; a later History refresh can recover it.
+      }
+      if (!result.copied) {
+        toast({
+          title: "Alternative saved, but not copied",
+          description: "Copy the saved alternative from History.",
+          variant: "destructive",
+          duration: 4000,
+        });
+        return;
+      }
+      toast({
+        title: mode === "codex-prompt" ? "Codex prompt copied" : "New cleanup copied",
+        description: "The source stayed unchanged and the alternative was saved.",
+        variant: "success",
+        duration: 3000,
+      });
+    } catch (error) {
+      toast({
+        title: "Could not process again",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const reprocessTodo = async (item: TodoItem, mode: ReprocessingMode) => {
+    try {
+      const result = await reprocessStoredItem(item, "todo", mode);
+      try {
+        setTodos(await window.electronAPI.getPendingTodos(TODO_PAGE_SIZE));
+      } catch {
+        // The alternative is already saved; a later To Do refresh can recover it.
+      }
+      setArchiveRefreshKey((current) => current + 1);
+      if (!result.copied) {
+        toast({
+          title: "Alternative saved, but not copied",
+          description: "Copy the saved alternative from To Do.",
+          variant: "destructive",
+          duration: 4000,
+        });
+        return;
+      }
+      toast({
+        title: mode === "codex-prompt" ? "Codex prompt copied" : "New cleanup copied",
+        description: "The mobile memo stayed unchanged and the alternative was saved.",
+        variant: "success",
+        duration: 3000,
+      });
+    } catch (error) {
+      toast({
+        title: "Could not process again",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const setTranscriptionCorrectionFlag = async (
+    item: TranscriptionItemType,
+    reason: CorrectionReason | null
+  ) => {
+    try {
+      if (reason) {
+        await window.electronAPI.setCorrectionFlag({ transcriptionId: item.id, reason });
+      } else {
+        await window.electronAPI.clearCorrectionFlag({ transcriptionId: item.id });
+      }
+      await initializeTranscriptions(250);
+    } catch {
+      toast({
+        title: "Could not update correction flag",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const setTodoCorrectionFlag = async (item: TodoItem, reason: CorrectionReason | null) => {
+    try {
+      if (reason) {
+        await window.electronAPI.setCorrectionFlag({ todoId: item.id, reason });
+      } else {
+        await window.electronAPI.clearCorrectionFlag({ todoId: item.id });
+      }
+      setTodos(await window.electronAPI.getPendingTodos(TODO_PAGE_SIZE));
+      setArchiveRefreshKey((current) => current + 1);
+    } catch {
+      toast({
+        title: "Could not update correction flag",
         description: "Please try again.",
         variant: "destructive",
       });
@@ -444,6 +566,8 @@ export default function ControlPanel() {
       setStatusFilter={setStatusFilter}
       providerFilter={providerFilter}
       setProviderFilter={setProviderFilter}
+      correctionFilter={correctionFilter}
+      setCorrectionFilter={setCorrectionFilter}
       showCloudMigrationBanner={showCloudMigrationBanner}
       setShowCloudMigrationBanner={setShowCloudMigrationBanner}
       useReasoningModel={useReasoningModel}
@@ -456,6 +580,11 @@ export default function ControlPanel() {
       copyDiagnostics={copyDiagnostics}
       deleteTranscription={deleteTranscription}
       markTodoActioned={markTodoActioned}
+      reprocessTranscription={reprocessTranscription}
+      reprocessTodo={reprocessTodo}
+      setTranscriptionCorrectionFlag={setTranscriptionCorrectionFlag}
+      setTodoCorrectionFlag={setTodoCorrectionFlag}
+      archiveRefreshKey={archiveRefreshKey}
     />
   );
 }

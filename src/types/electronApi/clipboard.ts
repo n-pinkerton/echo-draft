@@ -9,9 +9,18 @@ export interface ElectronAPIClipboard {
     error?: string;
     target?: InsertionTargetSnapshot;
   }>;
+  captureApplicationProcess?: (sessionId: string) => Promise<{
+    success: boolean;
+    reason?: string;
+    applicationProcessName?: string;
+  }>;
   e2eCreateDictationSession?: (
     outputMode?: "insert" | "clipboard" | "file"
-  ) => Promise<{ sessionId: string; outputMode: "insert" | "clipboard" | "file"; triggeredAt: number }>;
+  ) => Promise<{
+    sessionId: string;
+    outputMode: "insert" | "clipboard" | "file";
+    triggeredAt: number;
+  }>;
   checkPasteTools: () => Promise<PasteToolsResult>;
   checkAccessibilityPermission: () => Promise<boolean>;
 }

@@ -2,6 +2,7 @@ const debugLogger = require("../../debugLogger");
 const { buildCloudRequestUrl } = require("../cloud/cloudContext");
 const { requireTrustedRenderer } = require("../trustedRenderer");
 const { normalizeLanguageCode } = require("../../../utils/languagePolicy.cjs");
+const { APP_WRITING_STYLES } = require("../../../config/cleanupPolicy.cjs");
 
 const CLOUD_CLEANUP_MODELS = new Set(["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"]);
 const SAFE_METADATA_TOKEN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
@@ -55,9 +56,13 @@ const normalizeCloudTranscriptionOptions = (value = {}) => {
 const normalizeCloudReasonOptions = (value = {}) => {
   const options = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const language = normalizeLanguageCode(options.language, { allowAuto: true });
+  const writingStyle = APP_WRITING_STYLES.has(options.writingStyle)
+    ? options.writingStyle
+    : undefined;
   return {
     model: options.model,
     ...(language ? { language } : {}),
+    ...(writingStyle ? { writingStyle } : {}),
   };
 };
 
@@ -340,6 +345,7 @@ function registerCloudApiHandlers(
         {
           model: requestedModel,
           language: safeOptions.language,
+          writingStyle: safeOptions.writingStyle,
           textLength: text?.length || 0,
         },
         "cloud-api"
@@ -361,6 +367,7 @@ function registerCloudApiHandlers(
           text,
           model: requestedModel || undefined,
           language: safeOptions.language,
+          writingStyle: safeOptions.writingStyle,
           sessionId,
           clientType: "desktop",
           appVersion: app.getVersion(),

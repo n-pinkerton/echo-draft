@@ -64,7 +64,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getTranscriptions: (limit) => ipcRenderer.invoke("db-get-transcriptions", limit),
   getLatestTranscription: () => ipcRenderer.invoke("db-get-latest-transcription"),
   getPendingTodos: (limit) => ipcRenderer.invoke("db-get-pending-todos", limit),
+  getArchivedTodos: (options) => ipcRenderer.invoke("db-get-archived-todos", options),
   markTodoActioned: (id) => ipcRenderer.invoke("db-mark-todo-actioned", id),
+  saveReprocessingAlternative: (payload) =>
+    ipcRenderer.invoke("db-save-reprocessing-alternative", payload),
+  getCorrectionRules: () => ipcRenderer.invoke("db-get-correction-rules"),
+  getWritingPreferences: (processName) =>
+    ipcRenderer.invoke("db-get-writing-preferences", processName),
+  saveCorrectionRule: (payload) => ipcRenderer.invoke("db-save-correction-rule", payload),
+  deleteCorrectionRule: (id) => ipcRenderer.invoke("db-delete-correction-rule", id),
+  getAppStyleProfiles: () => ipcRenderer.invoke("db-get-app-style-profiles"),
+  saveAppStyleProfile: (payload) => ipcRenderer.invoke("db-save-app-style-profile", payload),
+  deleteAppStyleProfile: (id) => ipcRenderer.invoke("db-delete-app-style-profile", id),
+  setCorrectionFlag: (payload) => ipcRenderer.invoke("db-set-correction-flag", payload),
+  clearCorrectionFlag: (payload) => ipcRenderer.invoke("db-clear-correction-flag", payload),
   getMobileInboxStatus: () => ipcRenderer.invoke("mobile-inbox-get-status"),
   chooseMobileInboxFolder: () => ipcRenderer.invoke("mobile-inbox-choose-folder"),
   completeMobileInboxItem: (requestId, result) =>
@@ -122,6 +135,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("transcriptions-cleared", listener);
   },
   onTodoAdded: registerListener("todo-added", (callback) => (_event, item) => callback(item)),
+  onRetentionDataChanged: registerListener(
+    "retention-data-changed",
+    (callback) => (_event, payload) => callback(payload)
+  ),
   onMobileInboxProcess: registerListener(
     "mobile-inbox-process",
     (callback) => (_event, payload) => callback(payload)
@@ -171,6 +188,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Clipboard functions
   writeClipboard: (text) => ipcRenderer.invoke("write-clipboard", text),
   captureInsertionTarget: (sessionId) => ipcRenderer.invoke("capture-insertion-target", sessionId),
+  captureApplicationProcess: (sessionId) =>
+    ipcRenderer.invoke("capture-application-process", sessionId),
   checkPasteTools: () => ipcRenderer.invoke("check-paste-tools"),
   checkAccessibilityPermission: () => ipcRenderer.invoke("check-accessibility-permission"),
 
@@ -325,6 +344,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   debugSaveAudio: (payload) => ipcRenderer.invoke("debug-save-audio", payload),
   openLogsFolder: () => ipcRenderer.invoke("open-logs-folder"),
   purgeDebugArtifacts: () => ipcRenderer.invoke("purge-debug-artifacts"),
+  purgeDataOlderThan30Days: () => ipcRenderer.invoke("purge-data-older-than-30-days"),
 
   // System settings helpers for microphone/audio permissions
   requestMicrophoneAccess: () => ipcRenderer.invoke("request-microphone-access"),

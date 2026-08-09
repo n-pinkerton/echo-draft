@@ -6,6 +6,7 @@ import { SYNTHETIC_LONG_FORM_MODEL_REPAIR } from "./__fixtures__/cleanupIncident
 describe("ReasoningCleanupService", () => {
   beforeEach(() => {
     localStorage.clear();
+    (window as any).electronAPI = {};
   });
 
   it("accepts usable managed cleanup candidates despite advisory fidelity diagnostics", () => {
@@ -112,6 +113,94 @@ describe("ReasoningCleanupService", () => {
       provider: "openai",
       retryCount: 0,
     });
+  });
+
+  it("uses database preferences as the sole style authority and keeps prompt runtime style-free", async () => {
+    (window as any).electronAPI = {
+      getWritingPreferences: vi.fn(async () => ({
+        correctionRules: [
+          {
+            id: 1,
+            sourcePhrase: "eco draft",
+            replacementText: "EchoDraft",
+            enabled: true,
+          },
+        ],
+        writingStyle: "document",
+      })),
+    };
+    const reasoningService = {
+      isAvailable: vi.fn(async () => true),
+      processText: vi.fn(async () => "Continue with EchoDraft."),
+    };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService,
+    });
+
+    await expect(
+      svc.prepareTranscriptionInput("continue with eco draft", {
+        applicationProcessName: "winword.exe",
+        writingStyle: "technical",
+      })
+    ).resolves.toMatchObject({
+      text: "continue with EchoDraft",
+      correctionCount: 1,
+      writingStyle: "document",
+      runtime: { applicationProcessName: "winword.exe", writingStyle: "document" },
+    });
+
+    const result = await svc.processTranscriptionWithOutcome(
+      "continue with eco draft",
+      "openai",
+      false,
+      {
+        processingMode: "codex-prompt",
+        applicationProcessName: "winword.exe",
+        writingStyle: "technical",
+      }
+    );
+    expect(reasoningService.processText).toHaveBeenCalledWith(
+      "continue with EchoDraft",
+      "gpt-5.6-luna",
+      null,
+      {
+        cleanupPromptMode: "codex-prompt",
+        reasoningEffort: "max",
+      }
+    );
+    expect(result.cleanup).toMatchObject({ writingStyle: null, correctionCount: 1 });
+  });
+
+  it("waits for a late non-prompt process name only at writing-preference preparation", async () => {
+    let resolveProcessName!: (value: string) => void;
+    const applicationProcessPromise = new Promise<string>((resolve) => {
+      resolveProcessName = resolve;
+    });
+    const getWritingPreferences = vi.fn(async () => ({
+      correctionRules: [],
+      writingStyle: "technical",
+    }));
+    (window as any).electronAPI = { getWritingPreferences };
+    const svc = new ReasoningCleanupService({
+      logger: { logReasoning: vi.fn() },
+      reasoningService: { isAvailable: vi.fn(), processText: vi.fn() },
+    });
+
+    const preparedPromise = svc.prepareTranscriptionInput("exact text", {
+      applicationProcessPromise,
+    });
+    await Promise.resolve();
+    expect(getWritingPreferences).not.toHaveBeenCalled();
+
+    resolveProcessName("code.exe");
+    await expect(preparedPromise).resolves.toMatchObject({
+      writingStyle: "technical",
+      runtime: { applicationProcessName: "code.exe", writingStyle: "technical" },
+    });
+    const prepared = await preparedPromise;
+    expect(prepared.runtime).not.toHaveProperty("applicationProcessPromise");
+    expect(getWritingPreferences).toHaveBeenCalledWith("code.exe");
   });
 
   it("keeps raw prompt dictation instead of running the normal fidelity repair", async () => {

@@ -170,7 +170,7 @@ class ReasoningService extends BaseReasoningService {
         openAiBase,
         endpointCandidates,
         getSystemPrompt: (value, selectedModel) =>
-          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
+          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode, config.writingStyle),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
         getStoredOpenAiPreference: (base) =>
@@ -181,6 +181,7 @@ class ReasoningService extends BaseReasoningService {
           cleanupPromptMode: config.cleanupPromptMode,
           language: this.getPreferredLanguage(),
           dictionaryEntries: this.getCustomDictionary(),
+          writingStyle: config.writingStyle,
         }),
       });
     } catch (error) {
@@ -275,13 +276,14 @@ class ReasoningService extends BaseReasoningService {
         config,
         apiKey,
         getSystemPrompt: (value, selectedModel) =>
-          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
+          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode, config.writingStyle),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
         fetchFn: createProviderFetch("gemini", {
           cleanupPromptMode: config.cleanupPromptMode,
           language: this.getPreferredLanguage(),
           dictionaryEntries: this.getCustomDictionary(),
+          writingStyle: config.writingStyle,
         }),
       });
     } catch (error) {
@@ -322,13 +324,14 @@ class ReasoningService extends BaseReasoningService {
         config,
         providerName: "Groq",
         getSystemPrompt: (value, selectedModel) =>
-          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode),
+          this.getSystemPrompt(value, selectedModel, config.cleanupPromptMode, config.writingStyle),
         calculateMaxTokens: (inputLength, minTokens, maxTokens, multiplier) =>
           this.calculateMaxTokens(inputLength, minTokens, maxTokens, multiplier),
         fetchFn: createProviderFetch("groq", {
           cleanupPromptMode: config.cleanupPromptMode,
           language: this.getPreferredLanguage(),
           dictionaryEntries: this.getCustomDictionary(),
+          writingStyle: config.writingStyle,
         }),
       });
     } catch (error) {

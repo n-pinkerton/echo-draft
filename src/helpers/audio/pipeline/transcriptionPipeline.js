@@ -49,6 +49,12 @@ export class TranscriptionPipeline {
     const processingRuntime = {
       ...runtime,
       ...(processingMode ? { processingMode } : {}),
+      ...(typeof context?.applicationProcessName === "string"
+        ? { applicationProcessName: context.applicationProcessName }
+        : {}),
+      ...(typeof context?.applicationProcessPromise?.then === "function"
+        ? { applicationProcessPromise: context.applicationProcessPromise }
+        : {}),
     };
     const signal = processingRuntime.signal || null;
 

@@ -7,7 +7,12 @@ import UpgradePrompt from "../UpgradePrompt";
 import { AlertDialog, ConfirmDialog } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import type { TodoItem, TranscriptionItem as TranscriptionItemType } from "../../types/electron";
+import type {
+  CorrectionReason,
+  ReprocessingMode,
+  TodoItem,
+  TranscriptionItem as TranscriptionItemType,
+} from "../../types/electron";
 import type { MobileInboxStatus } from "../../types/electronApi/mobileInbox";
 import FileTranscribeDialog from "./FileTranscribeDialog";
 import UpdateActionButton from "./UpdateActionButton";
@@ -83,6 +88,8 @@ type Props = {
   setStatusFilter: (next: "all" | "success" | "delivery_issue" | "error" | "cancelled") => void;
   providerFilter: string;
   setProviderFilter: (next: string) => void;
+  correctionFilter: "all" | "needs-correction";
+  setCorrectionFilter: (next: "all" | "needs-correction") => void;
 
   showCloudMigrationBanner: boolean;
   setShowCloudMigrationBanner: (next: boolean) => void;
@@ -101,6 +108,14 @@ type Props = {
   copyDiagnostics: (item: TranscriptionItemType) => Promise<void>;
   deleteTranscription: (id: number) => Promise<void>;
   markTodoActioned: (id: number) => Promise<void>;
+  reprocessTranscription: (item: TranscriptionItemType, mode: ReprocessingMode) => Promise<void>;
+  reprocessTodo: (item: TodoItem, mode: ReprocessingMode) => Promise<void>;
+  setTranscriptionCorrectionFlag: (
+    item: TranscriptionItemType,
+    reason: CorrectionReason | null
+  ) => Promise<void>;
+  setTodoCorrectionFlag: (item: TodoItem, reason: CorrectionReason | null) => Promise<void>;
+  archiveRefreshKey: number;
 };
 
 export default function ControlPanelView(props: Props) {
@@ -157,6 +172,8 @@ export default function ControlPanelView(props: Props) {
     setStatusFilter,
     providerFilter,
     setProviderFilter,
+    correctionFilter,
+    setCorrectionFilter,
     showCloudMigrationBanner,
     setShowCloudMigrationBanner,
     useReasoningModel,
@@ -169,6 +186,11 @@ export default function ControlPanelView(props: Props) {
     copyDiagnostics,
     deleteTranscription,
     markTodoActioned,
+    reprocessTranscription,
+    reprocessTodo,
+    setTranscriptionCorrectionFlag,
+    setTodoCorrectionFlag,
+    archiveRefreshKey,
   } = props;
 
   return (
@@ -346,11 +368,15 @@ export default function ControlPanelView(props: Props) {
                 setStatusFilter={setStatusFilter}
                 providerFilter={providerFilter}
                 setProviderFilter={setProviderFilter}
+                correctionFilter={correctionFilter}
+                setCorrectionFilter={setCorrectionFilter}
                 exportTranscriptions={exportTranscriptions}
                 isExporting={isExporting}
                 copyToClipboard={copyToClipboard}
                 copyDiagnostics={copyDiagnostics}
                 deleteTranscription={deleteTranscription}
+                reprocessTranscription={reprocessTranscription}
+                setTranscriptionCorrectionFlag={setTranscriptionCorrectionFlag}
               />
             </TabsContent>
 
@@ -363,6 +389,9 @@ export default function ControlPanelView(props: Props) {
                 chooseMobileInboxFolder={chooseMobileInboxFolder}
                 copyToClipboard={copyToClipboard}
                 markActioned={markTodoActioned}
+                reprocessItem={reprocessTodo}
+                setCorrectionFlag={setTodoCorrectionFlag}
+                archiveRefreshKey={archiveRefreshKey}
               />
             </TabsContent>
           </Tabs>

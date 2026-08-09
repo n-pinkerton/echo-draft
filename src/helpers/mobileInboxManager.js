@@ -46,6 +46,8 @@ class MobileInboxManager {
     this.path = options.pathImpl || path;
     this.crypto = options.cryptoImpl || crypto;
     this.logger = options.logger || debugLogger;
+    this.onTodoChanged =
+      typeof options.onTodoChanged === "function" ? options.onTodoChanged : () => {};
     this.saveAudioCapture =
       typeof options.saveAudioCapture === "function" ? options.saveAudioCapture : null;
     this.withAudioCaptureLock =
@@ -449,6 +451,13 @@ class MobileInboxManager {
     if (!saved?.success) throw new TemporaryMobileInboxError("Mobile To Do item was not saved");
 
     this._notifyTodoAdded(saved.todo);
+    try {
+      this.onTodoChanged();
+    } catch (error) {
+      this.logger.warn?.("Mobile To Do tray refresh failed", {
+        code: error?.code || error?.name || "tray_refresh_failed",
+      });
+    }
     await this._removeCompletedInput(root, { manifestEvidence, audioEvidence });
   }
 

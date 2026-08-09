@@ -5,9 +5,19 @@ const {
 const { requireTrustedRenderer } = require("../trustedRenderer");
 const { MAX_TODO_PAGE_SIZE } = require("../../todoPayload");
 
+const requireSmallObject = (value, label, maxBytes = 16_384) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Invalid ${label}`);
+  }
+  if (Buffer.byteLength(JSON.stringify(value), "utf8") > maxBytes) {
+    throw new Error(`${label} is too large`);
+  }
+  return value;
+};
+
 function registerTranscriptionDbHandlers(
   { ipcMain, app, BrowserWindow, dialog, fs, path },
-  { databaseManager, windowManager, broadcastToWindows }
+  { databaseManager, windowManager, broadcastToWindows, trayManager = null }
 ) {
   const requireControlPanel = (event) =>
     requireTrustedRenderer(event, windowManager, ["control-panel"]);
@@ -63,7 +73,94 @@ function registerTranscriptionDbHandlers(
   ipcMain.handle("db-mark-todo-actioned", async (event, id) => {
     requireControlPanel(event);
     if (!Number.isSafeInteger(id) || id < 1) throw new Error("Invalid To Do ID");
-    return databaseManager.markTodoActioned(id);
+    const result = databaseManager.markTodoActioned(id);
+    if (result?.success) {
+      try {
+        trayManager?.updateTrayMenu?.();
+      } catch {
+        console.error("Failed to refresh the tray after actioning a To Do");
+      }
+    }
+    return result;
+  });
+
+  ipcMain.handle("db-get-archived-todos", async (event, options = {}) => {
+    requireControlPanel(event);
+    requireSmallObject(options, "Archived To Do options");
+    const allowed = new Set(["query", "cursor", "limit"]);
+    if (Object.keys(options).some((key) => !allowed.has(key))) {
+      throw new Error("Archived To Do options contain unsupported fields");
+    }
+    const limit = options.limit === undefined ? 25 : options.limit;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_TODO_PAGE_SIZE) {
+      throw new Error("Invalid Archived To Do page size");
+    }
+    if (typeof (options.query ?? "") !== "string") {
+      throw new Error("Invalid Archived To Do search");
+    }
+    return databaseManager.getArchivedTodos({ ...options, limit });
+  });
+
+  ipcMain.handle("db-save-reprocessing-alternative", async (event, payload) => {
+    requireControlPanel(event);
+    requireSmallObject(payload, "reprocessing alternative", 1_100_000);
+    return databaseManager.saveReprocessingAlternative(payload);
+  });
+
+  ipcMain.handle("db-get-correction-rules", async (event) => {
+    requireControlPanel(event);
+    return databaseManager.getCorrectionRules();
+  });
+
+  ipcMain.handle("db-get-writing-preferences", async (event, processName = null) => {
+    requireTrustedRenderer(event, windowManager);
+    if (processName !== null && (typeof processName !== "string" || processName.length > 128)) {
+      throw new Error("Invalid application process name");
+    }
+    return databaseManager.getWritingPreferences(processName);
+  });
+
+  ipcMain.handle("db-save-correction-rule", async (event, payload) => {
+    requireControlPanel(event);
+    requireSmallObject(payload, "correction rule");
+    return databaseManager.saveCorrectionRule(payload);
+  });
+
+  ipcMain.handle("db-delete-correction-rule", async (event, id) => {
+    requireControlPanel(event);
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error("Invalid correction rule ID");
+    return databaseManager.deleteCorrectionRule(id);
+  });
+
+  ipcMain.handle("db-get-app-style-profiles", async (event) => {
+    requireControlPanel(event);
+    return databaseManager.getAppStyleProfiles();
+  });
+
+  ipcMain.handle("db-save-app-style-profile", async (event, payload) => {
+    requireControlPanel(event);
+    requireSmallObject(payload, "application style profile");
+    return databaseManager.saveAppStyleProfile(payload);
+  });
+
+  ipcMain.handle("db-delete-app-style-profile", async (event, id) => {
+    requireControlPanel(event);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      throw new Error("Invalid application style profile ID");
+    }
+    return databaseManager.deleteAppStyleProfile(id);
+  });
+
+  ipcMain.handle("db-set-correction-flag", async (event, payload) => {
+    requireControlPanel(event);
+    requireSmallObject(payload, "correction flag");
+    return databaseManager.setCorrectionFlag(payload);
+  });
+
+  ipcMain.handle("db-clear-correction-flag", async (event, payload) => {
+    requireControlPanel(event);
+    requireSmallObject(payload, "correction flag source");
+    return databaseManager.clearCorrectionFlag(payload);
   });
 
   ipcMain.handle("db-clear-transcriptions", async (event) => {

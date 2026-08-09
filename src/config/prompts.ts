@@ -43,6 +43,7 @@ export type CleanupPromptMode =
   | "strict-preservation"
   | "strict-quote-preservation";
 export type CleanupPromptModelId = "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.6-sol";
+export type AppWritingStyle = "document" | "message" | "technical";
 
 export const DEFAULT_CLEANUP_MODEL_ID = SHARED_DEFAULT_CLEANUP_MODEL_ID as CleanupPromptModelId;
 export const CLEANUP_PROMPT_PROFILES = SHARED_CLEANUP_PROMPT_PROFILES as Readonly<
@@ -113,9 +114,10 @@ export function getSystemPrompt(
   customDictionary?: string[],
   language?: string,
   modelId?: string | null,
-  mode: CleanupPromptMode = "standard"
+  mode: CleanupPromptMode = "standard",
+  writingStyle?: AppWritingStyle | null
 ): string {
-  return buildCleanupSystemPrompt(modelId, mode, language, customDictionary);
+  return buildCleanupSystemPrompt(modelId, mode, language, customDictionary, writingStyle);
 }
 
 export function getUserPrompt(text: string, modelId?: string | null): string {

@@ -140,6 +140,12 @@ See [WINDOWS_TROUBLESHOOTING.md](WINDOWS_TROUBLESHOOTING.md) for:
 
 For detailed diagnostics, see [DEBUG.md](DEBUG.md).
 
+## Remove old local transcripts and desktop logs
+
+Open **Settings → Developer** and choose **Delete logs and transcripts older than 30 days**. Review the cutoff and counts in the first dialog, then confirm again only if they match your intent. Either Cancel button changes nothing. If EchoDraft reports that the preview changed, reopen the flow so it can build a fresh manifest.
+
+This age-based control includes History plus pending and actioned To Dos and their linked alternatives/flags. It excludes captured audio and mobile data. Use **Delete Diagnostic Data** instead when you intend to remove diagnostic audio captures as well as desktop logs.
+
 ## Getting Help
 
 1. Enable debug mode and reproduce the issue

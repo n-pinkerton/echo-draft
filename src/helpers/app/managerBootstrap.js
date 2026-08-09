@@ -68,6 +68,7 @@ function bootstrapManagers() {
     logger: debugLogger,
     withAudioCaptureLock: (operation) => audioCaptureMutex.run(operation),
     isAudioCapturePurgeInProgress: () => debugLogger.isArtifactPurgeInProgress?.() === true,
+    onTodoChanged: () => trayManager.updateTrayMenu?.(),
     saveAudioCapture: (payload) =>
       saveDebugAudioCapture({
         logsDir:

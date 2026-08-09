@@ -512,6 +512,17 @@ class TrayManager {
     }
   }
 
+  getPendingTodoSummary() {
+    try {
+      const count = this.databaseManager?.getPendingTodoCount?.() || 0;
+      const newest = count > 0 ? this.databaseManager?.getNewestPendingTodo?.() || null : null;
+      return { count: Math.max(0, Number(count) || 0), newest };
+    } catch (error) {
+      console.error("Failed to load pending To Do summary for tray:", error.message);
+      return { count: 0, newest: null };
+    }
+  }
+
   formatLatestTranscriptionLabel(transcription) {
     if (!transcription?.timestamp) {
       return "Last: None";
@@ -612,12 +623,33 @@ class TrayManager {
     }
   }
 
+  async copyNewestPendingTodo() {
+    const newest = this.getPendingTodoSummary().newest;
+    const text = typeof newest?.text === "string" ? newest.text : "";
+    if (!text.trim()) {
+      this.setTemporaryStatus("Status: No pending To Do to copy");
+      return;
+    }
+    try {
+      if (this.clipboardManager?.writeClipboard) {
+        await this.clipboardManager.writeClipboard(text);
+      } else {
+        clipboard.writeText(text);
+      }
+      this.setTemporaryStatus("Status: Copied newest To Do");
+    } catch (error) {
+      console.error("Failed to copy newest To Do from tray:", error.message);
+      this.setTemporaryStatus("Status: To Do copy failed");
+    }
+  }
+
   buildContextMenuTemplate() {
     const dictationVisible = false;
     const latestTranscription = this.getLatestTranscription();
     const latestText =
       typeof latestTranscription?.text === "string" ? latestTranscription.text.trim() : "";
     const copyText = this.transientTranscript.trim() || latestText;
+    const pendingTodo = this.getPendingTodoSummary();
     const statusLabel = this.getStatusLabel(dictationVisible);
     const isRecording =
       this.dictationStatus?.isRecording === true || this.dictationStatus?.stage === "listening";
@@ -670,6 +702,17 @@ class TrayManager {
         enabled: Boolean(copyText),
         click: async () => {
           await this.copyLastTranscription();
+        },
+      },
+      {
+        label: `Mobile To Do: ${pendingTodo.count} pending`,
+        enabled: false,
+      },
+      {
+        label: "Copy newest To Do",
+        enabled: pendingTodo.count > 0 && Boolean(pendingTodo.newest?.text?.trim?.()),
+        click: async () => {
+          await this.copyNewestPendingTodo();
         },
       },
       {

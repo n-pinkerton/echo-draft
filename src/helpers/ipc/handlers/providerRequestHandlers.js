@@ -1,6 +1,7 @@
 const { requireTrustedRenderer } = require("../trustedRenderer");
 const modelRegistryData = require("../../../models/modelRegistryData.json");
 const {
+  APP_WRITING_STYLES,
   BUILT_IN_CLEANUP_DICTIONARY,
   CLEANUP_PROMPT_MODES,
   buildCleanupSystemPrompt,
@@ -97,6 +98,7 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
     "maxOutputTokens",
     "temperature",
     "reasoningEffort",
+    "writingStyle",
   ]);
   assertExactKeys(operation, allowedKeys, "Cleanup operation");
   if (operation.kind !== "cleanup") throw new Error("Only cleanup operations are supported");
@@ -153,6 +155,13 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
   if (cleanupPromptMode === "codex-prompt" && reasoningEffort !== "max") {
     throw new Error("Codex prompt cleanup requires maximum reasoning effort");
   }
+  const writingStyle = operation.writingStyle;
+  if (writingStyle !== undefined && !APP_WRITING_STYLES.has(writingStyle)) {
+    throw new Error("Cleanup application style is unsupported");
+  }
+  if (cleanupPromptMode === "codex-prompt" && writingStyle !== undefined) {
+    throw new Error("Codex prompt cleanup cannot use an application style");
+  }
 
   const pathname = new URL(endpoint).pathname.replace(/\/+$/, "");
   const expectedVariant = pathname.endsWith("/responses")
@@ -183,6 +192,7 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
     maxOutputTokens,
     ...(temperature !== undefined ? { temperature } : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+    ...(writingStyle !== undefined ? { writingStyle } : {}),
   };
 };
 
@@ -191,7 +201,8 @@ const buildProviderCleanupBody = (provider, operation) => {
     operation.model,
     operation.cleanupPromptMode,
     operation.language,
-    operation.dictionaryEntries
+    operation.dictionaryEntries,
+    operation.writingStyle
   );
   if (operation.variant === "responses") {
     return {

@@ -1,5 +1,5 @@
 import { invokeCancelableIpc } from "../../utils/cancelableIpc";
-import type { CleanupPromptMode } from "../../config/prompts";
+import type { AppWritingStyle, CleanupPromptMode } from "../../config/prompts";
 
 type Provider = "openai" | "gemini" | "groq" | "custom";
 
@@ -11,6 +11,7 @@ type CleanupOperation = {
   cleanupPromptMode?: CleanupPromptMode;
   language?: string;
   dictionaryEntries?: string[];
+  writingStyle?: AppWritingStyle;
   maxOutputTokens: number;
   temperature?: number;
   reasoningEffort?: string;
@@ -20,6 +21,7 @@ type CleanupPolicyContext = {
   cleanupPromptMode?: CleanupPromptMode;
   language?: string;
   dictionaryEntries?: string[];
+  writingStyle?: AppWritingStyle;
 };
 
 const asRecord = (value: unknown, label: string): Record<string, any> => {
@@ -100,6 +102,7 @@ export function parseCleanupFetchBody(
       ...(policyContext.dictionaryEntries?.length
         ? { dictionaryEntries: policyContext.dictionaryEntries }
         : {}),
+      ...(policyContext.writingStyle ? { writingStyle: policyContext.writingStyle } : {}),
       maxOutputTokens: body.max_output_tokens,
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     };
@@ -151,6 +154,7 @@ export function parseCleanupFetchBody(
       ...(policyContext.dictionaryEntries?.length
         ? { dictionaryEntries: policyContext.dictionaryEntries }
         : {}),
+      ...(policyContext.writingStyle ? { writingStyle: policyContext.writingStyle } : {}),
       maxOutputTokens: tokenBudgets[0],
       ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
       ...(body.reasoning_effort !== undefined ? { reasoningEffort: body.reasoning_effort } : {}),
@@ -192,6 +196,7 @@ export function parseCleanupFetchBody(
       ...(policyContext.dictionaryEntries?.length
         ? { dictionaryEntries: policyContext.dictionaryEntries }
         : {}),
+      ...(policyContext.writingStyle ? { writingStyle: policyContext.writingStyle } : {}),
       maxOutputTokens: generation.maxOutputTokens,
       ...(generation.temperature !== undefined ? { temperature: generation.temperature } : {}),
     };

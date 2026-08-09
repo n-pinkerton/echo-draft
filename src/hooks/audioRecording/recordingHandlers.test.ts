@@ -80,6 +80,93 @@ describe("recordingHandlers", () => {
     expect(startingIndex).toBeLessThan(startRecordingIndex);
   });
 
+  it.each([undefined, "codex-prompt"])(
+    "starts and stops a quick clipboard %s press while process capture is unresolved",
+    async (processingMode) => {
+      let resolveCapture!: (value: any) => void;
+      const captureResult = new Promise((resolve) => {
+        resolveCapture = resolve;
+      });
+      let state = {
+        isRecording: false,
+        isStreaming: false,
+        isProcessing: false,
+        queuedProcessingJobs: 0,
+      };
+      let recordingContext: any = null;
+      const audioManager = {
+        getState: () => state,
+        shouldUseStreaming: () => false,
+        startRecording: vi.fn(async (context) => {
+          recordingContext = context;
+          state = { ...state, isRecording: true };
+          return true;
+        }),
+        startStreamingRecording: vi.fn(async () => false),
+        stopRecordingAndWaitForClose: vi.fn(async () => {
+          state = { ...state, isRecording: false, isProcessing: true };
+          return true;
+        }),
+        stopRecording: vi.fn(),
+        stopStreamingRecording: vi.fn(),
+      };
+      const activeSessionRef = { current: null as any };
+      const recordingSessionIdRef = { current: null as string | null };
+      const normalizeTriggerPayload = (payload: any) => ({
+        outputMode: "clipboard",
+        sessionId: payload.sessionId || "quick-clipboard",
+        triggeredAt: payload.triggeredAt || 1,
+        ...(processingMode ? { processingMode } : {}),
+        stopReason: payload.stopReason || null,
+        stopSource: payload.stopSource || null,
+      });
+      const common = {
+        activeSessionRef,
+        audioManagerRef: { current: audioManager },
+        normalizeTriggerPayload,
+        recordingSessionIdRef,
+        upsertJob: vi.fn(() => ({ jobId: 1 })),
+      };
+      const start = createStartRecordingHandler({
+        ...common,
+        recordingStartedAtRef: { current: null },
+        removeJob: vi.fn(),
+        sessionStartedAtRef: { current: null },
+        sessionsByIdRef: { current: new Map() },
+        updateStage: vi.fn(),
+        playStartCue: vi.fn(),
+        electronAPI: {
+          captureApplicationProcess: vi.fn(() => captureResult),
+        },
+      });
+      const stop = createStopRecordingHandler({
+        ...common,
+        latestProgressRef: { current: { recordedMs: 25 } },
+      });
+      const queue = createRecordingOperationQueue();
+
+      const startPromise = queue.run(() =>
+        start({ sessionId: "quick-clipboard", outputMode: "clipboard", processingMode })
+      );
+      const stopPromise = queue.run(() =>
+        stop({ sessionId: "quick-clipboard", outputMode: "clipboard", releasedAt: 2 })
+      );
+      await expect(Promise.all([startPromise, stopPromise])).resolves.toEqual([true, true]);
+
+      expect(audioManager.startRecording).toHaveBeenCalledOnce();
+      expect(audioManager.stopRecordingAndWaitForClose).toHaveBeenCalledOnce();
+      expect(recordingContext.applicationProcessName).toBeUndefined();
+      expect(typeof recordingContext.applicationProcessPromise?.then).toBe("function");
+      if (processingMode) {
+        expect(recordingContext.processingMode).toBe("codex-prompt");
+      }
+
+      resolveCapture({ success: true, applicationProcessName: "notepad" });
+      await expect(recordingContext.applicationProcessPromise).resolves.toBe("notepad");
+      expect(recordingContext.applicationProcessName).toBe("notepad");
+    }
+  );
+
   it("stops streaming recording while lifecycle progress owns the stop cue", async () => {
     let resolveFinalization!: (value: boolean) => void;
     const finalization = new Promise<boolean>((resolve) => {

@@ -186,7 +186,7 @@ class ClipboardManager {
   }
 
   async captureInsertionTarget() {
-    return await captureInsertionTarget(this);
+    return captureInsertionTarget(this);
   }
 
   issueInsertionTargetCapability(target, { ownerId, sessionId } = {}) {
@@ -205,7 +205,16 @@ class ClipboardManager {
       sessionId: normalizedSessionId,
       expiresAt: capturedAt + INSERTION_TARGET_TTL_MS,
     });
-    return { capability, sessionId: normalizedSessionId, capturedAt };
+    const applicationProcessName =
+      typeof target.processName === "string" && target.processName.trim()
+        ? target.processName.trim().toLowerCase()
+        : null;
+    return {
+      capability,
+      sessionId: normalizedSessionId,
+      capturedAt,
+      ...(applicationProcessName ? { applicationProcessName } : {}),
+    };
   }
 
   consumeInsertionTargetCapability(snapshot, { ownerId, sessionId } = {}) {
@@ -237,7 +246,7 @@ class ClipboardManager {
   }
 
   async activateInsertionTarget(target) {
-    return await activateInsertionTarget(this, target);
+    return activateInsertionTarget(this, target);
   }
 
   commandExists(cmd) {
@@ -359,31 +368,31 @@ class ClipboardManager {
   }
 
   async pasteMacOS(originalClipboardSnapshot, options = {}) {
-    return await pasteMacOS(this, originalClipboardSnapshot, options);
+    return pasteMacOS(this, originalClipboardSnapshot, options);
   }
 
   async pasteMacOSWithOsascript(originalClipboardSnapshot) {
-    return await pasteMacOSWithOsascript(this, originalClipboardSnapshot);
+    return pasteMacOSWithOsascript(this, originalClipboardSnapshot);
   }
 
   async pasteWindows(originalClipboardSnapshot, options = {}) {
-    return await pasteWindows(this, originalClipboardSnapshot, options);
+    return pasteWindows(this, originalClipboardSnapshot, options);
   }
 
   async pasteWithNircmd(nircmdPath, originalClipboardSnapshot, options = {}) {
-    return await pasteWithNircmd(this, nircmdPath, originalClipboardSnapshot, options);
+    return pasteWithNircmd(this, nircmdPath, originalClipboardSnapshot, options);
   }
 
   async pasteWithPowerShell(originalClipboardSnapshot, options = {}) {
-    return await pasteWithPowerShell(this, originalClipboardSnapshot, options);
+    return pasteWithPowerShell(this, originalClipboardSnapshot, options);
   }
 
   async pasteLinux(originalClipboardSnapshot, options = {}) {
-    return await pasteLinux(this, originalClipboardSnapshot, options);
+    return pasteLinux(this, originalClipboardSnapshot, options);
   }
 
   async checkAccessibilityPermissions() {
-    return await checkAccessibilityPermissions(this);
+    return checkAccessibilityPermissions(this);
   }
 
   showAccessibilityDialog(testError) {

@@ -16,6 +16,7 @@ import {
   throwIfTranscriptionCancelled,
 } from "../pipeline/cancellation";
 import { parseCleanupOutput } from "../../../config/cleanupOutputContract.cjs";
+import { applyCorrectionRules } from "../../../utils/correctionRules.cjs";
 
 export const CODEX_PROMPT_MODEL_ID = "gpt-5.6-luna";
 export const CODEX_PROMPT_REASONING_EFFORT = "max";
@@ -118,6 +119,79 @@ export class ReasoningCleanupService {
     return getTrustedCleanupDictionary(getCustomDictionaryArray());
   }
 
+  async _getWritingPreferences(applicationProcessName) {
+    if (typeof window === "undefined" || !window.electronAPI?.getWritingPreferences) {
+      return { correctionRules: [], writingStyle: null };
+    }
+    try {
+      const preferences = await window.electronAPI.getWritingPreferences(
+        typeof applicationProcessName === "string" ? applicationProcessName : null
+      );
+      return {
+        correctionRules: Array.isArray(preferences?.correctionRules)
+          ? preferences.correctionRules
+          : [],
+        writingStyle:
+          preferences?.writingStyle === "document" ||
+          preferences?.writingStyle === "message" ||
+          preferences?.writingStyle === "technical"
+            ? preferences.writingStyle
+            : null,
+      };
+    } catch (error) {
+      this.logger?.logReasoning?.("WRITING_PREFERENCES_UNAVAILABLE", {
+        error: error?.message || String(error),
+      });
+      return { correctionRules: [], writingStyle: null };
+    }
+  }
+
+  async prepareTranscriptionInput(text, runtime = {}) {
+    const sourceText = typeof text === "string" ? text : "";
+    const signal = runtime?.signal || null;
+    const isCodexPrompt = runtime?.processingMode === "codex-prompt";
+    let applicationProcessName =
+      typeof runtime?.applicationProcessName === "string" ? runtime.applicationProcessName : null;
+    if (
+      !isCodexPrompt &&
+      !applicationProcessName &&
+      typeof runtime?.applicationProcessPromise?.then === "function"
+    ) {
+      try {
+        const capturedProcessName = await runtime.applicationProcessPromise;
+        applicationProcessName =
+          typeof capturedProcessName === "string" && capturedProcessName
+            ? capturedProcessName
+            : null;
+      } catch {
+        applicationProcessName = null;
+      }
+    }
+    throwIfTranscriptionCancelled(signal);
+    const writingPreferences = await this._getWritingPreferences(
+      isCodexPrompt ? null : applicationProcessName
+    );
+    throwIfTranscriptionCancelled(signal);
+    const correctionResult = applyCorrectionRules(sourceText, writingPreferences.correctionRules);
+    const trustedRuntime = { ...runtime };
+    delete trustedRuntime.applicationProcessPromise;
+    delete trustedRuntime.writingStyle;
+    if (!isCodexPrompt && applicationProcessName) {
+      trustedRuntime.applicationProcessName = applicationProcessName;
+    }
+    return {
+      text: correctionResult.text,
+      correctionCount: correctionResult.replacements.length,
+      writingStyle: isCodexPrompt ? null : writingPreferences.writingStyle,
+      runtime: {
+        ...trustedRuntime,
+        ...(!isCodexPrompt && writingPreferences.writingStyle
+          ? { writingStyle: writingPreferences.writingStyle }
+          : {}),
+      },
+    };
+  }
+
   _getFidelityRetryModel(model) {
     return model;
   }
@@ -188,7 +262,7 @@ export class ReasoningCleanupService {
    * @param {string} text
    * @param {string} model
    * @param {string|null} agentName
-   * @param {{signal?: AbortSignal, processingMode?: "codex-prompt"}} runtime
+   * @param {{signal?: AbortSignal, processingMode?: "codex-prompt", applicationProcessName?: string|null, applicationProcessPromise?: Promise<string|null>, writingStyle?: "document"|"message"|"technical"}} runtime
    * @returns {Promise<{text: string, title?: string, assessment: any, retryCount: number, appliedModel: string|null, retryDriftRecovered?: boolean, retryDriftEditType?: "substitution"|"insertion"|"deletion", initialFidelityReasons?: string[], retryFidelityReasons?: string[]}>}
    */
   async processWithReasoningModelResult(text, model, _agentName, runtime = {}) {
@@ -243,6 +317,9 @@ export class ReasoningCleanupService {
         await this.reasoningService.processText(modelInputText, model, null, {
           cleanupPromptMode: isCodexPrompt ? "codex-prompt" : "preservation-first",
           reasoningEffort,
+          ...(!isCodexPrompt && runtime?.writingStyle
+            ? { writingStyle: runtime.writingStyle }
+            : {}),
           ...(signal ? { signal } : {}),
         }),
         modelInputText
@@ -400,22 +477,26 @@ export class ReasoningCleanupService {
    * @param {string} text
    * @param {string} source
    * @param {boolean|null} cleanupEnabledOverride
-   * @param {{signal?: AbortSignal, processingMode?: "codex-prompt"}} runtime
+   * @param {{signal?: AbortSignal, processingMode?: "codex-prompt", applicationProcessName?: string|null, applicationProcessPromise?: Promise<string|null>, writingStyle?: "document"|"message"|"technical"}} runtime
    * @returns {Promise<{text: string, cleanup: Record<string, any>}>}
    */
   async processTranscriptionWithOutcome(text, source, cleanupEnabledOverride, runtime = {}) {
     const sourceText = typeof text === "string" ? text : "";
-    const normalizedText = sourceText.trim();
     const signal = runtime?.signal || null;
-    throwIfTranscriptionCancelled(signal);
+    const prepared = await this.prepareTranscriptionInput(sourceText, runtime);
+    const preparedSourceText = prepared.text;
+    const normalizedText = preparedSourceText.trim();
+    const isCodexPrompt = runtime?.processingMode === "codex-prompt";
+    const effectiveRuntime = prepared.runtime;
 
     this.logger?.logReasoning?.("TRANSCRIPTION_RECEIVED", {
       source,
       textLength: normalizedText.length,
+      correctionCount: prepared.correctionCount,
+      writingStyle: effectiveRuntime.writingStyle || null,
       timestamp: new Date().toISOString(),
     });
 
-    const isCodexPrompt = runtime?.processingMode === "codex-prompt";
     const storedReasoningModel =
       typeof window !== "undefined" && window.localStorage
         ? localStorage.getItem("reasoningModel") || ""
@@ -440,6 +521,8 @@ export class ReasoningCleanupService {
       appliedModel: null,
       provider: reasoningProvider || "auto",
       retryCount: 0,
+      correctionCount: prepared.correctionCount,
+      writingStyle: effectiveRuntime.writingStyle || null,
     };
 
     if (
@@ -459,7 +542,7 @@ export class ReasoningCleanupService {
     if (!reasoningModel) {
       this.logger?.logReasoning?.("REASONING_SKIPPED", { reason: "No reasoning model selected" });
       return {
-        text: requested ? sourceText : normalizedText,
+        text: requested ? preparedSourceText : normalizedText,
         cleanup: {
           ...baseOutcome,
           status: requested ? "fallback" : "disabled",
@@ -481,7 +564,7 @@ export class ReasoningCleanupService {
 
     if (!useReasoning || !normalizedText) {
       return {
-        text: requested ? sourceText : normalizedText,
+        text: requested ? preparedSourceText : normalizedText,
         cleanup: {
           ...baseOutcome,
           status: !requested ? "disabled" : normalizedText ? "fallback" : "unchanged",
@@ -501,7 +584,7 @@ export class ReasoningCleanupService {
         normalizedText,
         reasoningModel,
         null,
-        runtime
+        effectiveRuntime
       );
       this.logger?.logReasoning?.("REASONING_SUCCESS", {
         resultLength: result.text.length,
@@ -550,18 +633,18 @@ export class ReasoningCleanupService {
 
       const preferredSpellings = this._getPreferredSpellings();
       const preferredFallbackCandidate = applyTrustedPreferredSpellingAliases(
-        sourceText,
-        sourceText,
+        preparedSourceText,
+        preparedSourceText,
         preferredSpellings
       );
       const preferredFallbackAssessment = assessCleanupFidelity(
-        sourceText,
+        preparedSourceText,
         preferredFallbackCandidate,
         { preferredSpellings }
       );
       const preferredFallbackText = preferredFallbackAssessment.accepted
         ? preferredFallbackCandidate
-        : sourceText;
+        : preparedSourceText;
       const preferredSpellingCorrectionCount =
         preferredFallbackAssessment.accepted && preferredFallbackText !== sourceText
           ? preferredFallbackAssessment.metrics.preferredSpellingCorrectionCount || 0
@@ -588,7 +671,7 @@ export class ReasoningCleanupService {
         // byte-for-byte except for an independently authorized, dictionary-backed
         // person-name spelling repair. Do not run a general sanitizer here because
         // it can alter punctuation (for example converting an em dash).
-        text: preferredSpellingApplied ? preferredFallbackText : sourceText,
+        text: preferredSpellingApplied ? preferredFallbackText : preparedSourceText,
         cleanup: {
           ...baseOutcome,
           attempted: true,

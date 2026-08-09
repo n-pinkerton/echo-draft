@@ -3,6 +3,7 @@ const { rejectRedirectResponse } = require("./cloudApiHandlers");
 const { requireTrustedRenderer } = require("../trustedRenderer");
 const modelRegistryData = require("../../../models/modelRegistryData.json");
 const {
+  APP_WRITING_STYLES,
   CLEANUP_PROMPT_MODES,
   buildCleanupSystemPrompt,
   validateWrappedCleanupInput,
@@ -54,6 +55,7 @@ const validateAnthropicCleanupInput = (text, modelId, config = {}) => {
     "reasoningEffort",
     "language",
     "dictionaryEntries",
+    "writingStyle",
   ]);
   if (Object.keys(config).some((key) => !allowed.has(key))) {
     throw new Error("Anthropic cleanup options contain unsupported fields");
@@ -82,7 +84,17 @@ const validateAnthropicCleanupInput = (text, modelId, config = {}) => {
   }
   const language = requireLanguageCode(config.language, { allowAuto: true }, "cleanup language");
   const dictionaryEntries = validateCleanupDictionaryEntries(config.dictionaryEntries, "Anthropic");
-  const systemPrompt = buildCleanupSystemPrompt(model, mode, language, dictionaryEntries);
+  const writingStyle = config.writingStyle;
+  if (writingStyle !== undefined && !APP_WRITING_STYLES.has(writingStyle)) {
+    throw new Error("Anthropic application style is unsupported");
+  }
+  const systemPrompt = buildCleanupSystemPrompt(
+    model,
+    mode,
+    language,
+    dictionaryEntries,
+    writingStyle
+  );
   return { model, maxTokens, temperature, systemPrompt, ...wrapped };
 };
 
@@ -118,6 +130,7 @@ function registerDictationKeyHandlers(
       "reasoningEffort",
       "language",
       "dictionaryEntries",
+      "writingStyle",
     ]);
     if (Object.keys(config).some((key) => !allowed.has(key))) {
       throw new Error("Local cleanup options contain unsupported fields");
@@ -132,6 +145,10 @@ function registerDictationKeyHandlers(
     if (mode === "codex-prompt") throw new Error("Codex prompt cleanup requires OpenAI");
     const language = requireLanguageCode(config.language, { allowAuto: true }, "cleanup language");
     const dictionaryEntries = validateCleanupDictionaryEntries(config.dictionaryEntries, "Local");
+    const writingStyle = config.writingStyle;
+    if (writingStyle !== undefined && !APP_WRITING_STYLES.has(writingStyle)) {
+      throw new Error("Local application style is unsupported");
+    }
     if (
       config.reasoningEffort !== undefined &&
       !new Set(["none", "low", "medium"]).has(config.reasoningEffort)
@@ -152,7 +169,13 @@ function registerDictationKeyHandlers(
       ...(Number.isFinite(contextSize)
         ? { contextSize: Math.max(512, Math.min(131_072, Math.round(contextSize))) }
         : {}),
-      systemPrompt: buildCleanupSystemPrompt(model, mode, language, dictionaryEntries),
+      systemPrompt: buildCleanupSystemPrompt(
+        model,
+        mode,
+        language,
+        dictionaryEntries,
+        writingStyle
+      ),
     };
   };
 
