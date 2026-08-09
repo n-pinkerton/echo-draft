@@ -33,11 +33,13 @@ export const installE2EHelpers = (deps) => {
       const rawText =
         typeof resultPatch.rawText === "string"
           ? resultPatch.rawText
-          : resultPatch.rawText == null
-            ? null
-            : String(resultPatch.rawText);
+          : resultPatch.rawText === undefined
+            ? text
+            : resultPatch.rawText === null
+              ? null
+              : String(resultPatch.rawText);
 
-      return await onTranscriptionComplete({
+      return onTranscriptionComplete({
         success: true,
         text,
         ...(rawText !== null ? { rawText } : {}),

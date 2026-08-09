@@ -65,7 +65,12 @@ describe("ReasoningService (OpenAI)", () => {
 
   it("aggregates all Responses API output_text parts and requests max_output_tokens", async () => {
     localStorage.setItem("customDictionary", JSON.stringify(["Rilje"]));
-    const fetchMock = vi.fn(async (_url: any, init: any) => {
+    localStorage.setItem(
+      "openAiEndpointPreference",
+      JSON.stringify({ "https://api.openai.com/v1": "chat" })
+    );
+    const fetchMock = vi.fn(async (url: any, init: any) => {
+      expect(String(url)).toBe("https://api.openai.com/v1/responses");
       const body = JSON.parse(init.body);
       expect(body.model).toBe("gpt-5.6-terra");
       expect(body.input[0].role).toBe("developer");
@@ -135,9 +140,13 @@ describe("ReasoningService (OpenAI)", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("uses the official OpenAI endpoint and max effort for the Codex prompt pass", async () => {
+  it("ignores a stale Chat preference and uses the official Responses endpoint for Codex prompts", async () => {
     localStorage.setItem("reasoningProvider", "custom");
     localStorage.setItem("cloudReasoningBaseUrl", "https://custom.example/v1");
+    localStorage.setItem(
+      "openAiEndpointPreference",
+      JSON.stringify({ "https://api.openai.com/v1": "chat" })
+    );
     const fetchMock = vi.fn(async (url: any, init: any) => {
       expect(String(url)).toBe("https://api.openai.com/v1/responses");
       const body = JSON.parse(init.body);
@@ -257,7 +266,89 @@ describe("ReasoningService (OpenAI)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to chat completions when /responses is unsupported, and throws on finish_reason=length", async () => {
+  it("does not fall back to Chat when the official Responses endpoint fails", async () => {
+    let shouldFail = true;
+    const fetchMock = vi.fn(async (url: any) => {
+      expect(String(url)).toBe("https://api.openai.com/v1/responses");
+      if (!shouldFail) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                content: [{ type: "output_text", text: "cleaned" }],
+              },
+            ],
+          }),
+        } as any;
+      }
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: async () => ({ error: { message: "Not Found" } }),
+      } as any;
+    });
+    vi.stubGlobal("fetch", fetchMock as any);
+
+    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).rejects.toThrow(
+      /unsupported/i
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem("openAiEndpointPreference")).toBeNull();
+
+    shouldFail = false;
+    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).resolves.toBe("cleaned");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(
+      fetchMock.mock.calls.every(([url]) => String(url) === "https://api.openai.com/v1/responses")
+    ).toBe(true);
+  });
+
+  it.each([
+    ["a blank custom base", ""],
+    ["the official OpenAI base", "https://api.openai.com/v1"],
+  ])("uses Responses when the custom provider resolves to %s", async (_description, customBase) => {
+    localStorage.setItem("reasoningProvider", "custom");
+    localStorage.setItem("cloudReasoningBaseUrl", customBase);
+    localStorage.setItem(
+      "openAiEndpointPreference",
+      JSON.stringify({ "https://api.openai.com/v1": "chat" })
+    );
+    (window as any).electronAPI.getApiKeyStatus.mockResolvedValue({
+      openai: true,
+      customReasoning: true,
+    });
+    const fetchMock = vi.fn(async (url: any) => {
+      expect(String(url)).toBe("https://api.openai.com/v1/responses");
+      return {
+        ok: true,
+        json: async () => ({
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "cleaned" }],
+            },
+          ],
+        }),
+      } as any;
+    });
+    vi.stubGlobal("fetch", fetchMock as any);
+
+    await expect(ReasoningService.processText("input", "gpt-5.6-terra")).resolves.toBe("cleaned");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the Chat fallback for a custom endpoint whose Responses route is unsupported", async () => {
+    localStorage.setItem("reasoningProvider", "custom");
+    localStorage.setItem("cloudReasoningBaseUrl", "https://custom.example/v1");
+    (window as any).electronAPI.getApiKeyStatus.mockResolvedValue({
+      openai: true,
+      customReasoning: true,
+    });
     const fetchMock = vi.fn(async (url: any, init: any) => {
       const endpoint = String(url);
       if (endpoint.endsWith("/responses")) {
@@ -270,13 +361,14 @@ describe("ReasoningService (OpenAI)", () => {
       }
 
       expect(endpoint.endsWith("/chat/completions")).toBe(true);
+      expect(endpoint).toBe("https://custom.example/v1/chat/completions");
 
       const body = JSON.parse(init.body);
       expect(body.model).toBe("gpt-5.6-terra");
       expect(body.messages[0].role).toBe("system");
       expect(body.messages[1].content).toContain("<echodraft_gpt56_terra_untrusted_dictation>");
       expect(body.max_completion_tokens).toBeGreaterThanOrEqual(2048);
-      expect(body.reasoning_effort).toBe("none");
+      expect(body).not.toHaveProperty("reasoning_effort");
 
       return {
         ok: true,

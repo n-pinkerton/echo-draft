@@ -102,6 +102,7 @@ export async function processWithOpenAiProvider({
 
     const isOlderModel = model && (model.startsWith("gpt-4") || model.startsWith("gpt-3"));
     const isCustomEndpoint = openAiBase !== API_ENDPOINTS.OPENAI_BASE;
+    const hasChatFallback = endpointCandidates.some((candidate) => candidate.type === "chat");
 
     logger.logReasoning("OPENAI_ENDPOINTS", {
       base: sanitizeEndpointForLogging(openAiBase),
@@ -206,12 +207,14 @@ export async function processWithOpenAiProvider({
 
               if (isUnsupportedEndpoint) {
                 lastError = new Error("The cleanup endpoint is unsupported.");
-                rememberOpenAiPreference(openAiBase, "chat");
-                logger.logReasoning("OPENAI_ENDPOINT_FALLBACK", {
-                  attemptedEndpoint: sanitizeEndpointForLogging(endpoint),
-                  status: res.status,
-                  errorCode,
-                });
+                if (hasChatFallback) {
+                  rememberOpenAiPreference(openAiBase, "chat");
+                  logger.logReasoning("OPENAI_ENDPOINT_FALLBACK", {
+                    attemptedEndpoint: sanitizeEndpointForLogging(endpoint),
+                    status: res.status,
+                    errorCode,
+                  });
+                }
                 continue;
               }
 
