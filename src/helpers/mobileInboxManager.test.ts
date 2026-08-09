@@ -890,8 +890,10 @@ describe("MobileInboxManager", () => {
     const { inboxPath, userDataPath } = await createWorkspace();
     const item = await writeReadyItem(inboxPath);
     const manifestPath = path.join(inboxPath, item.manifestFile);
+    let manifestDeleteFailed = false;
     const unlink = vi.fn(async (filePath: string) => {
-      if (filePath.endsWith(item.manifestFile)) {
+      if (!manifestDeleteFailed && filePath.endsWith(item.manifestFile)) {
+        manifestDeleteFailed = true;
         const error = new Error("busy") as NodeJS.ErrnoException;
         error.code = "EBUSY";
         throw error;
