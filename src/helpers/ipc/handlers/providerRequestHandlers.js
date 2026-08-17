@@ -4,6 +4,7 @@ const {
   APP_WRITING_STYLES,
   BUILT_IN_CLEANUP_DICTIONARY,
   CLEANUP_PROMPT_MODES,
+  OPENAI_GPT_56_MAX_OUTPUT_TOKENS,
   buildCleanupSystemPrompt,
   validateWrappedCleanupInput,
 } = require("../../../config/cleanupPolicy.cjs");
@@ -131,7 +132,13 @@ const validateCleanupOperation = (provider, endpoint, operation) => {
     }
   }
   const maxOutputTokens = Number(operation.maxOutputTokens);
-  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 64 || maxOutputTokens > 32_768) {
+  const usesGpt56OutputBudget = provider === "openai" && model.startsWith("gpt-5.6");
+  const maxAllowedOutputTokens = usesGpt56OutputBudget ? OPENAI_GPT_56_MAX_OUTPUT_TOKENS : 32_768;
+  if (
+    !Number.isSafeInteger(maxOutputTokens) ||
+    maxOutputTokens < 64 ||
+    maxOutputTokens > maxAllowedOutputTokens
+  ) {
     throw new Error("Cleanup output budget is unsupported");
   }
   let temperature;

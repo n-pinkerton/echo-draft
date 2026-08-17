@@ -825,9 +825,6 @@ export async function processWithOpenAIAPI(transcriber, audioBlob, metadata = {}
           );
         }
       } catch (retryError) {
-        if (retryError?.code === "TRANSCRIPTION_ATTEMPTS_DISAGREE") {
-          throw retryError;
-        }
         suspectedIncomplete = true;
         timings.transcriptionSuspectedIncomplete = true;
         timings.transcriptionRecoveryFailed = true;

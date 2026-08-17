@@ -737,6 +737,37 @@ describe("createTranscriptionCompleteHandler", () => {
     expect(harness.playCompletionCue).not.toHaveBeenCalled();
   });
 
+  it("copies a suspected-incomplete transcript in clipboard mode and marks History for review", async () => {
+    const harness = createDeliveryHarness({ outputMode: "clipboard" });
+
+    await harness.run({ suspectedIncomplete: true });
+
+    expect(harness.safePaste).not.toHaveBeenCalled();
+    expect(harness.writeClipboard).toHaveBeenCalledWith("Committed delivery text");
+    expect((harness.saveTranscription as any).mock.calls[0][0].meta).toMatchObject({
+      status: "delivery_issue",
+      pasteSucceeded: false,
+      clipboardSucceeded: true,
+      delivery: {
+        status: "transcription_incomplete",
+        succeeded: false,
+        reasonCode: "TRANSCRIPTION_RECOVERY_FAILED",
+      },
+    });
+    expect(harness.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Transcript may be incomplete",
+        description: expect.stringContaining("Review the clipboard copy or History"),
+      })
+    );
+    expect(harness.updateStage).toHaveBeenCalledWith(
+      "warning",
+      expect.objectContaining({ message: "Transcript may be incomplete; review it before use." })
+    );
+    expect(harness.playWarningCue).toHaveBeenCalledOnce();
+    expect(harness.playCompletionCue).not.toHaveBeenCalled();
+  });
+
   it.each(["WINDOWS_CLIPBOARD_RESTORE_PENDING", "WINDOWS_CLIPBOARD_PRESERVATION_UNSUPPORTED"])(
     "does not touch a protected insert clipboard when truncation recovery fails: %s",
     async (code) => {

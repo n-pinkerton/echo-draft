@@ -323,6 +323,8 @@ npm run build:linux  # Linux
 
 You can press the hotkey again and record another dictation while earlier audio is processing. EchoDraft queues complete recordings in order. In insertion mode each result is inserted sequentially into its captured application target; in clipboard mode each result replaces the clipboard when that job completes. A failed job is reported without discarding later queued work.
 
+EchoDraft preserves recognizable speech unless the result is clearly unusable. If a sparse transcript and its retry disagree, the primary transcript is saved in History as needing review instead of being discarded. Insertion mode withholds that uncertain result from automatic paste; clipboard mode keeps a recoverable copy. Empty or punctuation-only output, a detected prompt echo that is too small to trust, and strongly model-generated assistant-style output are still rejected.
+
 On Windows in tap mode, hold `Alt` while using either configured dictation hotkey to make a Codex prompt. With the current `F10` insertion and `F9` clipboard bindings, `Alt+F10` inserts the finished prompt and `Alt+F9` leaves it on the clipboard. Prompt mode uses the same recording and transcription pipeline, then rewrites only for clearer Codex CLI prompting with GPT-5.6 Luna at maximum reasoning effort. It preserves whether the dictation is a standalone request or a contextual follow-up; it does not invent missing context or implementation details. An OpenAI API key is required. History marks these results with a small terminal badge.
 
 ### Control Panel
@@ -333,7 +335,7 @@ On Windows in tap mode, hold `Alt` while using either configured dictation hotke
 - **To Do**: Pending contains mobile memos awaiting action. Archived contains actioned memos and searches every archived row stored on this computer through bounded pages. Both views can copy cleaned or raw text and create eligible copy-only alternatives; Archived does not move items back to Pending.
 - **Models**: Download and manage local Whisper models
 - **Storage Cleanup**: Remove downloaded Whisper models from cache to reclaim space
-- **Settings**: Configure API keys, customize hotkeys, select or test the microphone, preview or adjust dictation sounds, manage permissions, and open **Writing** for explicit local replacements and fixed application styles. If a selected microphone disconnects, EchoDraft shows the fallback and temporarily uses the system default.
+- **Settings**: Configure API keys, customize hotkeys, select or test the microphone, preview or adjust dictation sounds, manage permissions, and open **Writing** for explicit local replacements and fixed application styles. If a selected microphone disconnects or Windows changes its device ID, EchoDraft shows the saved choice as unavailable and temporarily uses the system default. Reselect the microphone to save its current Windows device ID.
 - **Developer**: `Delete logs and transcripts older than 30 days` previews one exact cutoff and requires two confirmations before deleting eligible History, every To Do status, linked alternatives/flags, and verified old desktop logs. It excludes captured audio and mobile data.
 
 ### Mobile To Do inbox

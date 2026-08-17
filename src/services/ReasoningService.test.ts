@@ -1,7 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import ReasoningService from "./ReasoningService";
+import { OPENAI_GPT_56_MAX_OUTPUT_TOKENS } from "../config/cleanupPolicy.cjs";
 import { buildProviderCleanupBody } from "../helpers/ipc/handlers/providerRequestHandlers.js";
+import { calculateGpt56CleanupMaxOutputTokens } from "./reasoning/providers/openaiProvider";
+
+describe("GPT-5.6 cleanup output budget", () => {
+  it("keeps strong headroom for short cleanup without reserving the full model ceiling", () => {
+    const shortRequestBudget = calculateGpt56CleanupMaxOutputTokens(100, "low");
+
+    expect(shortRequestBudget).toBe(32768);
+    expect(shortRequestBudget).toBeLessThan(OPENAI_GPT_56_MAX_OUTPUT_TOKENS);
+    expect(shortRequestBudget * 4).toBeLessThan(500_000);
+  });
+
+  it("adds reasoning headroom and reaches the 128K ceiling for long dictations", () => {
+    expect(calculateGpt56CleanupMaxOutputTokens(100, "max")).toBe(65586);
+    expect(calculateGpt56CleanupMaxOutputTokens(256_000, "low")).toBe(
+      OPENAI_GPT_56_MAX_OUTPUT_TOKENS
+    );
+  });
+});
 
 describe("ReasoningService (OpenAI)", () => {
   const originalFetch = globalThis.fetch;
@@ -81,7 +100,7 @@ describe("ReasoningService (OpenAI)", () => {
       expect(body.reasoning).toEqual({ effort: "low" });
       expect(body.text).toEqual({ verbosity: "medium" });
       expect(body.truncation).toBe("disabled");
-      expect(body.max_output_tokens).toBeGreaterThanOrEqual(2048);
+      expect(body.max_output_tokens).toBe(calculateGpt56CleanupMaxOutputTokens(5, "low"));
       return {
         ok: true,
         json: async () => ({
@@ -152,6 +171,7 @@ describe("ReasoningService (OpenAI)", () => {
       const body = JSON.parse(init.body);
       expect(body.model).toBe("gpt-5.6-luna");
       expect(body.reasoning).toEqual({ effort: "max" });
+      expect(body.max_output_tokens).toBe(calculateGpt56CleanupMaxOutputTokens(24, "max"));
       expect(body.input[0].content).toContain("# Codex CLI Prompt Pass");
       return {
         ok: true,

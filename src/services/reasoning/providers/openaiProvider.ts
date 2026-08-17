@@ -1,4 +1,5 @@
 import { API_ENDPOINTS, TOKEN_LIMITS } from "../../../config/constants";
+import { OPENAI_GPT_56_MAX_OUTPUT_TOKENS } from "../../../config/cleanupPolicy.cjs";
 import { getUserPrompt } from "../../../config/prompts";
 import logger from "../../../utils/logger";
 import {
@@ -15,6 +16,14 @@ export type OpenAiEndpointCandidate = { url: string; type: "responses" | "chat" 
 const OPENAI_CLEANUP_TEXT_VERBOSITY = "medium";
 const OPENAI_CLEANUP_MIN_OUTPUT_TOKENS = 2048;
 const OPENAI_CLEANUP_MAX_OUTPUT_TOKENS = 32768;
+const OPENAI_GPT_56_MIN_OUTPUT_TOKENS = 32768;
+const OPENAI_GPT_56_REASONING_HEADROOM: Record<string, number> = {
+  none: 8192,
+  low: 16384,
+  medium: 32768,
+  high: 49152,
+  max: 65536,
+};
 
 export const calculateCleanupMaxOutputTokens = (
   inputTextLength: number,
@@ -28,6 +37,21 @@ export const calculateCleanupMaxOutputTokens = (
   return Math.max(
     OPENAI_CLEANUP_MIN_OUTPUT_TOKENS,
     Math.min(OPENAI_CLEANUP_MAX_OUTPUT_TOKENS, preservationBudget)
+  );
+};
+
+export const calculateGpt56CleanupMaxOutputTokens = (
+  inputTextLength: number,
+  reasoningEffort = "none"
+): number => {
+  // A conservative character-to-token estimate leaves room to reproduce every
+  // source clause, while the effort allowance covers hidden reasoning tokens.
+  const preservationTokens = Math.ceil(Math.max(0, inputTextLength) / 2);
+  const reasoningHeadroom =
+    OPENAI_GPT_56_REASONING_HEADROOM[reasoningEffort] ?? OPENAI_GPT_56_REASONING_HEADROOM.medium;
+  return Math.min(
+    OPENAI_GPT_56_MAX_OUTPUT_TOKENS,
+    Math.max(OPENAI_GPT_56_MIN_OUTPUT_TOKENS, preservationTokens + reasoningHeadroom)
   );
 };
 
@@ -93,11 +117,14 @@ export async function processWithOpenAiProvider({
       TOKEN_LIMITS.MAX_TOKENS,
       TOKEN_LIMITS.TOKEN_MULTIPLIER
     );
-    const maxOutputTokens = config.maxTokens
-      ? calculateCleanupMaxOutputTokens(text.length, config.maxTokens)
-      : Math.max(legacyCalculatedMaxTokens, calculateCleanupMaxOutputTokens(text.length));
-    const requestTimeoutMs = getCleanupRequestTimeoutMs(text.length);
     const reasoningEffort = config.reasoningEffort || "none";
+    const usesAdaptiveGpt56OutputBudget = !isCustomProvider && model.startsWith("gpt-5.6");
+    const maxOutputTokens = usesAdaptiveGpt56OutputBudget
+      ? calculateGpt56CleanupMaxOutputTokens(text.length, reasoningEffort)
+      : config.maxTokens
+        ? calculateCleanupMaxOutputTokens(text.length, config.maxTokens)
+        : Math.max(legacyCalculatedMaxTokens, calculateCleanupMaxOutputTokens(text.length));
+    const requestTimeoutMs = getCleanupRequestTimeoutMs(text.length);
     const externalSignal = config.signal;
 
     const isOlderModel = model && (model.startsWith("gpt-4") || model.startsWith("gpt-3"));

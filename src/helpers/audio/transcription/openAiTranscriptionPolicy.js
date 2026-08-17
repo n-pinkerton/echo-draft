@@ -135,14 +135,17 @@ export const getAttemptAgreement = (primaryText, retryText) => {
 
 export const createDisagreementError = (agreement) => {
   const error = new Error(
-    "Transcription attempts disagreed, so EchoDraft will not choose the longer result automatically. Please retry."
+    "Transcription attempts disagreed, so EchoDraft preserved the primary result for review."
   );
   error.code = "TRANSCRIPTION_ATTEMPTS_DISAGREE";
   error.agreement = agreement;
   return error;
 };
 
-export const analyzeCandidate = (text, { durationSeconds = null, promptEchoDetected = false } = {}) => {
+export const analyzeCandidate = (
+  text,
+  { durationSeconds = null, promptEchoDetected = false } = {}
+) => {
   const rawText = typeof text === "string" ? text : "";
   const trimmed = rawText.trim();
   const words = countWords(trimmed);
@@ -221,17 +224,11 @@ export const isHardReject = (
   analysis,
   { durationSeconds = null, promptEchoDetected = false, corroboratedByRetry = false } = {}
 ) => {
+  // Retain the public option shape for callers and diagnostics. Sparse output is now reviewable
+  // regardless of duration or retry corroboration, so neither value makes text a hard rejection.
+  void durationSeconds;
+  void corroboratedByRetry;
   if (!analysis.trimmed || hasOnlyPunctuation(analysis.trimmed)) return true;
-  if (
-    analysis.wordsPerSecond !== null &&
-    typeof durationSeconds === "number" &&
-    durationSeconds >= TRUNCATION_RETRY_MIN_DURATION_SECONDS &&
-    analysis.words > 0 &&
-    analysis.wordsPerSecond < TRUNCATION_REJECT_MIN_WORDS_PER_SECOND &&
-    !corroboratedByRetry
-  ) {
-    return true;
-  }
   if (
     promptEchoDetected &&
     analysis.wordsPerSecond === null &&

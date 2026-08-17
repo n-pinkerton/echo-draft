@@ -43,7 +43,7 @@
 4. You can also click "Open Privacy Settings" button in the app
 5. In EchoDraft, open **Settings → General → Microphone** and click **Test**. The level test runs only on request and stops after 15 seconds.
 
-If a specifically selected microphone is unplugged, EchoDraft labels it as disconnected and uses the system default until it returns. Select **Use default** to make that fallback permanent.
+If a specifically selected microphone is unplugged or Windows changes its device ID, EchoDraft keeps the saved choice, labels it as disconnected, and uses the system default until the saved device returns. The fallback may be an internal microphone. Reselect the intended microphone to save its current device ID, or select **Use default** to make the fallback permanent.
 
 **Linux:**
 
@@ -69,6 +69,20 @@ If a specifically selected microphone is unplugged, EchoDraft labels it as disco
 3. Clear caches: `rm -rf ~/.cache/whisper`
 4. Try a different hotkey
 5. Re-run onboarding
+
+### Transcript Needs Review After a Retry
+
+**Symptoms:** History contains a short or uncertain transcript, while automatic insertion says the result needs review.
+
+**Meaning:** EchoDraft judged the primary result sparse enough to retry, but the attempts did not agree. It preserves the primary transcript in History instead of discarding all recognizable speech. Insertion mode does not paste uncertain text automatically; clipboard mode keeps a recoverable copy.
+
+Only clearly unusable output is rejected: empty or punctuation-only text, a detected prompt echo that is too small to trust when recording duration is unavailable, or strongly model-generated assistant-style output.
+
+**Fix:**
+
+1. Open History and copy or correct the preserved primary transcript.
+2. Check **Settings → General → Microphone**. If the saved microphone is unavailable, reselect it and run the 15-second test before recording again.
+3. Use the captured source audio in the logs folder for recovery if the original recording matters.
 
 ### Slow or Stuck Cloud Transcription or Cleanup
 
