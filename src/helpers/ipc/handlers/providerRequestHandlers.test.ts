@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { CancelableRequestRegistry } from "../cancelableRequestRegistry.js";
+import { OPENAI_GPT_56_MAX_OUTPUT_TOKENS } from "../../../config/cleanupPolicy.cjs";
 import {
   MAX_AUDIO_REQUEST_BYTES,
   MAX_PROVIDER_IN_FLIGHT_BYTES_PER_SENDER,
@@ -81,7 +82,7 @@ const cleanupOperation = (overrides: Record<string, unknown> = {}) => ({
   model: "gpt-5.6-terra",
   userPrompt:
     '<echodraft_gpt56_terra_untrusted_dictation>\n"hello"\n</echodraft_gpt56_terra_untrusted_dictation>',
-  maxOutputTokens: 2048,
+  maxOutputTokens: 32768,
   reasoningEffort: "low",
   ...overrides,
 });
@@ -100,6 +101,7 @@ const codexPromptCleanupOperation = (overrides: Record<string, unknown> = {}) =>
       '<echodraft_gpt56_luna_untrusted_dictation>\n"continue with that review"\n</echodraft_gpt56_luna_untrusted_dictation>',
     cleanupPromptMode: "codex-prompt",
     reasoningEffort: "max",
+    maxOutputTokens: 65536,
     ...overrides,
   });
 
@@ -153,7 +155,7 @@ describe("providerRequestHandlers", () => {
     ).toBe("https://api.openai.com/v1/responses");
   });
 
-  it("reserves Luna max effort for the fixed Codex prompt cleanup route", () => {
+  it("accepts adaptive GPT-5.6 budgets and reserves Luna max effort for Codex prompts", () => {
     expect(
       validateCleanupOperation(
         "openai",
@@ -164,6 +166,7 @@ describe("providerRequestHandlers", () => {
       model: "gpt-5.6-luna",
       cleanupPromptMode: "codex-prompt",
       reasoningEffort: "max",
+      maxOutputTokens: 65536,
     });
     expect(() =>
       validateCleanupOperation(
@@ -179,6 +182,41 @@ describe("providerRequestHandlers", () => {
         codexPromptCleanupOperation({ reasoningEffort: "medium" })
       )
     ).toThrow(/effort/i);
+    expect(
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        cleanupOperation({ maxOutputTokens: OPENAI_GPT_56_MAX_OUTPUT_TOKENS })
+      )
+    ).toMatchObject({ maxOutputTokens: OPENAI_GPT_56_MAX_OUTPUT_TOKENS });
+    expect(
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        cleanupOperation({ maxOutputTokens: 2048 })
+      )
+    ).toMatchObject({ maxOutputTokens: 2048 });
+    expect(() =>
+      validateCleanupOperation(
+        "openai",
+        "https://api.openai.com/v1/responses",
+        cleanupOperation({ maxOutputTokens: OPENAI_GPT_56_MAX_OUTPUT_TOKENS + 1 })
+      )
+    ).toThrow(/output budget/i);
+    expect(
+      validateCleanupOperation(
+        "custom",
+        "https://custom.example/v1/responses",
+        cleanupOperation({ maxOutputTokens: 32768 })
+      )
+    ).toMatchObject({ maxOutputTokens: 32768 });
+    expect(() =>
+      validateCleanupOperation(
+        "custom",
+        "https://custom.example/v1/responses",
+        cleanupOperation({ maxOutputTokens: 32769 })
+      )
+    ).toThrow(/output budget/i);
     expect(() =>
       validateCleanupOperation(
         "openai",
@@ -587,7 +625,7 @@ describe("providerRequestHandlers", () => {
     expect(body).toMatchObject({
       model: "gpt-5.6-terra",
       store: false,
-      max_output_tokens: 2048,
+      max_output_tokens: 32768,
     });
     expect(body).not.toHaveProperty("tools");
     expect(body.input).toHaveLength(2);

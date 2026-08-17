@@ -67,7 +67,7 @@ Tap shortcuts continue through ordinary and elevated focus changes. Push-to-talk
 
 **Symptoms:** EchoDraft reports that the selected microphone is too quiet or not receiving speech, or transcripts are only punctuation/very short phrases despite a normal-length recording.
 
-**Meaning:** The app received a real recording, but the decoded audio level was near silent before transcription. This often points to the wrong input device, a muted/low-gain USB mic, a bad USB connection, or a Windows audio driver issue.
+**Meaning:** The app received a real recording, but the decoded audio level was near silent before transcription. This often points to the wrong input device, a muted/low-gain USB mic, a bad USB connection, or a Windows audio driver issue. If Windows no longer exposes the device ID saved by EchoDraft, the app keeps the saved choice but records from the Windows default until you reselect the intended microphone; that fallback may be the internal mic.
 
 **Solutions:**
 
@@ -75,7 +75,8 @@ Tap shortcuts continue through ordinary and elevated focus changes. Push-to-talk
 2. Raise the input volume/gain and use "Test your microphone" in Windows Sound settings.
 3. Unplug/replug the mic, preferably into a different USB port.
 4. If Windows Voice Recorder crashes or also records silence, reinstall or remove/re-detect the USB audio device in Device Manager.
-5. Temporarily select another microphone in EchoDraft to confirm the issue is device-specific.
+5. If EchoDraft marks the saved microphone as unavailable, reselect the intended microphone to store its current Windows device ID.
+6. Temporarily select another microphone in EchoDraft to confirm the issue is device-specific.
 
 ### whisper.cpp Not Working
 

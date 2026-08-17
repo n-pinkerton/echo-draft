@@ -68,14 +68,13 @@ describe("OpenAI transcription policy", () => {
   });
 
   it.each([
-    ["sparse output below the duration threshold", "yes please", 11.999, false, false],
-    ["low-rate output at the duration threshold", "yes please", 12, false, true],
-    ["output at exactly 0.2 words per second", "one two three", 15, false, false],
-    ["output below 0.2 words per second", "one two", 12, false, true],
-    ["corroborated output below 0.2 words per second", "one two", 12, true, false],
-  ])("classifies %s", (_name, text, durationSeconds, corroboratedByRetry, expected) => {
+    ["sparse output below the duration threshold", "yes please", 11.999, false],
+    ["low-rate output at the duration threshold", "yes please", 12, false],
+    ["output at exactly 0.2 words per second", "one two three", 15, false],
+    ["output below 0.2 words per second", "one two", 12, false],
+  ])("preserves usable text for %s", (_name, text, durationSeconds, expected) => {
     const analysis = analyzeCandidate(text, { durationSeconds });
-    expect(isHardReject(analysis, { durationSeconds, corroboratedByRetry })).toBe(expected);
+    expect(isHardReject(analysis, { durationSeconds })).toBe(expected);
   });
 
   it("applies the suspiciously-short reason only below 0.6 words per second", () => {

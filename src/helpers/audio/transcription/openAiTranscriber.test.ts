@@ -1100,7 +1100,7 @@ describe("OpenAiTranscriber", () => {
     expect(result.timings.transcriptionRetried).toBe(true);
   });
 
-  it("rejects a longer truncation retry that disagrees with the primary transcript", async () => {
+  it("preserves the primary transcript when a longer truncation retry disagrees", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
 
@@ -1115,9 +1115,17 @@ describe("OpenAiTranscriber", () => {
       .mockResolvedValueOnce(makeJsonResponse(unrelatedRetry)) as any;
 
     const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-    await expect(t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 })).rejects.toThrow(
-      /attempts disagreed/i
-    );
+    const result = await t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 });
+
+    expect(result.rawText).toBe(primaryText);
+    expect((result as any).suspectedIncomplete).toBe(true);
+    expect(result.timings).toMatchObject({
+      transcriptionSuspectedIncomplete: true,
+      transcriptionRecoveryFailed: true,
+      transcriptionRecoveryFailureCode: "TRANSCRIPTION_ATTEMPTS_DISAGREE",
+      transcriptionAttemptCount: 2,
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -1131,26 +1139,25 @@ describe("OpenAiTranscriber", () => {
       primary: "Please send the revised budget to Sam before lunch on Friday morning.",
       retry: "Garden tools need dry storage this winter.",
     },
-  ])(
-    "rejects a $name disagreeing retry even when the primary scores higher",
-    async ({ primary, retry }) => {
-      localStorage.setItem("cloudTranscriptionProvider", "openai");
-      localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
+  ])("preserves the primary when a $name retry disagrees", async ({ primary, retry }) => {
+    localStorage.setItem("cloudTranscriptionProvider", "openai");
+    localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
 
-      const t = new OpenAiTranscriber({
-        logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
-      });
-      globalThis.fetch = vi
-        .fn()
-        .mockResolvedValueOnce(makeJsonResponse(primary))
-        .mockResolvedValueOnce(makeJsonResponse(retry)) as any;
+    const t = new OpenAiTranscriber({
+      logger: { debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), error: vi.fn() },
+    });
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeJsonResponse(primary))
+      .mockResolvedValueOnce(makeJsonResponse(retry)) as any;
 
-      const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-      await expect(
-        t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 })
-      ).rejects.toThrow(/attempts disagreed/i);
-    }
-  );
+    const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
+    const result = await t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 });
+
+    expect(result.rawText).toBe(primary);
+    expect((result as any).suspectedIncomplete).toBe(true);
+    expect(result.timings.transcriptionRecoveryFailureCode).toBe("TRANSCRIPTION_ATTEMPTS_DISAGREE");
+  });
 
   it("retains a failed cloud transport retry ledger when local fallback succeeds", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
@@ -1250,7 +1257,7 @@ describe("OpenAiTranscriber", () => {
     });
   });
 
-  it("retains disagreeing cloud attempts when local fallback succeeds", async () => {
+  it("preserves a cloud primary instead of invoking local fallback when attempts disagree", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
     localStorage.setItem("allowLocalFallback", "true");
@@ -1273,11 +1280,14 @@ describe("OpenAiTranscriber", () => {
       { durationSeconds: 30 }
     );
 
-    expect(result.source).toMatch(/^local-fallback/);
+    expect(result.source).toBe("openai");
+    expect(result.rawText).toBe("Please send the revised budget to Sam Friday.");
+    expect((result as any).suspectedIncomplete).toBe(true);
+    expect((window as any).electronAPI.transcribeLocalWhisper).not.toHaveBeenCalled();
     expect(result.timings).toMatchObject({
-      cloudTranscriptionFailed: true,
-      cloudTranscriptionFailureCode: "TRANSCRIPTION_ATTEMPTS_DISAGREE",
-      localFallbackUsed: true,
+      transcriptionSuspectedIncomplete: true,
+      transcriptionRecoveryFailed: true,
+      transcriptionRecoveryFailureCode: "TRANSCRIPTION_ATTEMPTS_DISAGREE",
       transcriptionAttemptCount: 2,
       transcriptionTransportAttemptCount: 2,
     });
@@ -1287,7 +1297,7 @@ describe("OpenAiTranscriber", () => {
     ]);
   });
 
-  it("rejects a retry that appends an unrelated tail to the complete primary transcript", async () => {
+  it("preserves the primary when a retry appends an uncorroborated unrelated tail", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
 
@@ -1304,12 +1314,15 @@ describe("OpenAiTranscriber", () => {
       .mockResolvedValueOnce(makeJsonResponse(primaryText)) as any;
 
     const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-    await expect(t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 })).rejects.toThrow(
-      /attempts disagreed/i
-    );
+    const result = await t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 });
+
+    expect(result.rawText).toBe(primaryText);
+    expect((result as any).suspectedIncomplete).toBe(true);
+    expect(result.timings.transcriptionRecoveryFailureCode).toBe("TRANSCRIPTION_ATTEMPTS_DISAGREE");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
   });
 
-  it("rejects a short material tail unless a third attempt corroborates it", async () => {
+  it("preserves the primary when a short material tail is not corroborated", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "gpt-4o-transcribe");
 
@@ -1324,9 +1337,12 @@ describe("OpenAiTranscriber", () => {
       .mockResolvedValueOnce(makeJsonResponse(primaryText)) as any;
 
     const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-    await expect(t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 })).rejects.toThrow(
-      /attempts disagreed/i
-    );
+    const result = await t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 30 });
+
+    expect(result.rawText).toBe(primaryText);
+    expect((result as any).suspectedIncomplete).toBe(true);
+    expect(result.timings.transcriptionRecoveryFailureCode).toBe("TRANSCRIPTION_ATTEMPTS_DISAGREE");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
   });
 
   it("accepts sparse speech when an independent retry corroborates it", async () => {
@@ -1349,7 +1365,7 @@ describe("OpenAiTranscriber", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("should reject disagreeing tiny transcripts after a truncation retry for long audio", async () => {
+  it("preserves a tiny primary transcript for review when the retry disagrees", async () => {
     localStorage.setItem("cloudTranscriptionProvider", "openai");
     localStorage.setItem("cloudTranscriptionModel", "whisper-1");
 
@@ -1364,9 +1380,16 @@ describe("OpenAiTranscriber", () => {
     globalThis.fetch = fetchMock as any;
 
     const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-    await expect(
-      t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 31.496 })
-    ).rejects.toThrow(/suspiciously short|unusable|reliable|disagreed/i);
+    const result = await t.processWithOpenAIAPI(audioBlob as any, { durationSeconds: 31.496 });
+
+    expect(result.rawText).toBe("I love you.");
+    expect((result as any).suspectedIncomplete).toBe(true);
+    expect(result.timings).toMatchObject({
+      transcriptionSuspectedIncomplete: true,
+      transcriptionRecoveryFailed: true,
+      transcriptionRecoveryFailureCode: "TRANSCRIPTION_ATTEMPTS_DISAGREE",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("should reject punctuation-only transcripts even when duration is unknown", async () => {
